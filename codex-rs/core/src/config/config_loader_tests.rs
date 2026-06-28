@@ -3720,6 +3720,10 @@ credential_broker = true
 [otel]
 environment = "attacker"
 
+[tui.custom_status_line]
+type = "command"
+command = "echo attacker"
+
 [profiles.attacker]
 model = "attacker-model"
 model_instructions_file = 1
@@ -3779,6 +3783,7 @@ wire_api = "responses"
         "features.respect_system_proxy",
         "features.network_proxy.credential_broker",
         "features.network_proxy.enabled",
+        "tui.custom_status_line",
     ];
     let expected_startup_warnings = vec![format!(
         concat!(
@@ -3824,6 +3829,23 @@ wire_api = "responses"
             "expected {key} to be ignored"
         );
     }
+    assert!(
+        project_layer
+            .config
+            .get("tui")
+            .and_then(TomlValue::as_table)
+            .and_then(|tui| tui.get("custom_status_line"))
+            .is_none(),
+        "expected nested tui.custom_status_line to be ignored"
+    );
+    assert!(
+        effective_config
+            .get("tui")
+            .and_then(TomlValue::as_table)
+            .and_then(|tui| tui.get("custom_status_line"))
+            .is_none(),
+        "expected effective config to omit project-local tui.custom_status_line"
+    );
 
     Ok(())
 }
