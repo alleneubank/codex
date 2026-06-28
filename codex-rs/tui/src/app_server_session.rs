@@ -1166,6 +1166,10 @@ impl AppServerSession {
         self.client.request_handle()
     }
 
+    pub(crate) fn platform_os(&self) -> Option<&str> {
+        self.client.platform_os()
+    }
+
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
