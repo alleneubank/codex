@@ -80,6 +80,7 @@ impl LocalSettings {
                 copy_on_select: config.tui_copy_on_select,
                 alternate_screen: config.tui_alternate_screen,
                 status_line: config.tui_status_line.clone(),
+                custom_status_line: config.tui_custom_status_line.clone(),
                 status_line_use_colors: config.tui_status_line_use_colors,
                 terminal_title: config.tui_terminal_title.clone(),
                 theme: config.tui_theme.clone(),

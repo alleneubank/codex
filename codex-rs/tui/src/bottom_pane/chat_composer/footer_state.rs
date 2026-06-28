@@ -11,6 +11,7 @@
 //! Only the two base composer modes opt into fresh-thread decoration; queries and help do not.
 //! Shortcut help occupies the space above the composer and keeps its close hint on the final row.
 //! Passive transcript hints retain the shortcuts entry when it fits beside the complete hint.
+//! A custom status command owns the persistent status surface; input controls keep their hint row.
 
 use std::time::Instant;
 
@@ -134,6 +135,12 @@ impl super::ChatComposer {
         if self.show_warning_notice(options) || self.shortcuts_above_composer(options) {
             return 1;
         }
+        if options.footer.is_none()
+            && !options.separate_status_line
+            && self.custom_status_line_replaces_footer_hint(&self.footer_props())
+        {
+            return 0;
+        }
         options
             .footer
             .map_or_else(
@@ -216,6 +223,8 @@ pub(super) struct FooterState {
     pub(super) status_line_value: Option<Line<'static>>,
     pub(super) status_line_hyperlink_url: Option<String>,
     pub(super) status_line_enabled: bool,
+    pub(super) custom_status_line: Option<Line<'static>>,
+    pub(super) custom_status_line_padding: u16,
     pub(super) side_conversation_context_label: Option<String>,
     pub(super) active_agent_label: Option<String>,
     pub(super) external_editor_key: Option<ShortcutHint>,
