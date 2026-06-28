@@ -353,9 +353,11 @@ impl App {
 
         let status_line_invalid_items_warned = Arc::new(AtomicBool::new(false));
         let terminal_title_invalid_items_warned = Arc::new(AtomicBool::new(false));
-        let workspace_command_runner: WorkspaceCommandRunner = Arc::new(
-            AppServerWorkspaceCommandRunner::new(app_server.request_handle()),
-        );
+        let workspace_command_runner: WorkspaceCommandRunner =
+            Arc::new(AppServerWorkspaceCommandRunner::new(
+                app_server.request_handle(),
+                app_server.platform_os(),
+            ));
         let enhanced_keys_supported = tui.enhanced_keys_supported();
         let wait_for_initial_session_configured =
             Self::should_wait_for_initial_session(&session_selection);
