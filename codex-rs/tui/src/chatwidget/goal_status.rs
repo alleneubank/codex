@@ -28,6 +28,15 @@ impl GoalStatusState {
         now: Instant,
         active_turn_started_at: Option<Instant>,
     ) -> Option<GoalStatusIndicator> {
+        let goal = self.snapshot(now, active_turn_started_at);
+        goal_status_indicator_from_app_goal(&goal)
+    }
+
+    pub(super) fn snapshot(
+        &self,
+        now: Instant,
+        active_turn_started_at: Option<Instant>,
+    ) -> AppThreadGoal {
         let mut goal = self.goal.clone();
         if goal.status == AppThreadGoalStatus::Active
             && let Some(active_turn_started_at) = active_turn_started_at
@@ -38,7 +47,7 @@ impl GoalStatusState {
                 .time_used_seconds
                 .saturating_add(i64::try_from(active_seconds).unwrap_or(i64::MAX));
         }
-        goal_status_indicator_from_app_goal(&goal)
+        goal
     }
 }
 
