@@ -950,6 +950,11 @@ fn sanitize_project_config(config: &mut TomlValue) -> Vec<String> {
     {
         ignored_keys.push("features.respect_system_proxy".to_string());
     }
+    if let Some(tui) = table.get_mut("tui").and_then(TomlValue::as_table_mut)
+        && tui.remove("custom_status_line").is_some()
+    {
+        ignored_keys.push("tui.custom_status_line".to_string());
+    }
 
     ignored_keys
 }

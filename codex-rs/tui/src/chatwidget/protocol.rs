@@ -119,7 +119,13 @@ impl ChatWidget {
                 self.on_hook_started(notification.run);
             }
             ServerNotification::HookCompleted(notification) => {
+                let force_custom_status_line_refresh = !from_replay
+                    && notification.run.event_name
+                        == codex_app_server_protocol::HookEventName::Stop;
                 self.on_hook_completed(notification.run);
+                if force_custom_status_line_refresh {
+                    self.force_refresh_custom_status_line();
+                }
             }
             ServerNotification::Error(notification) => {
                 if notification.will_retry {
