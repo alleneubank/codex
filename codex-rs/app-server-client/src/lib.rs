@@ -300,6 +300,7 @@ enum ClientCommand {
 pub struct InProcessAppServerClient {
     command_tx: mpsc::Sender<ClientCommand>,
     event_rx: mpsc::UnboundedReceiver<InProcessServerEvent>,
+    platform_os: String,
     worker_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -422,6 +423,7 @@ impl InProcessAppServerClient {
         Ok(Self {
             command_tx,
             event_rx,
+            platform_os: std::env::consts::OS.to_string(),
             worker_handle,
         })
     }
@@ -583,6 +585,7 @@ impl InProcessAppServerClient {
         let Self {
             command_tx,
             event_rx,
+            platform_os: _platform_os,
             worker_handle,
         } = self;
         let mut worker_handle = worker_handle;
@@ -683,6 +686,13 @@ impl AppServerClient {
                 local_codex_home.display().to_string(),
             )),
             Self::Remote(client) => client.codex_home().map(AppServerPath::from_app_server),
+        }
+    }
+
+    pub fn platform_os(&self) -> Option<&str> {
+        match self {
+            Self::InProcess(client) => Some(client.platform_os.as_str()),
+            Self::Remote(client) => client.platform_os(),
         }
     }
 
@@ -942,6 +952,7 @@ mod tests {
                 result: serde_json::json!({
                     "userAgent": "codex_cli_rs/9.8.7-test (Test OS; x86_64) rust",
                     "codexHome": "/server/.codex",
+                    "platformOs": "windows",
                 }),
             }),
         )
@@ -1284,6 +1295,7 @@ mod tests {
 
         assert_eq!(client.server_version(), Some("9.8.7-test"));
         assert_eq!(client.codex_home(), Some("/server/.codex"));
+        assert_eq!(client.platform_os(), Some("windows"));
         let response: GetAccountResponse = client
             .request_typed(ClientRequest::GetAccount {
                 request_id: RequestId::Integer(1),
@@ -1930,6 +1942,7 @@ mod tests {
         let mut client = InProcessAppServerClient {
             command_tx,
             event_rx,
+            platform_os: std::env::consts::OS.to_string(),
             worker_handle,
         };
 
@@ -2036,6 +2049,7 @@ mod tests {
         let client = InProcessAppServerClient {
             command_tx,
             event_rx,
+            platform_os: std::env::consts::OS.to_string(),
             worker_handle,
         };
 

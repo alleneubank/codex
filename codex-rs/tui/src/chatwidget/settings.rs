@@ -546,6 +546,7 @@ impl ChatWidget {
         let previous_cwd = std::mem::replace(&mut self.config.cwd, cwd.clone());
         self.current_cwd = Some(cwd.to_path_buf());
         self.status_line_project_root_name_cache = None;
+        self.invalidate_custom_status_line_project_dir_cache();
 
         if !self.config.workspace_roots.contains(&previous_cwd) {
             return;
@@ -656,6 +657,7 @@ impl ChatWidget {
             self.current_goal_status_indicator = None;
             self.current_goal_status = None;
             self.update_collaboration_mode_indicator();
+            self.refresh_custom_status_line();
             return;
         }
         if goal.status == AppThreadGoalStatus::BudgetLimited
@@ -665,6 +667,7 @@ impl ChatWidget {
         }
         self.current_goal_status = Some(GoalStatusState::new(goal, Instant::now()));
         self.update_collaboration_mode_indicator();
+        self.refresh_custom_status_line();
     }
 
     /// Cycle to the next collaboration mode variant (Plan -> Default -> Plan).
