@@ -3259,7 +3259,7 @@ async fn docked_replay_finishes_while_skills_refresh_is_pending() -> Result<()> 
     let proxy = tokio::spawn(async move {
         let (stream, _) = listener.accept().await?;
         let socket = tokio_tungstenite::accept_async(stream).await?;
-        disconnect::serve_reconnect_requests(socket, |request| {
+        disconnect::serve_reconnect_requests(socket, /*platform_os*/ None, |request| {
             assert_eq!(request.method, "skills/list");
             let (release, wait) = tokio::sync::oneshot::channel();
             pending_tx

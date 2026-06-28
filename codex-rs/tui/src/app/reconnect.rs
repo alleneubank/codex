@@ -330,6 +330,7 @@ impl App {
             );
         self.workspace_command_runner = Some(Arc::new(AppServerWorkspaceCommandRunner::new(
             app_server.request_handle(),
+            app_server.app_server_platform_os(),
         )));
         self.file_search = FileSearchManager::new(search_dir, self.app_event_tx.clone());
     }

@@ -230,7 +230,7 @@ async fn security_setup_skips_unavailable_or_mismatched_server_notice() -> Resul
         let endpoint = crate::resolve_remote_addr(&format!("ws://{}", listener.local_addr()?))?;
         let daemon = tokio::spawn(async move {
             let (stream, _) = listener.accept().await?;
-            serve_reconnect_requests(tokio_tungstenite::accept_async(stream).await?, |request| {
+            serve_reconnect_requests(tokio_tungstenite::accept_async(stream).await?, /*platform_os*/ None, |request| {
                 assert_eq!(request.method, "account/securitySetup/read");
                 std::future::ready(Some(response.clone()))
             })

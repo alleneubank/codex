@@ -3,6 +3,7 @@
 //! Shortcut help grows above the input, preserving status and close rows below it even when clipped.
 
 use super::*;
+use crate::bottom_pane::footer::FooterProps;
 use ratatui::layout::Size;
 
 const MAX_FOOTER_ROWS: u16 = 4;
@@ -42,6 +43,7 @@ impl ChatComposer {
 
     pub(super) fn shows_shared_status(&self, options: ComposerRenderOptions<'_>) -> bool {
         !options.separate_status_line
+            && self.footer.custom_status_line.is_none()
             && options.footer.is_none()
             && self.custom_footer_height().is_none()
             && self.footer.status_line_enabled
@@ -53,6 +55,9 @@ impl ChatComposer {
         width: u16,
         options: ComposerRenderOptions<'_>,
     ) -> u16 {
+        if self.footer.custom_status_line.is_some() {
+            return self.custom_status_line_height();
+        }
         if self.has_separate_status(options) {
             self.status_line_height(width, options)
         } else {
@@ -165,6 +170,15 @@ impl ChatComposer {
         options: ComposerRenderOptions<'_>,
     ) {
         if area.is_empty() {
+            return;
+        }
+        if self.footer.custom_status_line.is_some() {
+            super::custom_status_line_layout::render_custom_status_line(
+                area,
+                buf,
+                self.footer.custom_status_line.clone(),
+                self.footer.custom_status_line_padding,
+            );
             return;
         }
         if options.unfocused {
