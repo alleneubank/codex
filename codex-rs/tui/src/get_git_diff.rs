@@ -835,11 +835,16 @@ mod tests {
             ) {
                 assert_eq!(command.env, HashMap::new());
                 assert_eq!(command.timeout, Duration::from_secs(/*secs*/ 5));
-                assert_eq!(command.output_bytes_cap, 64 * 1024);
-                assert_eq!(command.disable_output_cap, false);
+                assert_eq!(
+                    command.output_cap,
+                    crate::workspace_command::WorkspaceCommandOutputCap::Bytes(64 * 1024)
+                );
             } else {
                 assert_eq!(command.timeout, DIFF_COMMAND_TIMEOUT);
-                assert_eq!(command.disable_output_cap, true);
+                assert_eq!(
+                    command.output_cap,
+                    crate::workspace_command::WorkspaceCommandOutputCap::Disabled
+                );
             }
         }
     }
