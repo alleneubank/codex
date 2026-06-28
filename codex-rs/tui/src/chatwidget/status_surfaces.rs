@@ -287,12 +287,13 @@ impl ChatWidget {
         }
     }
 
-    /// Recomputes both status surfaces from one shared config snapshot.
+    /// Recomputes all status surfaces from one shared config snapshot.
     ///
-    /// This is the common refresh entrypoint for the footer status line and the
-    /// terminal title. It parses both configurations once, emits invalid-item
-    /// warnings once, synchronizes shared cached state (such as git-branch
-    /// lookup), then renders each surface from that shared snapshot.
+    /// This is the common refresh entrypoint for the built-in footer status line,
+    /// command-backed custom status line, and terminal title. It parses the
+    /// declarative configurations once, emits invalid-item warnings once,
+    /// synchronizes shared cached state (such as git-branch lookup), then renders
+    /// each surface from that shared snapshot.
     pub(crate) fn refresh_status_surfaces(&mut self) {
         self.bottom_pane
             .set_luna_reserve_active(self.current_model() == LUNA_RESERVE_MODEL);
@@ -302,6 +303,7 @@ impl ChatWidget {
         self.sync_status_surface_shared_state(&selections);
         self.refresh_status_line_from_selections(&selections);
         self.refresh_terminal_title_from_selections(&selections);
+        self.refresh_custom_status_line();
     }
 
     /// Recomputes and emits the terminal title from config and runtime state.
@@ -459,7 +461,7 @@ impl ChatWidget {
             })
     }
 
-    fn status_line_cwd(&self) -> &Path {
+    pub(super) fn status_line_cwd(&self) -> &Path {
         self.current_cwd
             .as_deref()
             .unwrap_or(self.config.cwd.as_path())
@@ -470,7 +472,7 @@ impl ChatWidget {
     /// Git repository root wins when available. Otherwise we fall back to the
     /// nearest project config layer so non-git projects can still surface a
     /// stable project label.
-    fn status_line_project_root_for_cwd(&self, cwd: &Path) -> Option<PathBuf> {
+    pub(super) fn status_line_project_root_for_cwd(&self, cwd: &Path) -> Option<PathBuf> {
         if let Some(repo_root) = get_git_repo_root(cwd) {
             return Some(repo_root);
         }
