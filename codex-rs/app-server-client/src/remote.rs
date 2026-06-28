@@ -154,7 +154,15 @@ pub struct RemoteAppServerClient {
     pending_events: VecDeque<AppServerEvent>,
     server_version: Option<String>,
     codex_home: Option<String>,
+    platform_os: Option<String>,
     worker_handle: tokio::task::JoinHandle<()>,
+}
+
+struct InitializeRemoteConnectionResult {
+    pending_events: Vec<AppServerEvent>,
+    server_version: Option<String>,
+    codex_home: Option<String>,
+    platform_os: Option<String>,
 }
 
 #[derive(Clone)]
@@ -192,6 +200,10 @@ impl RemoteAppServerClient {
         self.codex_home.as_deref()
     }
 
+    pub fn platform_os(&self) -> Option<&str> {
+        self.platform_os.as_deref()
+    }
+
     async fn connect_with_stream<S>(
         channel_capacity: usize,
         endpoint: String,
@@ -202,7 +214,12 @@ impl RemoteAppServerClient {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let mut stream = stream;
-        let (pending_events, server_version, codex_home) = initialize_remote_connection(
+        let InitializeRemoteConnectionResult {
+            pending_events,
+            server_version,
+            codex_home,
+            platform_os,
+        } = initialize_remote_connection(
             &mut stream,
             &endpoint,
             initialize_params,
@@ -480,6 +497,7 @@ impl RemoteAppServerClient {
             pending_events: pending_events.into(),
             server_version,
             codex_home,
+            platform_os,
             worker_handle,
         })
     }
@@ -604,6 +622,7 @@ impl RemoteAppServerClient {
             pending_events: _pending_events,
             server_version: _server_version,
             codex_home: _codex_home,
+            platform_os: _platform_os,
             worker_handle,
         } = self;
         let mut worker_handle = worker_handle;
@@ -796,7 +815,7 @@ async fn initialize_remote_connection<S>(
     endpoint: &str,
     params: InitializeParams,
     initialize_timeout: Duration,
-) -> IoResult<(Vec<AppServerEvent>, Option<String>, Option<String>)>
+) -> IoResult<InitializeRemoteConnectionResult>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -804,6 +823,7 @@ where
     let mut pending_events = Vec::new();
     let mut server_version = None;
     let mut codex_home = None;
+    let mut platform_os = None;
     write_jsonrpc_message(
         stream,
         JSONRPCMessage::Request(jsonrpc_request_from_client_request(
@@ -840,6 +860,12 @@ where
                                 .get("codexHome")
                                 .and_then(serde_json::Value::as_str)
                                 .filter(|codex_home| !codex_home.is_empty())
+                                .map(str::to_string);
+                            platform_os = response
+                                .result
+                                .get("platformOs")
+                                .and_then(serde_json::Value::as_str)
+                                .filter(|platform_os| !platform_os.is_empty())
                                 .map(str::to_string);
                             break Ok(());
                         }
@@ -932,7 +958,12 @@ where
     )
     .await?;
 
-    Ok((pending_events, server_version, codex_home))
+    Ok(InitializeRemoteConnectionResult {
+        pending_events,
+        server_version,
+        codex_home,
+        platform_os,
+    })
 }
 
 fn app_server_event_from_notification(notification: JSONRPCNotification) -> Option<AppServerEvent> {
@@ -1024,6 +1055,7 @@ mod tests {
             pending_events: VecDeque::new(),
             server_version: None,
             codex_home: None,
+            platform_os: None,
             worker_handle,
         };
 
