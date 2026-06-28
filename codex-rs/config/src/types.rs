@@ -864,6 +864,32 @@ pub struct ModelAvailabilityNuxConfig {
     pub shown_count: HashMap<String, u32>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomStatusLineType {
+    Command,
+}
+
+/// Command-backed status line renderer for the TUI.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomStatusLineConfig {
+    #[serde(rename = "type")]
+    pub kind: CustomStatusLineType,
+
+    /// Shell command that receives a bounded JSON snapshot on stdin and writes one ANSI line.
+    pub command: String,
+
+    /// Extra environment variables supplied only to the status line command.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+
+    /// Blank rows to reserve above the command-rendered status line.
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 2))]
+    pub padding: u16,
+}
+
 /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 
@@ -1034,6 +1060,9 @@ pub struct Tui {
 
     /// Local status line selection. Set to "default" for built-in items or specify an MCP server and tool.
     pub status_line_provider: Option<Box<StatusLineSelection>>,
+    /// Command-rendered status line that replaces the passive built-in footer/status row.
+    #[serde(default)]
+    pub custom_status_line: Option<CustomStatusLineConfig>,
 
     /// Color status line items with colors derived from the active syntax theme.
     /// Defaults to `true`.

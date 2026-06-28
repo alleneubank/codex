@@ -3,6 +3,7 @@
 //! Shortcut help grows above the input, preserving status and close rows below it even when clipped.
 
 use super::*;
+use crate::bottom_pane::footer::FooterProps;
 use crate::bottom_pane::footer::status_line_right_indicator_line;
 use ratatui::layout::Size;
 
@@ -74,6 +75,9 @@ impl ChatComposer {
         mut bounds: Size,
         options: ComposerRenderOptions<'_>,
     ) -> u16 {
+        if self.footer.custom_status_line.is_some() {
+            return self.custom_status_line_height().min(bounds.height);
+        }
         let focus = options.status_line_focus();
         if focus == StatusLineFocus::Focused && self.active_status_transition().is_some() {
             bounds.height = bounds.height.min(1);
@@ -135,6 +139,15 @@ impl ChatComposer {
     ) {
         self.footer.status_line_area.set(area);
         if area.is_empty() {
+            return;
+        }
+        if let Some(status_line) = &self.footer.custom_status_line {
+            super::custom_status_line_layout::render_custom_status_line(
+                area,
+                buf,
+                status_line.clone(),
+                self.footer.custom_status_line_padding,
+            );
             return;
         }
         let focus = options.status_line_focus();
