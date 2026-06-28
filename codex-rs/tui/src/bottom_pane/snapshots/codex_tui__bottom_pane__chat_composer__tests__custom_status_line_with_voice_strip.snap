@@ -1,0 +1,12 @@
+---
+source: tui/src/bottom_pane/chat_composer.rs
+expression: terminal.backend()
+---
+"                                                                                                    "
+" voice ● listening                                                      ctrl+x mute     /voice stop "
+"   mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁                                                                         "
+"                                                                                                    "
+"› Ask Codex to do anything                                                                          "
+"                                                                                                    "
+"                                                                                                    "
+"  custom status                                                                                     "

@@ -332,6 +332,7 @@ use super::footer::render_footer_from_props;
 use super::footer::render_footer_hint_items;
 use super::footer::render_footer_line;
 use super::footer::reset_mode_after_activity;
+use super::footer::shows_passive_footer_line;
 use super::footer::side_conversation_context_line;
 use super::footer::single_line_footer_layout;
 use super::footer::status_line_right_indicator_line;
@@ -370,6 +371,7 @@ mod agents_navigation;
 mod attachment_state;
 mod completion_target;
 mod composer_layout;
+mod custom_status_line_layout;
 mod draft_state;
 mod footer_state;
 mod history_search;
@@ -745,6 +747,8 @@ impl ChatComposer {
                 status_line_value: None,
                 status_line_hyperlink_url: None,
                 status_line_enabled: false,
+                custom_status_line: None,
+                custom_status_line_padding: 0,
                 side_conversation_context_label: None,
                 active_agent_label: None,
                 external_editor_key: default_keymap
@@ -3927,6 +3931,19 @@ impl ChatComposer {
             .map(|items| if items.is_empty() { 0 } else { 1 })
     }
 
+    fn custom_status_line_replaces_footer_hint(&self, footer_props: &FooterProps) -> bool {
+        self.footer.custom_status_line.is_some()
+            && self.custom_footer_height().is_none()
+            && shows_passive_footer_line(footer_props)
+    }
+
+    fn custom_status_line_height(&self) -> u16 {
+        custom_status_line_layout::custom_status_line_height(
+            self.footer.custom_status_line.as_ref(),
+            self.footer.custom_status_line_padding,
+        )
+    }
+
     pub(crate) fn sync_popups(&mut self) {
         self.sync_slash_command_elements();
         if self.history_search.is_some() || self.draft.textarea.vim_query().is_some() {
@@ -4418,6 +4435,21 @@ impl ChatComposer {
             return false;
         }
         self.footer.status_line_enabled = enabled;
+        true
+    }
+
+    pub(crate) fn set_custom_status_line(
+        &mut self,
+        status_line: Option<Line<'static>>,
+        padding: u16,
+    ) -> bool {
+        if self.footer.custom_status_line == status_line
+            && self.footer.custom_status_line_padding == padding
+        {
+            return false;
+        }
+        self.footer.custom_status_line = status_line;
+        self.footer.custom_status_line_padding = padding;
         true
     }
 
@@ -5290,9 +5322,8 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
         setup(&mut composer);
-        let footer_props = composer.footer_props();
-        let footer_lines = footer_height(&footer_props, width);
-        let height = footer_lines + 8;
+        let footer_lines = composer.footer_hint_height(width, ComposerRenderOptions::default());
+        let height = footer_lines + composer.custom_status_line_height() + 8;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
@@ -5325,6 +5356,17 @@ mod tests {
                 composer.set_esc_backtrack_hint(/*show*/ true);
                 let _ = composer
                     .handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+            },
+        );
+
+        snapshot_composer_state(
+            "footer_mode_custom_status_line",
+            /*enhanced_keys_supported*/ true,
+            |composer| {
+                composer.set_status_line_enabled(/*enabled*/ true);
+                composer.set_status_line(Some(Line::from("built-in status")));
+                composer
+                    .set_custom_status_line(Some(Line::from("custom status")), /*padding*/ 1);
             },
         );
 
@@ -5465,6 +5507,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn custom_status_line_with_voice_strip_fits_desired_height() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let (mut composer, _rx) = new_test_composer();
+        composer.set_status_line_enabled(/*enabled*/ true);
+        composer.set_status_line(Some(Line::from("built-in status")));
+        composer.set_custom_status_line(Some(Line::from("custom status")), /*padding*/ 1);
+        composer.set_voice_strip(
+            Some(crate::bottom_pane::VoiceStripState {
+                mute_hint: crate::keymap::RuntimeKeymap::defaults()
+                    .chat
+                    .voice_mute_hint(),
+                phase: crate::bottom_pane::VoiceStripPhase::Active,
+                microphone_live: true,
+                microphone_muted: false,
+                microphone_history: vec![0, 0],
+                speaker_history: vec![0, 0],
+                activity: "listening",
+                animations: true,
+                progress: false,
+            }),
+            crate::tui::FrameRequester::test_dummy(),
+        );
+        let width = 100;
+        let height = composer.desired_height(width);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| composer.render(frame.area(), frame.buffer_mut()))
+            .unwrap();
+        insta::assert_snapshot!("custom_status_line_with_voice_strip", terminal.backend());
+    }
     #[test]
     fn shell_command_cursor_uses_absorbed_prefix() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
