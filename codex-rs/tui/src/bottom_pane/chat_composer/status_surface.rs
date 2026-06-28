@@ -6,6 +6,9 @@ use super::*;
 
 impl ChatComposer {
     pub(super) fn status_surface_height(&self, options: ComposerRenderOptions<'_>) -> u16 {
+        if self.footer.custom_status_line.is_some() {
+            return self.custom_status_line_height();
+        }
         u16::from(options.separate_status_line && self.footer.status_line_enabled)
     }
 
@@ -21,6 +24,15 @@ impl ChatComposer {
 
     pub(super) fn render_status_surface(&self, area: Rect, buf: &mut Buffer) {
         if area.is_empty() {
+            return;
+        }
+        if self.footer.custom_status_line.is_some() {
+            super::custom_status_line_layout::render_custom_status_line(
+                area,
+                buf,
+                self.footer.custom_status_line.clone(),
+                self.footer.custom_status_line_padding,
+            );
             return;
         }
         let mut props = self.footer_props();

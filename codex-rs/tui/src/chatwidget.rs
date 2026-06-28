@@ -264,6 +264,7 @@ mod constructor;
 mod dynamic_activity;
 mod empty_state_policy;
 pub(crate) use self::connectors::ConnectorScopeGeneration;
+mod custom_status_line;
 use self::connectors::ConnectorsState;
 mod exec_state;
 use self::exec_state::RunningCommand;
@@ -722,6 +723,8 @@ pub(crate) struct ChatWidget {
     pub(crate) last_terminal_title: Option<String>,
     // Last visible "action required" state observed by the terminal-title renderer.
     last_terminal_title_requires_action: bool,
+    // Async command-backed custom status line state.
+    custom_status_line_state: custom_status_line::CustomStatusLineState,
     // Original terminal-title config captured when the setup UI opens.
     //
     // The outer `Option` tracks whether a setup session is active (`Some`)
@@ -1678,7 +1681,7 @@ impl ChatWidget {
     /// Live stream wrapping stays consistent with the current viewport while finalized transcript
     /// rebuilding runs through app-level resize reflow.
     pub(crate) fn on_terminal_resize(&mut self, width: u16) {
-        let had_rendered_width = self.last_rendered_width.get().is_some();
+        let previous_width = self.last_rendered_width.get();
         self.last_rendered_width.set(Some(width));
         let stream_width = self.current_stream_width(/*reserved_cols*/ 2);
         let plan_stream_width = self.current_stream_width(/*reserved_cols*/ 4);
@@ -1689,7 +1692,8 @@ impl ChatWidget {
             controller.set_width(plan_stream_width);
         }
         self.sync_active_stream_tail();
-        if !had_rendered_width {
+        if previous_width != Some(width) {
+            self.refresh_custom_status_line();
             self.request_redraw();
         }
     }
