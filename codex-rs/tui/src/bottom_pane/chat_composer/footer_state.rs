@@ -11,6 +11,7 @@
 //! Only the two base composer modes opt into fresh-thread decoration; queries and help do not.
 //! Shortcut help occupies the space above the composer and keeps its close hint on the final row.
 //! Passive transcript hints retain the shortcuts entry when it fits beside the complete hint.
+//! A custom status command owns the persistent status surface; input controls keep their hint row.
 
 use std::time::Instant;
 
@@ -19,6 +20,7 @@ use super::super::footer::reset_mode_after_activity;
 use super::super::shortcut_overlay;
 use super::super::shortcut_overlay::ShortcutView;
 use super::ActivePopup;
+use super::custom_status_line_layout;
 use super::warning_notice;
 use crate::bottom_pane::StatusLine;
 use crate::bottom_pane::footer::FooterKeyHints;
@@ -98,6 +100,26 @@ pub(crate) struct ComposerRenderOptions<'a> {
 }
 
 impl super::ChatComposer {
+    pub(super) fn custom_status_line_replaces_footer_hint(
+        &self,
+        options: ComposerRenderOptions<'_>,
+    ) -> bool {
+        self.footer.custom_status_line.is_some()
+            && !options.separate_status_line
+            && options.footer.is_none()
+            && self.custom_footer_height().is_none()
+            && !self.is_bang_shell_command()
+            && !self.show_warning_notice(options)
+            && self.footer_mode().shows_passive_line(self.is_task_running)
+    }
+
+    pub(super) fn custom_status_line_height(&self) -> u16 {
+        custom_status_line_layout::custom_status_line_height(
+            self.footer.custom_status_line.as_ref(),
+            self.footer.custom_status_line_padding,
+        )
+    }
+
     pub(super) fn footer_props(&self) -> FooterProps {
         let mode = self.footer_mode();
         let is_wsl = {
@@ -326,6 +348,9 @@ impl super::ChatComposer {
         if options.unfocused || self.shortcuts_above_composer(options) {
             return 1;
         }
+        if self.custom_status_line_replaces_footer_hint(options) {
+            return 0;
+        }
         if let Some(hints) = self.passive_hints(options) {
             return hints
                 .desired_rows(super::passive_hints::hint_area(Rect::new(0, 0, width, 1)).width);
@@ -420,6 +445,8 @@ pub(super) struct FooterState {
     pub(super) labeled_status_line: std::cell::RefCell<Option<StatusLine>>,
     pub(super) status_line_area: std::cell::Cell<Rect>,
     pub(super) status_line_enabled: bool,
+    pub(super) custom_status_line: Option<Line<'static>>,
+    pub(super) custom_status_line_padding: u16,
     pub(super) side_conversation_context_label: Option<String>,
     pub(super) active_agent_label: Option<String>,
     pub(super) external_editor_key: Option<ShortcutHint>,

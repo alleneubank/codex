@@ -904,6 +904,8 @@ pub struct Config {
 
     /// Local choice of built-in status items or an MCP provider.
     pub tui_status_line_provider: Option<Box<StatusLineSelection>>,
+    /// Command-rendered status line that replaces the passive built-in footer/status row.
+    pub tui_custom_status_line: Option<codex_config::types::CustomStatusLineConfig>,
 
     /// Whether to color status line items with colors from the active syntax theme.
     pub tui_status_line_use_colors: bool,
@@ -5100,6 +5102,10 @@ impl Config {
                 .unwrap_or_default(),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
             tui_status_line_provider: cfg.tui.as_ref().and_then(|t| t.status_line_provider.clone()),
+            tui_custom_status_line: cfg
+                .tui
+                .as_ref()
+                .and_then(|t| t.custom_status_line.clone()),
             tui_status_line_use_colors: cfg
                 .tui
                 .as_ref()

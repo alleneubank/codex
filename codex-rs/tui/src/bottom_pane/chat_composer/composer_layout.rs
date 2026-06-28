@@ -321,6 +321,7 @@ impl ChatComposer {
             && wanted_status < footer.cap.min(available)
             && self.attachments.is_empty()
             && !options.is_dialog_backdrop
+            && !self.custom_status_line_replaces_footer_hint(options)
             && self.passive_hints(options).is_some()
         {
             footer.wanted_hints = 1;

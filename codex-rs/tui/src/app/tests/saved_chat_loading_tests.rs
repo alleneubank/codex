@@ -32,15 +32,20 @@ async fn saved_chat_retry_and_supersession_with_pending_requests() -> Result<()>
     let (requests, mut held) = tokio::sync::mpsc::unbounded_channel();
     let proxy = tokio::spawn(async move {
         let (stream, _) = listener.accept().await?;
-        disconnect::serve_reconnect_requests(tokio_tungstenite::accept_async(stream).await?, |request| {
-            assert_eq!(request.method, "thread/read");
-            let (release, wait) = tokio::sync::oneshot::channel();
-            requests.send((request.params.unwrap()["threadId"].clone(), release)).unwrap();
-            async move {
-                wait.await.expect("release the read");
-                Some(serde_json::json!({"error":{"code":-32000,"message":"thread not loaded: offline"}}))
-            }
-        }).await
+        disconnect::serve_reconnect_requests(
+            tokio_tungstenite::accept_async(stream).await?,
+            /*platform_os*/ None,
+            |request| {
+                assert_eq!(request.method, "thread/read");
+                let (release, wait) = tokio::sync::oneshot::channel();
+                requests.send((request.params.unwrap()["threadId"].clone(), release)).unwrap();
+                async move {
+                    wait.await.expect("release the read");
+                    Some(serde_json::json!({"error":{"code":-32000,"message":"thread not loaded: offline"}}))
+                }
+            },
+        )
+        .await
     });
     let mut server = AppServerSession::new(
         crate::backend_id::BackendId::new(),
