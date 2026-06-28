@@ -210,6 +210,7 @@ use super::footer::render_footer_from_props;
 use super::footer::render_footer_hint_items;
 use super::footer::render_footer_line;
 use super::footer::reset_mode_after_activity;
+use super::footer::shows_passive_footer_line;
 use super::footer::side_conversation_context_line;
 use super::footer::single_line_footer_layout;
 use super::footer::status_line_right_indicator_line;
@@ -245,6 +246,7 @@ use codex_protocol::user_input::TextElement;
 
 mod attachment_state;
 mod completion_target;
+mod custom_status_line_layout;
 mod draft_state;
 mod footer_state;
 mod history_search;
@@ -252,6 +254,7 @@ mod popup_state;
 mod slash_input;
 
 use self::attachment_state::AttachmentState;
+use self::custom_status_line_layout::render_custom_status_line;
 use self::draft_state::ComposerMentionBinding;
 use self::draft_state::DraftState;
 use self::footer_state::FooterState;
@@ -599,6 +602,8 @@ impl ChatComposer {
                 status_line_value: None,
                 status_line_hyperlink_url: None,
                 status_line_enabled: false,
+                custom_status_line: None,
+                custom_status_line_padding: 0,
                 side_conversation_context_label: None,
                 active_agent_label: None,
                 external_editor_key: Some(key_hint::ctrl(KeyCode::Char('g'))),
@@ -816,11 +821,10 @@ impl ChatComposer {
         textarea_right_reserve: u16,
     ) -> [Rect; 4] {
         let footer_props = self.footer_props();
-        let footer_hint_height = self
-            .custom_footer_height()
-            .unwrap_or_else(|| footer_height(&footer_props));
+        let footer_hint_height = self.footer_hint_height(&footer_props);
         let footer_spacing = Self::footer_spacing(footer_hint_height);
-        let footer_total_height = footer_hint_height + footer_spacing;
+        let footer_total_height =
+            footer_hint_height + footer_spacing + self.custom_status_line_height();
         let popup_constraint = match &self.popups.active {
             ActivePopup::Command(popup) => {
                 Constraint::Max(popup.calculate_required_height(area.width))
@@ -3642,6 +3646,28 @@ impl ChatComposer {
             .map(|items| if items.is_empty() { 0 } else { 1 })
     }
 
+    fn footer_hint_height(&self, footer_props: &FooterProps) -> u16 {
+        if self.custom_status_line_replaces_footer_hint(footer_props) {
+            return 0;
+        }
+        self.custom_footer_height()
+            .unwrap_or_else(|| footer_height(footer_props))
+    }
+
+    fn custom_status_line_replaces_footer_hint(&self, footer_props: &FooterProps) -> bool {
+        self.footer.custom_status_line.is_some()
+            && self.custom_footer_height().is_none()
+            && !self.footer.plan_mode_nudge_visible
+            && shows_passive_footer_line(footer_props)
+    }
+
+    fn custom_status_line_height(&self) -> u16 {
+        custom_status_line_layout::custom_status_line_height(
+            self.footer.custom_status_line.as_ref(),
+            self.footer.custom_status_line_padding,
+        )
+    }
+
     pub(crate) fn sync_popups(&mut self) {
         self.sync_slash_command_elements();
         if self.history_search.is_some() {
@@ -4124,6 +4150,21 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_custom_status_line(
+        &mut self,
+        status_line: Option<Line<'static>>,
+        padding: u16,
+    ) -> bool {
+        if self.footer.custom_status_line == status_line
+            && self.footer.custom_status_line_padding == padding
+        {
+            return false;
+        }
+        self.footer.custom_status_line = status_line;
+        self.footer.custom_status_line_padding = padding;
+        true
+    }
+
     pub(crate) fn set_side_conversation_context_label(&mut self, label: Option<String>) -> bool {
         if self.footer.side_conversation_context_label == label {
             return false;
@@ -4291,11 +4332,10 @@ impl ChatComposer {
         textarea_right_reserve: u16,
     ) -> u16 {
         let footer_props = self.footer_props();
-        let footer_hint_height = self
-            .custom_footer_height()
-            .unwrap_or_else(|| footer_height(&footer_props));
+        let footer_hint_height = self.footer_hint_height(&footer_props);
         let footer_spacing = Self::footer_spacing(footer_hint_height);
-        let footer_total_height = footer_hint_height + footer_spacing;
+        let footer_total_height =
+            footer_hint_height + footer_spacing + self.custom_status_line_height();
         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
         let inner_width =
             width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
@@ -4369,19 +4409,23 @@ impl ChatComposer {
                     | FooterMode::ShortcutOverlay
                     | FooterMode::EscHint => false,
                 };
-                let custom_height = self.custom_footer_height();
-                let footer_hint_height =
-                    custom_height.unwrap_or_else(|| footer_height(&footer_props));
+                let footer_hint_height = self.footer_hint_height(&footer_props);
                 let footer_spacing = Self::footer_spacing(footer_hint_height);
+                let hint_container_rect = render_custom_status_line(
+                    popup_rect,
+                    buf,
+                    self.footer.custom_status_line.clone(),
+                    self.footer.custom_status_line_padding,
+                );
                 let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
                     let [_, hint_rect] = Layout::vertical([
                         Constraint::Length(footer_spacing),
                         Constraint::Length(footer_hint_height),
                     ])
-                    .areas(popup_rect);
+                    .areas(hint_container_rect);
                     hint_rect
                 } else {
-                    popup_rect
+                    hint_container_rect
                 };
                 if let Some(line) = self.history_search_footer_line() {
                     render_footer_line(hint_rect, buf, line);
@@ -4889,9 +4933,9 @@ mod tests {
         );
         setup(&mut composer);
         let footer_props = composer.footer_props();
-        let footer_lines = footer_height(&footer_props);
+        let footer_lines = composer.footer_hint_height(&footer_props);
         let footer_spacing = ChatComposer::footer_spacing(footer_lines);
-        let height = footer_lines + footer_spacing + 8;
+        let height = footer_lines + footer_spacing + composer.custom_status_line_height() + 8;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
@@ -4924,6 +4968,17 @@ mod tests {
                 composer.set_esc_backtrack_hint(/*show*/ true);
                 let _ = composer
                     .handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+            },
+        );
+
+        snapshot_composer_state(
+            "footer_mode_custom_status_line",
+            /*enhanced_keys_supported*/ true,
+            |composer| {
+                composer.set_status_line_enabled(/*enabled*/ true);
+                composer.set_status_line(Some(Line::from("built-in status")));
+                composer
+                    .set_custom_status_line(Some(Line::from("custom status")), /*padding*/ 1);
             },
         );
 

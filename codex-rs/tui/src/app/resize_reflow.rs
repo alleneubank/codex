@@ -308,7 +308,8 @@ impl App {
         let reflow_needed = self.transcript_reflow.reflow_needed_for_width(size.width);
         let height_changed = size.height != last_known_screen_size.height;
         let should_rebuild_transcript = reflow_needed || height_changed;
-        if width.changed || width.initialized {
+        let width_changed_or_initialized = width.changed || width.initialized;
+        if width_changed_or_initialized {
             self.chat_widget.on_terminal_resize(size.width);
         }
         if should_rebuild_transcript {
@@ -322,7 +323,7 @@ impl App {
                 frame_requester.schedule_frame_in(TRANSCRIPT_REFLOW_DEBOUNCE);
             }
         }
-        if size != last_known_screen_size {
+        if size != last_known_screen_size && !width_changed_or_initialized {
             self.refresh_status_line();
         }
         self.maybe_clear_resize_reflow_without_terminal();

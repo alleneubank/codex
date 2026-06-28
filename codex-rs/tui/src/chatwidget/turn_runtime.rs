@@ -167,7 +167,6 @@ impl ChatWidget {
                     runtime_metrics,
                 ));
             }
-            self.turn_runtime_metrics = RuntimeMetricsSummary::default();
             self.transcript.needs_final_message_separator = false;
             self.transcript.had_work_activity = false;
             self.request_status_line_branch_refresh();
@@ -180,6 +179,9 @@ impl ChatWidget {
         self.turn_lifecycle.finish();
         self.clear_safety_buffering();
         self.update_task_running_state();
+        if !from_replay {
+            self.turn_runtime_metrics = RuntimeMetricsSummary::default();
+        }
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
