@@ -58,6 +58,29 @@ fn render_with_height(
 }
 
 #[test]
+fn custom_status_preserves_interactive_transcript_footer() {
+    let mut composer = composer();
+    composer.set_custom_status_line(
+        Some(Line::from("custom model and task")),
+        /*padding*/ 1,
+    );
+    let footer = TranscriptFooter {
+        text: Line::from("Find: selected text").into(),
+        cursor_column: Some(6),
+        is_interactive: true,
+    };
+    let (text, cursor) = render(&composer, /*width*/ 60, Some(&footer));
+    assert_eq!(text.matches("custom model and task").count(), 1);
+    assert!(!text.contains("MODEL · ~/project"));
+    assert_eq!(
+        text.lines().last().map(str::trim),
+        Some("Find: selected text")
+    );
+    assert!(cursor.is_some());
+    insta::assert_snapshot!("custom_status_with_transcript_search", text);
+}
+
+#[test]
 fn passive_activity_keeps_shortcuts_only_when_the_complete_hint_fits() {
     let mut composer = composer();
     let mut line = Line::from(key_hint::key_label_spans("ctrl+o t/f4"));

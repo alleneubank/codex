@@ -3404,6 +3404,10 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
             }
+            AppEvent::CustomStatusLineRendered { request_id, result } => {
+                self.chat_widget
+                    .apply_custom_status_line_rendered(request_id, result);
+            }
             AppEvent::StatusLineSetupCancelled => {
                 self.chat_widget.cancel_status_line_setup();
                 self.chat_widget.refresh_config_panel(/*notice*/ None);
