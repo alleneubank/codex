@@ -1186,6 +1186,46 @@
       ],
       "type": "string"
     },
+    "CustomStatusLineConfig": {
+      "additionalProperties": false,
+      "description": "Command-backed status line renderer for the TUI.",
+      "properties": {
+        "command": {
+          "description": "Shell command that receives a bounded JSON snapshot on stdin and writes one ANSI line.",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Extra environment variables supplied only to the status line command.",
+          "type": "object"
+        },
+        "padding": {
+          "default": 0,
+          "description": "Blank rows to reserve above the command-rendered status line.",
+          "format": "uint16",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/definitions/CustomStatusLineType"
+        }
+      },
+      "required": [
+        "command",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CustomStatusLineType": {
+      "enum": [
+        "command"
+      ],
+      "type": "string"
+    },
     "ExperimentalRequestUserInput": {
       "additionalProperties": false,
       "properties": {
@@ -3809,6 +3849,15 @@
           "default": true,
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
+        },
+        "custom_status_line": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomStatusLineConfig"
+            }
+          ],
+          "default": null,
+          "description": "Command-rendered status line that replaces the passive built-in footer/status row."
         },
         "disable_paste_burst": {
           "description": "When true, disables burst-paste detection for typed input entirely. All characters are inserted as they are received, and no buffering or placeholder replacement will occur for fast keypress bursts. Overrides the legacy top-level `disable_paste_burst` setting. Defaults to `false`.",
