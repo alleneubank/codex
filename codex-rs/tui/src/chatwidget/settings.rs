@@ -483,14 +483,14 @@ impl ChatWidget {
     ///
     /// Call this at the end of any setter that mutates `current_collaboration_mode`,
     /// `active_collaboration_mask`, or per-mode reasoning-effort overrides.
-    /// Consolidating both refreshes here prevents the bug where callers update the
-    /// header/title (`refresh_model_display`) but forget the footer status line
-    /// (`refresh_status_line`).
+    /// Consolidating these refreshes here prevents callers from updating the
+    /// header/title while leaving a built-in or command-backed status line stale.
     pub(super) fn refresh_model_dependent_surfaces(&mut self) {
         self.sync_backend_banner_view();
         self.refresh_model_display();
         self.refresh_status_line();
         self.refresh_open_model_picker();
+        self.refresh_custom_status_line();
     }
 
     fn apply_thread_settings(&mut self, mut settings: ThreadSettings) {
@@ -549,6 +549,7 @@ impl ChatWidget {
         let previous_cwd = std::mem::replace(&mut self.config.cwd, cwd.clone());
         self.current_cwd = Some(cwd.to_path_buf());
         self.status_line_project_root_name_cache = None;
+        self.invalidate_custom_status_line_project_dir_cache();
 
         if !self.config.workspace_roots.contains(&previous_cwd) {
             return;
@@ -658,6 +659,7 @@ impl ChatWidget {
             self.current_goal_status_indicator = None;
             self.current_goal_status = None;
             self.update_collaboration_mode_indicator();
+            self.refresh_custom_status_line();
             return;
         }
         if goal.status == AppThreadGoalStatus::BudgetLimited
@@ -667,6 +669,7 @@ impl ChatWidget {
         }
         self.current_goal_status = Some(GoalStatusState::new(goal, Instant::now()));
         self.update_collaboration_mode_indicator();
+        self.refresh_custom_status_line();
     }
 
     /// Cycle to the next collaboration mode variant (Plan -> Default -> Plan).

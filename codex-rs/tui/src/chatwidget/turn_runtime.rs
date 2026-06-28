@@ -170,7 +170,9 @@ impl ChatWidget {
                 Some(runtime_metrics),
             ));
         }
-        self.turn_runtime_metrics = RuntimeMetricsSummary::default();
+        if from_replay {
+            self.turn_runtime_metrics = RuntimeMetricsSummary::default();
+        }
         if !from_replay {
             self.request_status_line_branch_refresh();
             self.request_status_line_git_summary_refresh();
@@ -187,7 +189,9 @@ impl ChatWidget {
         self.clear_guardian_review_status();
         self.turn_lifecycle.finish();
         self.clear_safety_buffering();
+        // The custom statusline needs the completed turn's metrics during this refresh.
         self.update_task_running_state();
+        self.turn_runtime_metrics = RuntimeMetricsSummary::default();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
