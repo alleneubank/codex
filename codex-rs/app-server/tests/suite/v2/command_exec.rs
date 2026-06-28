@@ -818,6 +818,67 @@ async fn command_exec_pipe_streams_output_and_accepts_write() -> Result<()> {
 }
 
 #[tokio::test]
+async fn command_exec_pipe_accepts_write_and_returns_buffered_output() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let process_id = "pipe-buffered-1".to_string();
+    let command_request_id = mcp
+        .send_command_exec_request(CommandExecParams {
+            command: vec![
+                "sh".to_string(),
+                "-lc".to_string(),
+                "IFS= read line; printf 'out:%s\\n' \"$line\"; printf 'err:%s\\n' \"$line\" >&2"
+                    .to_string(),
+            ],
+            process_id: Some(process_id.clone()),
+            tty: false,
+            stream_stdin: true,
+            stream_stdout_stderr: false,
+            output_bytes_cap: Some(5),
+            disable_output_cap: false,
+            disable_timeout: false,
+            timeout_ms: None,
+            cwd: None,
+            env: None,
+            size: None,
+            sandbox_policy: None,
+            permission_profile: None,
+        })
+        .await?;
+
+    let write_request_id = mcp
+        .send_command_exec_write_request(CommandExecWriteParams {
+            process_id,
+            delta_base64: Some(STANDARD.encode("hello\n")),
+            close_stdin: true,
+        })
+        .await?;
+    let write_response = mcp
+        .read_stream_until_response_message(RequestId::Integer(write_request_id))
+        .await?;
+    assert_eq!(write_response.result, serde_json::json!({}));
+
+    let response = mcp
+        .read_stream_until_response_message(RequestId::Integer(command_request_id))
+        .await?;
+    let response: CommandExecResponse = to_response(response)?;
+    assert_eq!(
+        response,
+        CommandExecResponse {
+            exit_code: 0,
+            stdout: "out:h".to_string(),
+            stderr: "err:h".to_string(),
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn command_exec_tty_implies_streaming_and_reports_pty_output() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;

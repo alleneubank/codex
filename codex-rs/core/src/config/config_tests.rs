@@ -40,6 +40,8 @@ use codex_config::permissions_toml::WorkspaceRootsToml;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
+use codex_config::types::CustomStatusLineConfig;
+use codex_config::types::CustomStatusLineType;
 use codex_config::types::FeedbackConfigToml;
 use codex_config::types::HistoryPersistence;
 use codex_config::types::McpServerEnvVar;
@@ -96,6 +98,7 @@ use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_path_uri::LegacyAppPathString;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use tempfile::tempdir;
 
 use super::*;
@@ -110,7 +113,6 @@ use rmcp::model::FormElicitationCapability;
 use rmcp::model::UrlElicitationCapability;
 
 use codex_config::test_support::CloudConfigBundleFixture;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
@@ -824,6 +826,7 @@ fn config_toml_deserializes_model_availability_nux() {
             raw_output_mode: false,
             alternate_screen: AltScreenMode::default(),
             status_line: None,
+            custom_status_line: None,
             status_line_use_colors: true,
             terminal_title: None,
             theme: None,
@@ -840,6 +843,69 @@ fn config_toml_deserializes_model_availability_nux() {
             terminal_resize_reflow_max_rows: None,
         }
     );
+}
+
+#[test]
+fn config_toml_deserializes_custom_status_line_command() {
+    let toml = r#"
+[tui.custom_status_line]
+type = "command"
+command = "/opt/statusline"
+padding = 1
+
+[tui.custom_status_line.env]
+STATUSLINE_MODE = "compact"
+"#;
+    let cfg: ConfigToml =
+        toml::from_str(toml).expect("TOML deserialization should succeed for custom status line");
+    let custom_status_line = cfg
+        .tui
+        .expect("tui config should deserialize")
+        .custom_status_line
+        .expect("custom status line should deserialize");
+
+    assert_eq!(
+        custom_status_line,
+        CustomStatusLineConfig {
+            kind: CustomStatusLineType::Command,
+            command: "/opt/statusline".to_string(),
+            env: BTreeMap::from([("STATUSLINE_MODE".to_string(), "compact".to_string())]),
+            padding: 1,
+        }
+    );
+}
+
+#[tokio::test]
+async fn config_toml_loads_custom_status_line_into_config() -> std::io::Result<()> {
+    let toml = r#"
+[tui.custom_status_line]
+type = "command"
+command = "/opt/statusline"
+padding = 1
+
+[tui.custom_status_line.env]
+STATUSLINE_MODE = "compact"
+"#;
+    let cfg: ConfigToml =
+        toml::from_str(toml).expect("TOML deserialization should succeed for custom status line");
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.tui_custom_status_line,
+        Some(codex_config::types::CustomStatusLineConfig {
+            kind: codex_config::types::CustomStatusLineType::Command,
+            command: "/opt/statusline".to_string(),
+            env: BTreeMap::from([("STATUSLINE_MODE".to_string(), "compact".to_string())]),
+            padding: 1,
+        })
+    );
+    Ok(())
 }
 
 #[test]
@@ -3659,6 +3725,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             raw_output_mode: false,
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
+            custom_status_line: None,
             status_line_use_colors: true,
             terminal_title: None,
             theme: None,

@@ -357,6 +357,12 @@ pub(crate) enum AppEvent {
         request_id: u64,
     },
 
+    /// Async result of rendering the command-backed custom status line.
+    CustomStatusLineRendered {
+        request_id: u64,
+        result: Option<String>,
+    },
+
     /// Commit settled asynchronous usage output after active-output barriers clear.
     CommitPendingUsageOutput,
 
