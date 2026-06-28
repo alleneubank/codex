@@ -1780,6 +1780,16 @@ impl BottomPane {
         }
     }
 
+    pub(crate) fn set_custom_status_line(
+        &mut self,
+        status_line: Option<Line<'static>>,
+        padding: u16,
+    ) {
+        if self.composer.set_custom_status_line(status_line, padding) {
+            self.request_redraw();
+        }
+    }
+
     /// Updates the contextual footer label and requests a redraw only when it changed.
     ///
     /// This keeps the footer plumbing cheap during thread transitions where `App` may recompute

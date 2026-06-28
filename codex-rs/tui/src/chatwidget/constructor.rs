@@ -221,6 +221,7 @@ impl ChatWidget {
             terminal_title_invalid_items_warned,
             last_terminal_title: None,
             last_terminal_title_requires_action: false,
+            custom_status_line_state: custom_status_line::CustomStatusLineState::default(),
             terminal_title_setup_original_items: None,
             terminal_title_animation_origin: Instant::now(),
             status_line_project_root_name_cache: None,

@@ -29,6 +29,7 @@ use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::ProcessHandle;
 use codex_utils_pty::SpawnedProcess;
 use codex_utils_pty::TerminalSize;
+use serde_json::json;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -417,10 +418,14 @@ impl CommandExecManager {
                 .get(&process_id)
                 .cloned()
                 .ok_or_else(|| {
-                    invalid_request(format!(
+                    let mut error = invalid_request(format!(
                         "no active command/exec for process id {}",
                         process_id.process_id.error_repr(),
-                    ))
+                    ));
+                    error.data = Some(json!({
+                        "reason": "command_exec_not_active",
+                    }));
+                    error
                 })?
         };
         let CommandExecSession::Active { control_tx } = session else {

@@ -100,7 +100,27 @@ impl CommandExecRequestProcessor {
         request_id: ConnectionRequestId,
         params: CommandExecParams,
     ) -> Result<(), JSONRPCErrorError> {
-        tracing::debug!("ExecOneOffCommand params: {params:?}");
+        let env_keys = params
+            .env
+            .as_ref()
+            .map(|env| env.keys().cloned().collect::<Vec<_>>());
+        tracing::debug!(
+            command = ?params.command,
+            process_id = ?params.process_id,
+            tty = params.tty,
+            stream_stdin = params.stream_stdin,
+            stream_stdout_stderr = params.stream_stdout_stderr,
+            output_bytes_cap = ?params.output_bytes_cap,
+            disable_output_cap = params.disable_output_cap,
+            disable_timeout = params.disable_timeout,
+            timeout_ms = ?params.timeout_ms,
+            cwd = ?params.cwd,
+            env_keys = ?env_keys,
+            size = ?params.size,
+            sandbox_policy = ?params.sandbox_policy,
+            permission_profile = ?params.permission_profile,
+            "ExecOneOffCommand params"
+        );
 
         let request = request_id.clone();
 
