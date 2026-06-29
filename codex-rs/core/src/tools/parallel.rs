@@ -44,6 +44,7 @@ pub(crate) struct ToolCallRuntime {
     step_context: Arc<StepContext>,
     tracker: SharedTurnDiffTracker,
     parallel_execution: Arc<RwLock<()>>,
+    serial_tool_call_seen: Arc<AtomicBool>,
 }
 
 impl ToolCallRuntime {
@@ -57,6 +58,7 @@ impl ToolCallRuntime {
             step_context,
             tracker,
             parallel_execution: Arc::new(RwLock::new(())),
+            serial_tool_call_seen: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -118,6 +120,11 @@ impl ToolCallRuntime {
         let turn = Arc::clone(&step_context.turn);
         let tracker = Arc::clone(&self.tracker);
         let lock = Arc::clone(&self.parallel_execution);
+        let serial_tool_call_seen = Arc::clone(&self.serial_tool_call_seen);
+        let refresh_step_context_after_serial_tool = serial_tool_call_seen.load(Ordering::Acquire);
+        if !supports_parallel {
+            serial_tool_call_seen.store(true, Ordering::Release);
+        }
         let invocation_cancellation_token = cancellation_token.clone();
         let started = Instant::now();
         let tool_call_timing_guard =
@@ -149,10 +156,24 @@ impl ToolCallRuntime {
                     readiness.await;
                 }
 
-                let _guard = if supports_parallel {
-                    Either::Left(lock.read().await)
+                let _guard = {
+                    if supports_parallel {
+                        Either::Left(lock.read().await)
+                    } else {
+                        Either::Right(lock.write().await)
+                    }
+                };
+                let step_context = if refresh_step_context_after_serial_tool {
+                    session
+                        .capture_step_context(Arc::clone(&turn), &invocation_cancellation_token)
+                        .await
+                        .map_err(|err| {
+                            FunctionCallError::Fatal(format!(
+                                "failed to refresh step context after serial tool: {err}"
+                            ))
+                        })?
                 } else {
-                    Either::Right(lock.write().await)
+                    step_context
                 };
                 // Admission through the parallel-execution gate marks the end
                 // of dispatch waiting and the start of handler execution.

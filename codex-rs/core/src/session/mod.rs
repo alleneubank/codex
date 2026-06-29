@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -155,6 +156,7 @@ use codex_thread_store::LocalThreadStore;
 use codex_thread_store::PersistContext;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
+use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
 use codex_utils_audio::prepare_response_items as prepare_audio_response_items;
@@ -234,10 +236,12 @@ use self::code_mode_warning::unsupported_code_mode_warning;
 #[cfg(test)]
 use self::handlers::submission_dispatch_span;
 use self::handlers::submission_loop;
+pub(crate) use self::thread_settings::applied_event as thread_settings_applied_event;
 pub(crate) use self::input_queue::InputQueueActivity;
 pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 use self::review::spawn_review_thread;
+pub(crate) use self::session::ActiveWorktree;
 use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;
@@ -1591,12 +1595,29 @@ impl Session {
         state.set_previous_turn_settings(previous_turn_settings);
     }
 
+    fn session_cwd_is_inside_active_worktree(cwd: &Path, active_worktree_path: &Path) -> bool {
+        let Ok(cwd) = cwd.canonicalize() else {
+            return false;
+        };
+        let Ok(active_worktree_path) = active_worktree_path.canonicalize() else {
+            return false;
+        };
+        cwd.starts_with(active_worktree_path)
+    }
+
     pub(crate) async fn update_settings(
         &self,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-        let (previous_config, new_config, permission_profile_changed, mcp_inputs_changed) = {
+        let active_worktree = self.active_worktree.lock().await.clone();
+        let (
+            previous_config,
+            new_config,
+            permission_profile_changed,
+            mcp_inputs_changed,
+            updated_cwd,
+        ) = {
             let mut state = self.state.lock().await;
             let updated = match self.apply_session_settings(&state.session_configuration, &updates)
             {
@@ -1630,6 +1651,10 @@ impl Session {
                     .turn_environments
                     .update_thread_config(&environment_config);
             }
+            let updated_cwd = updates
+                .environments
+                .is_some()
+                .then(|| updated.cwd().clone());
             state.session_configuration = updated;
             let new_config = notify_config_contributors
                 .then(|| self.build_effective_session_config(&state.session_configuration));
@@ -1638,8 +1663,21 @@ impl Session {
                 new_config,
                 permission_profile_changed,
                 mcp_inputs_changed,
+                updated_cwd,
             )
         };
+        if updated_cwd
+            .as_ref()
+            .zip(active_worktree.as_ref())
+            .is_some_and(|(updated_cwd, active_worktree)| {
+                !Self::session_cwd_is_inside_active_worktree(
+                    updated_cwd.as_path(),
+                    active_worktree.worktree_path.as_path(),
+                )
+            })
+        {
+            self.clear_active_worktree().await;
+        }
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
         if permission_profile_changed {
             self.refresh_managed_network_proxy_for_current_permission_profile()
@@ -1648,7 +1686,28 @@ impl Session {
         if mcp_inputs_changed {
             self.schedule_mcp_prewarm();
         }
+        if let Some(updated_cwd) = updated_cwd {
+            self.persist_cwd_metadata(updated_cwd).await;
+        }
         Ok(())
+    }
+
+    async fn persist_cwd_metadata(&self, cwd: AbsolutePathBuf) {
+        let Some(live_thread) = self.services.live_thread.as_ref() else {
+            return;
+        };
+        if let Err(err) = live_thread
+            .update_metadata(
+                ThreadMetadataPatch {
+                    cwd: Some(cwd.into_path_buf()),
+                    ..Default::default()
+                },
+                /*include_archived*/ true,
+            )
+            .await
+        {
+            warn!("failed to persist updated session cwd metadata: {err}");
+        }
     }
 
     pub(crate) async fn preview_settings(
@@ -3175,8 +3234,15 @@ impl Session {
         cancellation_token: &CancellationToken,
         required_servers: &[String],
     ) -> CodexResult<Arc<StepContext>> {
-        // Keep selections fixed for the turn while allowing their startup work to finish.
-        let environments = turn_context.environments.refresh_readiness();
+        let worktree_transitioned_during_turn =
+            self.worktree_transition_revision() != turn_context.worktree_transition_revision;
+        // Keep selections fixed for the turn while allowing startup work to finish. Entering or
+        // exiting a worktree is the sole mid-turn transition that deliberately retargets tools.
+        let environments = if worktree_transitioned_during_turn {
+            self.services.turn_environments.snapshot().await
+        } else {
+            turn_context.environments.refresh_readiness()
+        };
         self.services
             .agents_md_manager
             .refresh(
@@ -3261,6 +3327,10 @@ impl Session {
         )
         .or_cancel(cancellation_token)
         .await??;
+        let workspace_roots = environments
+            .primary()
+            .map(|environment| environment.workspace_roots().to_vec())
+            .unwrap_or_default();
         Ok(Arc::new(StepContext {
             model_info: Arc::clone(&turn_context.model_info),
             reasoning_effort: turn_context.reasoning_effort.clone(),
@@ -3271,6 +3341,7 @@ impl Session {
             session_telemetry: turn_context.session_telemetry.clone(),
             turn: turn_context,
             environments,
+            workspace_roots,
             selected_capability_roots,
             executor_capability_discovery,
             mcp,

@@ -27,6 +27,7 @@ impl EnvironmentsState {
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
         current_date: Option<String>,
+        workspace_roots: &[PathUri],
     ) -> Self {
         Self {
             environments: environment_states(environments),
