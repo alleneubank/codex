@@ -7,6 +7,7 @@ use std::process::Command;
 use crate::GitToolingError;
 
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+const EXECUTABLE_CHECKOUT_FILTER_CONFIG_PATTERN: &str = r"^filter\..*\.(clean|smudge|process)$";
 
 pub(crate) fn ensure_git_repository(path: &Path) -> Result<(), GitToolingError> {
     match run_git_for_stdout(
@@ -87,6 +88,72 @@ where
             command: run.command,
             source,
         })
+}
+
+pub(crate) fn checkout_filter_config_env_overrides(
+    dir: &Path,
+) -> Result<Vec<(OsString, OsString)>, GitToolingError> {
+    let run = match run_git(
+        dir,
+        [
+            "config",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            EXECUTABLE_CHECKOUT_FILTER_CONFIG_PATTERN,
+        ],
+        /*env*/ None,
+    ) {
+        Ok(run) => run,
+        Err(GitToolingError::GitCommand { status, .. }) if status.code() == Some(1) => {
+            return Ok(Vec::new());
+        }
+        Err(err) => return Err(err),
+    };
+    let output =
+        String::from_utf8(run.output.stdout).map_err(|source| GitToolingError::GitOutputUtf8 {
+            command: run.command,
+            source,
+        })?;
+    let mut drivers = output
+        .split('\0')
+        .filter_map(|key| {
+            key.strip_suffix(".clean")
+                .or_else(|| key.strip_suffix(".smudge"))
+                .or_else(|| key.strip_suffix(".process"))
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    drivers.sort();
+    drivers.dedup();
+
+    let config_overrides = drivers
+        .into_iter()
+        .flat_map(|driver| {
+            [
+                (format!("{driver}.clean"), String::new()),
+                (format!("{driver}.smudge"), String::new()),
+                (format!("{driver}.process"), String::new()),
+                (format!("{driver}.required"), "false".to_string()),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let mut env = Vec::with_capacity(config_overrides.len() * 2 + 1);
+    env.push((
+        OsString::from("GIT_CONFIG_COUNT"),
+        OsString::from(config_overrides.len().to_string()),
+    ));
+    for (index, (key, value)) in config_overrides.into_iter().enumerate() {
+        env.push((
+            OsString::from(format!("GIT_CONFIG_KEY_{index}")),
+            OsString::from(key),
+        ));
+        env.push((
+            OsString::from(format!("GIT_CONFIG_VALUE_{index}")),
+            OsString::from(value),
+        ));
+    }
+    Ok(env)
 }
 
 fn run_git<I, S>(

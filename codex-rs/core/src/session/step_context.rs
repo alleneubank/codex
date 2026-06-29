@@ -7,11 +7,14 @@ use crate::tools::router::ToolRouter;
 use codex_exec_server::ExecutorCapabilityDiscoverySnapshot;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;
 use codex_mcp::McpBinding;
+use codex_utils_path_uri::PathUri;
 
 /// Request-scoped state that may change between model sampling requests.
 pub(crate) struct StepContext {
     pub(crate) turn: Arc<TurnContext>,
     pub(crate) environments: TurnEnvironmentSnapshot,
+    /// Workspace roots from the same session configuration snapshot as this step.
+    pub(crate) workspace_roots: Vec<PathUri>,
     /// Capability roots bound to ready environments in this exact step.
     pub(crate) selected_capability_roots: Vec<ResolvedSelectedCapabilityRoot>,
     /// Executor-materialized capability files shared by MCP and skills in this exact step.
