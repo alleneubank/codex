@@ -447,6 +447,16 @@ impl TurnEnvironmentSnapshot {
             .collect()
     }
 
+    pub(crate) fn selections_including_starting(&self) -> Vec<TurnEnvironmentSelection> {
+        self.turn_environments()
+            .map(TurnEnvironment::selection)
+            .chain(
+                self.starting()
+                    .map(|environment| environment.selection.clone()),
+            )
+            .collect()
+    }
+
     pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
         self.primary()
             .map(|environment| environment.environment.get_filesystem())

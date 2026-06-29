@@ -31,6 +31,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::config::CurrentTimeReminderConfig;
+use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::environment_selection::TurnEnvironmentState;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
@@ -487,6 +488,93 @@ async fn request_user_input_stays_direct_in_code_mode_only() {
         panic!("expected code mode exec tool");
     };
     assert!(!exec.description.contains("request_user_input"));
+}
+
+#[tokio::test]
+async fn worktree_tools_are_direct_model_only_in_default_tool_plan() {
+    let plan = probe(|_| {}).await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+    assert_eq!(
+        plan.exposure("enter_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+    assert_eq!(
+        plan.exposure("exit_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+}
+
+#[tokio::test]
+async fn worktree_tools_stay_visible_without_ready_local_primary_environment() {
+    let plan = probe(|turn| {
+        turn.environments = TurnEnvironmentSnapshot::default();
+    })
+    .await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+}
+
+#[tokio::test]
+async fn worktree_tools_stay_visible_for_remote_primary_environment() {
+    let plan = probe(|turn| {
+        let cwd = turn
+            .environments
+            .primary()
+            .expect("primary environment")
+            .cwd()
+            .clone();
+        turn.environments.environments = vec![TurnEnvironmentState::Ready(
+            crate::session::turn_context::TurnEnvironment::new(
+                "remote".to_string(),
+                Arc::new(
+                    codex_exec_server::Environment::create_for_tests(Some(
+                        "ws://127.0.0.1:1/remote-exec-server".to_string(),
+                    ))
+                    .expect("remote test environment"),
+                ),
+                cwd.clone(),
+                vec![cwd],
+                /*shell*/ None,
+            ),
+        )];
+    })
+    .await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+}
+
+#[tokio::test]
+async fn worktree_tools_stay_direct_in_model_selected_code_mode_only() {
+    let plan = probe(|turn| {
+        turn.model_info.tool_mode = Some(ToolMode::CodeModeOnly);
+    })
+    .await;
+
+    plan.assert_visible_contains(&[
+        codex_code_mode::PUBLIC_TOOL_NAME,
+        codex_code_mode::WAIT_TOOL_NAME,
+        "enter_worktree",
+        "exit_worktree",
+    ]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+    assert_eq!(
+        plan.exposure("enter_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+    assert_eq!(
+        plan.exposure("exit_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+
+    let ToolSpec::Freeform(exec) = plan.visible_spec(codex_code_mode::PUBLIC_TOOL_NAME) else {
+        panic!("expected code mode exec tool");
+    };
+    assert!(!exec.description.contains("enter_worktree"));
+    assert!(!exec.description.contains("exit_worktree"));
 }
 
 #[tokio::test]
@@ -1506,6 +1594,8 @@ async fn code_mode_only_can_expose_namespaced_multi_agent_v2_as_normal_tools() {
         vec![
             "exec",
             "wait",
+            "enter_worktree",
+            "exit_worktree",
             "request_user_input",
             "agents",
             // Hosted Responses tool.
@@ -1625,6 +1715,8 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
             // Code-mode entrypoints.
             codex_code_mode::PUBLIC_TOOL_NAME,
             codex_code_mode::WAIT_TOOL_NAME,
+            "enter_worktree",
+            "exit_worktree",
             "request_user_input",
             // Multi-agent v2 tools.
             MULTI_AGENT_V2_NAMESPACE,

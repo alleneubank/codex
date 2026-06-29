@@ -78,6 +78,7 @@ impl Session {
                 EnvironmentsState::from_turn_context_with_environments(
                     turn_context,
                     &step_context.environments,
+                    &step_context.workspace_roots,
                 )
                 .with_subagents(environment_subagents),
             );

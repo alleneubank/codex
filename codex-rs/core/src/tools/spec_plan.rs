@@ -10,8 +10,10 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
@@ -705,6 +707,8 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
     let environment_mode = tool_environment_mode(context.step_context);
 
     planned_tools.add(PlanHandler);
+    planned_tools.add_with_exposure(EnterWorktreeHandler, ToolExposure::DirectModelOnly);
+    planned_tools.add_with_exposure(ExitWorktreeHandler, ToolExposure::DirectModelOnly);
 
     if features.enabled(Feature::DeferredExecutor) {
         planned_tools.add(WaitForEnvironmentHandler);

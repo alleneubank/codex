@@ -63,6 +63,9 @@ pub(super) async fn read_thread(
                 rollout_thread.name = thread.name;
             }
             rollout_thread.git_info = thread.git_info;
+            if !thread.cwd.as_os_str().is_empty() {
+                rollout_thread.cwd = thread.cwd;
+            }
             rollout_thread.permission_profile = permission_profile_from_metadata_value(
                 &metadata_sandbox_policy,
                 rollout_thread.cwd.as_path(),
@@ -125,6 +128,11 @@ pub(super) async fn read_thread_by_rollout_path(
             thread.name = sqlite_thread_name(&metadata);
         }
         thread.recency_at = metadata.recency_at;
+        if !metadata.cwd.as_os_str().is_empty() {
+            thread.cwd = metadata.cwd;
+        }
+        thread.permission_profile =
+            permission_profile_from_metadata_value(&metadata.sandbox_policy, thread.cwd.as_path());
         let existing_git_info = thread.git_info.take();
         let (fallback_sha, fallback_branch, fallback_origin_url) = match existing_git_info {
             Some(info) => (
@@ -612,6 +620,8 @@ mod tests {
         );
         builder.model_provider = Some(config.default_model_provider_id.clone());
         builder.git_branch = Some("sqlite-branch".to_string());
+        let sqlite_cwd = home.path().join("sqlite-workspace");
+        builder.cwd = sqlite_cwd.clone();
         let recency_at = chrono::DateTime::parse_from_rfc3339("2026-01-03T12:00:00Z")
             .expect("timestamp should parse")
             .with_timezone(&Utc);
@@ -638,6 +648,7 @@ mod tests {
         let git_info = thread.git_info.expect("git info should be present");
         assert_eq!(thread.name.as_deref(), Some("Latest index name"));
         assert_eq!(thread.recency_at, recency_at);
+        assert_eq!(thread.cwd, sqlite_cwd);
         assert_eq!(git_info.branch.as_deref(), Some("sqlite-branch"));
         assert_eq!(
             git_info.commit_hash.as_ref().map(|sha| sha.0.as_str()),
@@ -916,7 +927,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_thread_preserves_rollout_cwd_when_sqlite_metadata_exists() {
+    async fn read_thread_uses_sqlite_cwd_when_sqlite_metadata_exists() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
         let runtime = codex_state::StateRuntime::init(
@@ -966,7 +977,8 @@ mod tests {
             SessionSource::Cli,
         );
         builder.model_provider = Some(config.default_model_provider_id.clone());
-        builder.cwd = home.path().join("sqlite-workspace");
+        let sqlite_cwd = home.path().join("sqlite-workspace");
+        builder.cwd = sqlite_cwd.clone();
         let mut metadata = builder.build(config.default_model_provider_id.as_str());
         metadata.title = "Saved title".to_string();
         metadata.first_user_message = Some("Hello from sqlite".to_string());
@@ -990,7 +1002,7 @@ mod tests {
         assert_eq!(thread.preview, "Hello from rollout");
         assert_eq!(thread.name, Some("Saved title".to_string()));
         assert_eq!(thread.model_provider, "rollout-provider");
-        assert_eq!(thread.cwd, rollout_cwd);
+        assert_eq!(thread.cwd, sqlite_cwd);
         let legacy_policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
             network_access: false,
@@ -1001,7 +1013,7 @@ mod tests {
             thread.permission_profile,
             PermissionProfile::from_legacy_sandbox_policy_for_cwd(
                 &legacy_policy,
-                rollout_cwd.as_path()
+                sqlite_cwd.as_path()
             )
         );
     }

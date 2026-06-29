@@ -7,6 +7,7 @@ use crate::session::turn_context::TurnContext;
 use codex_exec_server::ExecutorCapabilityDiscoverySnapshot;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;
 use codex_mcp::ToolInfo;
+use codex_utils_path_uri::PathUri;
 use tokio::sync::OnceCell;
 
 /// Request-scoped state that may change between model sampling requests.
@@ -14,6 +15,8 @@ use tokio::sync::OnceCell;
 pub(crate) struct StepContext {
     pub(crate) turn: Arc<TurnContext>,
     pub(crate) environments: TurnEnvironmentSnapshot,
+    /// Workspace roots from the same session configuration snapshot as this step.
+    pub(crate) workspace_roots: Vec<PathUri>,
     /// Capability roots bound to ready environments in this exact step.
     pub(crate) selected_capability_roots: Vec<ResolvedSelectedCapabilityRoot>,
     /// Executor-materialized capability files shared by MCP and skills in this exact step.
@@ -35,9 +38,14 @@ impl StepContext {
         mcp: Arc<McpRuntimeSnapshot>,
         loaded_agents_md: Option<Arc<LoadedAgentsMd>>,
     ) -> Self {
+        let workspace_roots = environments
+            .primary()
+            .map(|environment| environment.workspace_roots().to_vec())
+            .unwrap_or_default();
         Self {
             turn,
             environments,
+            workspace_roots,
             selected_capability_roots,
             executor_capability_discovery,
             mcp,
