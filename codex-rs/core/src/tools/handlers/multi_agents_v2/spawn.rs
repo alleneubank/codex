@@ -87,7 +87,7 @@ async fn handle_spawn_agent(
         args.service_tier.as_deref(),
     )
     .await?;
-    apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
+    apply_spawn_agent_step_runtime_overrides(&mut config, step_context.as_ref())?;
 
     let spawn_source = thread_spawn_source(
         session.thread_id,
