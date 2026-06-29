@@ -22,6 +22,18 @@ pub enum GitToolingError {
     },
     #[error("{path:?} is not a git repository")]
     NotAGitRepository { path: PathBuf },
+    #[error("invalid managed worktree name {name:?}: {reason}")]
+    InvalidWorktreeName { name: String, reason: String },
+    #[error("path {path:?} escapes managed worktree directory {base:?}")]
+    ManagedWorktreePathEscapes { path: PathBuf, base: PathBuf },
+    #[error(
+        "worktree {path:?} belongs to git common dir {actual_common_dir:?}, expected {expected_common_dir:?}"
+    )]
+    WorktreeRepositoryMismatch {
+        path: PathBuf,
+        expected_common_dir: PathBuf,
+        actual_common_dir: PathBuf,
+    },
     #[error("path {path:?} must be relative to the repository root")]
     NonRelativePath { path: PathBuf },
     #[error("path {path:?} escapes the repository root")]
