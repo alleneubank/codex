@@ -39,6 +39,12 @@ pub fn create_test_sync_tool() -> ToolSpec {
             )),
         ),
         (
+            "timing_label".to_string(),
+            JsonSchema::string(Some(
+                "When set, return a JSON timing record with this label.".to_string(),
+            )),
+        ),
+        (
             "barrier".to_string(),
             JsonSchema::object(
                 barrier_properties,

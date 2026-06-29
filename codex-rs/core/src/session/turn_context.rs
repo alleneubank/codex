@@ -143,6 +143,7 @@ pub struct TurnContext {
     pub(crate) parent_thread_id: Option<ThreadId>,
     pub(crate) originator: String,
     pub(crate) environments: TurnEnvironmentSnapshot,
+    pub(crate) worktree_transition_revision: u64,
     /// The session's absolute working directory. All relative paths provided
     /// by the model as well as sandbox policies are resolved against this path
     /// instead of `std::env::current_dir()`.
@@ -334,6 +335,7 @@ impl TurnContext {
             parent_thread_id: self.parent_thread_id,
             originator: self.originator.clone(),
             environments: self.environments.clone(),
+            worktree_transition_revision: self.worktree_transition_revision,
             #[allow(deprecated)]
             cwd: self.cwd.clone(),
             current_date: self.current_date.clone(),
@@ -601,6 +603,7 @@ impl Session {
             parent_thread_id: session_configuration.parent_thread_id,
             originator: session_configuration.originator.clone(),
             environments,
+            worktree_transition_revision: 0,
             #[allow(deprecated)]
             cwd,
             current_date: Some(current_date),
@@ -839,6 +842,7 @@ impl Session {
             sub_id,
             skills_snapshot,
         );
+        turn_context.worktree_transition_revision = self.worktree_transition_revision();
         turn_context.code_mode_available = self.services.code_mode_service.is_available();
         turn_context.extension_data.insert(trusted_plugin_roots);
         turn_context.realtime_active = self.conversation.running_state().await.is_some();
