@@ -28,9 +28,17 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
+use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 use tokio::sync::oneshot;
+
+#[derive(Debug, Deserialize)]
+struct TimingRecord {
+    label: String,
+    start_ms: i64,
+    end_ms: i64,
+}
 
 async fn run_turn(test: &TestCodex, prompt: &str) -> anyhow::Result<()> {
     let session_model = test.session_configured.model.clone();
@@ -85,6 +93,43 @@ fn assert_parallel_duration(actual: Duration) {
     assert!(
         actual < Duration::from_millis(1_600),
         "expected parallel execution to finish quickly, got {actual:?}"
+    );
+}
+
+fn shell_timing_command(label: &str) -> String {
+    format!(
+        "perl -MTime::HiRes=time,sleep -e 'my $start = int(time()*1000); sleep 0.25; my $end = int(time()*1000); print qq({{\"label\":\"{label}\",\"start_ms\":$start,\"end_ms\":$end}}\\n);'"
+    )
+}
+
+fn timing_from_output_item(output_item: &Value) -> TimingRecord {
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("function output string");
+    let timing_json = output
+        .rsplit_once("Output:\n")
+        .map(|(_, body)| body.trim())
+        .unwrap_or_else(|| output.trim());
+    serde_json::from_str(timing_json).expect("timing output should be JSON")
+}
+
+fn assert_timing_overlaps(left: &TimingRecord, right: &TimingRecord) {
+    assert!(
+        left.start_ms <= left.end_ms,
+        "invalid timing record for {}: {left:?}",
+        left.label
+    );
+    assert!(
+        right.start_ms <= right.end_ms,
+        "invalid timing record for {}: {right:?}",
+        right.label
+    );
+    assert!(
+        left.start_ms < right.end_ms && right.start_ms < left.end_ms,
+        "expected {} and {} to overlap, got {left:?} and {right:?}",
+        left.label,
+        right.label
     );
 }
 
@@ -158,14 +203,18 @@ async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
     let mut builder = test_codex().with_model("gpt-5.4");
     let test = builder.build(&server).await?;
 
-    let shell_args = json!({
-        "command": "sleep 0.25",
+    let args_one = serde_json::to_string(&json!({
+        "command": shell_timing_command("shell-one"),
         // Avoid user-specific shell startup cost (e.g. zsh profile scripts) in timing assertions.
         "login": false,
         "timeout_ms": 1_000,
-    });
-    let args_one = serde_json::to_string(&shell_args)?;
-    let args_two = serde_json::to_string(&shell_args)?;
+    }))?;
+    let args_two = serde_json::to_string(&json!({
+        "command": shell_timing_command("shell-two"),
+        // Avoid user-specific shell startup cost (e.g. zsh profile scripts) in timing assertions.
+        "login": false,
+        "timeout_ms": 1_000,
+    }))?;
 
     let first_response = sse(vec![
         json!({"type": "response.created", "response": {"id": "resp-1"}}),
@@ -177,10 +226,18 @@ async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    mount_sse_sequence(&server, vec![first_response, second_response]).await;
+    let tool_output_request =
+        mount_sse_sequence(&server, vec![first_response, second_response]).await;
 
-    let duration = run_turn_and_measure(&test, "run shell_command twice").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "run shell_command twice").await?;
+
+    let requests = tool_output_request.requests();
+    let request = requests
+        .get(1)
+        .expect("tool output request should be captured");
+    let first_timing = timing_from_output_item(&request.function_call_output("call-1"));
+    let second_timing = timing_from_output_item(&request.function_call_output("call-2"));
+    assert_timing_overlaps(&first_timing, &second_timing);
 
     Ok(())
 }
@@ -193,11 +250,12 @@ async fn mixed_parallel_tools_run_in_parallel() -> anyhow::Result<()> {
     let test = build_codex_with_test_tool(&server).await?;
 
     let sync_args = json!({
-        "sleep_after_ms": 300
+        "sleep_after_ms": 300,
+        "timing_label": "sync"
     })
     .to_string();
     let shell_args = serde_json::to_string(&json!({
-        "command": "sleep 0.25",
+        "command": shell_timing_command("shell"),
         // Avoid user-specific shell startup cost in timing assertions.
         "login": false,
         "timeout_ms": 1_000,
@@ -213,10 +271,18 @@ async fn mixed_parallel_tools_run_in_parallel() -> anyhow::Result<()> {
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    mount_sse_sequence(&server, vec![first_response, second_response]).await;
+    let tool_output_request =
+        mount_sse_sequence(&server, vec![first_response, second_response]).await;
 
-    let duration = run_turn_and_measure(&test, "mix tools").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "mix tools").await?;
+
+    let requests = tool_output_request.requests();
+    let request = requests
+        .get(1)
+        .expect("tool output request should be captured");
+    let sync_timing = timing_from_output_item(&request.function_call_output("call-1"));
+    let shell_timing = timing_from_output_item(&request.function_call_output("call-2"));
+    assert_timing_overlaps(&sync_timing, &shell_timing);
 
     Ok(())
 }

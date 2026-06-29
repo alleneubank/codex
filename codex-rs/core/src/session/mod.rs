@@ -151,6 +151,7 @@ use codex_thread_store::LiveThreadInitGuard;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
+use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
 use codex_utils_path_uri::PathUri;
@@ -224,11 +225,13 @@ use self::config_lock::validate_config_lock_if_configured;
 #[cfg(test)]
 use self::handlers::submission_dispatch_span;
 use self::handlers::submission_loop;
+pub(crate) use self::handlers::thread_settings_applied_event;
 pub(crate) use self::input_queue::InputQueueActivity;
 pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 pub use self::mcp_runtime::McpRuntimeSnapshot;
 use self::review::spawn_review_thread;
+pub(crate) use self::session::ActiveWorktree;
 use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;
@@ -1518,12 +1521,23 @@ impl Session {
         state.set_previous_turn_settings(previous_turn_settings);
     }
 
+    fn session_cwd_is_inside_active_worktree(cwd: &Path, active_worktree_path: &Path) -> bool {
+        let Ok(cwd) = cwd.canonicalize() else {
+            return false;
+        };
+        let Ok(active_worktree_path) = active_worktree_path.canonicalize() else {
+            return false;
+        };
+        cwd.starts_with(active_worktree_path)
+    }
+
     pub(crate) async fn update_settings(
         &self,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-        let (previous_config, new_config, permission_profile_changed) = {
+        let active_worktree = self.active_worktree.lock().await.clone();
+        let (previous_config, new_config, permission_profile_changed, updated_cwd) = {
             let mut state = self.state.lock().await;
             let updated = match state.session_configuration.apply(&updates) {
                 Ok(updated) => updated,
@@ -1546,16 +1560,58 @@ impl Session {
                     .turn_environments
                     .update_selections(updated.environment_selections());
             }
+            let updated_cwd = updates
+                .environments
+                .is_some()
+                .then(|| updated.cwd().clone());
             state.session_configuration = updated;
-            (previous_config, new_config, permission_profile_changed)
+            (
+                previous_config,
+                new_config,
+                permission_profile_changed,
+                updated_cwd,
+            )
         };
+        if updated_cwd
+            .as_ref()
+            .zip(active_worktree.as_ref())
+            .is_some_and(|(updated_cwd, active_worktree)| {
+                !Self::session_cwd_is_inside_active_worktree(
+                    updated_cwd.as_path(),
+                    active_worktree.worktree_path.as_path(),
+                )
+            })
+        {
+            self.clear_active_worktree().await;
+        }
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
         if permission_profile_changed {
             self.refresh_managed_network_proxy_for_current_permission_profile()
                 .await;
         }
+        if let Some(updated_cwd) = updated_cwd {
+            self.persist_cwd_metadata(updated_cwd).await;
+        }
 
         Ok(())
+    }
+
+    async fn persist_cwd_metadata(&self, cwd: AbsolutePathBuf) {
+        let Some(live_thread) = self.services.live_thread.as_ref() else {
+            return;
+        };
+        if let Err(err) = live_thread
+            .update_metadata(
+                ThreadMetadataPatch {
+                    cwd: Some(cwd.into_path_buf()),
+                    ..Default::default()
+                },
+                /*include_archived*/ true,
+            )
+            .await
+        {
+            warn!("failed to persist updated session cwd metadata: {err}");
+        }
     }
 
     pub(crate) async fn preview_settings(
@@ -2887,8 +2943,12 @@ impl Session {
             .config
             .features
             .enabled(Feature::DeferredExecutor);
-        // Keep the old turn-frozen environment view unless deferred executors are enabled.
-        let environments = if deferred_executor_enabled {
+        let environment_selections_changed = self
+            .environment_selections_changed_for_step(turn_context.as_ref())
+            .await;
+        // Keep the old turn-frozen environment view unless the turn needs live executor state or
+        // settings changed mid-turn through a tool such as enter_worktree/exit_worktree.
+        let environments = if deferred_executor_enabled || environment_selections_changed {
             self.services.turn_environments.snapshot().await
         } else {
             turn_context.environments.clone()
@@ -2903,6 +2963,12 @@ impl Session {
         let selected_capability_roots = self
             .resolve_selected_capability_roots_for_step(&environments)
             .await;
+        let workspace_roots = self
+            .state
+            .lock()
+            .await
+            .session_configuration
+            .effective_workspace_roots();
         let mcp = self
             .mcp_runtime_for_step(
                 turn_context.as_ref(),
@@ -2913,10 +2979,17 @@ impl Session {
         Arc::new(StepContext::new(
             turn_context,
             environments,
+            workspace_roots,
             selected_capability_roots,
             mcp,
             loaded_agents_md,
         ))
+    }
+
+    async fn environment_selections_changed_for_step(&self, turn_context: &TurnContext) -> bool {
+        let state = self.state.lock().await;
+        state.session_configuration.environment_selections()
+            != turn_context.environments.selections_including_starting()
     }
 
     pub(crate) async fn record_inter_agent_communication(

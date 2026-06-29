@@ -265,7 +265,7 @@ impl ToolExecutor<ToolInvocation> for ExposureOverride {
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
-        self.exposure != ToolExposure::Hidden && self.handler.supports_parallel_tool_calls()
+        self.handler.supports_parallel_tool_calls()
     }
 
     fn search_info(&self) -> Option<ToolSearchInfo> {
