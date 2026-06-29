@@ -10,8 +10,10 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
@@ -629,6 +631,11 @@ fn standalone_web_search_enabled(turn_context: &TurnContext) -> bool {
                 .enabled(Feature::StandaloneWebSearch))
 }
 
+fn worktree_tools_available(context: &CoreToolPlanContext<'_>) -> bool {
+    let turn_context = context.step_context.turn.as_ref();
+    effective_tool_mode(turn_context) != ToolMode::CodeModeOnly
+}
+
 fn tool_environment_mode(step_context: &StepContext) -> ToolEnvironmentMode {
     ToolEnvironmentMode::from_count(step_context.environments.turn_environments.len())
 }
@@ -707,6 +714,11 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
     let environment_mode = tool_environment_mode(context.step_context);
 
     planned_tools.add(PlanHandler);
+
+    if worktree_tools_available(context) {
+        planned_tools.add_with_exposure(EnterWorktreeHandler, ToolExposure::DirectModelOnly);
+        planned_tools.add_with_exposure(ExitWorktreeHandler, ToolExposure::DirectModelOnly);
+    }
 
     if features.enabled(Feature::DeferredExecutor) {
         planned_tools.add(WaitForEnvironmentHandler);

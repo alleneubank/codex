@@ -200,6 +200,8 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
     };
     expected_tools_names.extend([
         "update_plan",
+        "enter_worktree",
+        "exit_worktree",
         "request_user_input",
         "apply_patch",
         "view_image",

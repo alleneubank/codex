@@ -19,8 +19,20 @@ use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelections;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use tokio::sync::Semaphore;
+
+/// Session-scoped metadata for a worktree entered through the core worktree tools.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveWorktree {
+    pub(crate) original_cwd: AbsolutePathBuf,
+    pub(crate) original_common_dir: PathBuf,
+    pub(crate) original_workspace_roots: Option<Vec<AbsolutePathBuf>>,
+    pub(crate) worktree_path: AbsolutePathBuf,
+    pub(crate) branch: Option<String>,
+    pub(crate) name: Option<String>,
+}
 
 /// Context for an initialized model agent
 ///
@@ -31,6 +43,7 @@ pub(crate) struct Session {
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
     pub(super) state: Mutex<SessionState>,
+    pub(super) active_worktree: Mutex<Option<ActiveWorktree>>,
     /// Serializes rebuild/apply cycles for the running proxy; each cycle
     /// rebuilds from the current SessionState while holding this lock.
     pub(super) managed_network_proxy_refresh_lock: Semaphore,
@@ -140,6 +153,16 @@ impl SessionConfiguration {
 
     pub(super) fn profile_workspace_roots(&self) -> &[AbsolutePathBuf] {
         self.permission_profile_state.profile_workspace_roots()
+    }
+
+    pub(super) fn effective_workspace_roots(&self) -> Vec<AbsolutePathBuf> {
+        let mut workspace_roots = self.workspace_roots.clone();
+        for root in self.profile_workspace_roots() {
+            if !workspace_roots.contains(root) {
+                workspace_roots.push(root.clone());
+            }
+        }
+        workspace_roots
     }
 
     pub(super) fn apply_permission_profile_to_permissions(
@@ -468,6 +491,18 @@ impl Session {
     /// Returns the identity shared by the root thread and all descendant threads.
     pub(crate) fn session_id(&self) -> SessionId {
         self.services.agent_control.session_id()
+    }
+
+    pub(crate) async fn active_worktree(&self) -> Option<ActiveWorktree> {
+        self.active_worktree.lock().await.clone()
+    }
+
+    pub(crate) async fn set_active_worktree(&self, active_worktree: ActiveWorktree) {
+        *self.active_worktree.lock().await = Some(active_worktree);
+    }
+
+    pub(crate) async fn clear_active_worktree(&self) {
+        *self.active_worktree.lock().await = None;
     }
 
     pub(crate) async fn originator(&self) -> String {
@@ -1146,6 +1181,7 @@ impl Session {
                 tx_event: tx_event.clone(),
                 agent_status,
                 state: Mutex::new(state),
+                active_worktree: Mutex::new(None),
                 managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
                 features: config.features.clone(),
                 multi_agent_version,
