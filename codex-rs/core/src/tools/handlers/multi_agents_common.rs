@@ -3,6 +3,7 @@ use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
 use crate::config::HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
+use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
@@ -222,6 +223,32 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
     config: &mut Config,
     turn: &TurnContext,
 ) -> Result<(), FunctionCallError> {
+    #[allow(deprecated)]
+    let cwd = turn.cwd.clone();
+    apply_spawn_agent_runtime_overrides_for_cwd(config, turn, cwd)
+}
+
+pub(crate) fn apply_spawn_agent_step_runtime_overrides(
+    config: &mut Config,
+    step_context: &StepContext,
+) -> Result<(), FunctionCallError> {
+    let cwd = step_context
+        .environments
+        .primary()
+        .and_then(|environment| environment.cwd().to_abs_path().ok())
+        .unwrap_or_else(|| {
+            #[allow(deprecated)]
+            let cwd = step_context.turn.cwd.clone();
+            cwd
+        });
+    apply_spawn_agent_runtime_overrides_for_cwd(config, step_context.turn.as_ref(), cwd)
+}
+
+fn apply_spawn_agent_runtime_overrides_for_cwd(
+    config: &mut Config,
+    turn: &TurnContext,
+    cwd: codex_utils_absolute_path::AbsolutePathBuf,
+) -> Result<(), FunctionCallError> {
     config
         .permissions
         .approval_policy
@@ -230,9 +257,7 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
             FunctionCallError::RespondToModel(format!("approval_policy is invalid: {err}"))
         })?;
     config.approvals_reviewer = turn.config.approvals_reviewer;
-    #[allow(deprecated)]
-    let turn_cwd = turn.cwd.clone();
-    config.cwd = turn_cwd;
+    config.cwd = cwd;
     config
         .permissions
         .set_permission_profile(turn.permission_profile())
