@@ -66,6 +66,9 @@ pub(super) async fn read_thread(
                 rollout_thread.name = thread.name;
             }
             rollout_thread.git_info = thread.git_info;
+            if !thread.cwd.as_os_str().is_empty() {
+                rollout_thread.cwd = thread.cwd;
+            }
             rollout_thread.permission_profile = permission_profile_from_metadata_value(
                 &metadata_sandbox_policy,
                 rollout_thread.cwd.as_path(),
@@ -627,6 +630,8 @@ mod tests {
         );
         builder.model_provider = Some(config.default_model_provider_id.clone());
         builder.git_branch = Some("sqlite-branch".to_string());
+        let sqlite_cwd = home.path().join("sqlite-workspace");
+        builder.cwd = sqlite_cwd.clone();
         let recency_at = chrono::DateTime::parse_from_rfc3339("2026-01-03T12:00:00Z")
             .expect("timestamp should parse")
             .with_timezone(&Utc);
@@ -666,6 +671,7 @@ mod tests {
         );
         assert_eq!(thread.section_position, Some(2_000_000));
         assert_eq!(thread.section_entered_at, Some(recency_at));
+        assert_eq!(thread.cwd, sqlite_cwd);
         assert_eq!(git_info.branch.as_deref(), Some("sqlite-branch"));
         assert_eq!(
             git_info.commit_hash.as_ref().map(|sha| sha.0.as_str()),

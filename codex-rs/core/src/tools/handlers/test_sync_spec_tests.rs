@@ -57,6 +57,12 @@ fn test_sync_tool_matches_expected_spec() {
                             "Delay before any other action. Defaults to no delay.".to_string(),
                         )),
                     ),
+                    (
+                        "timing_label".to_string(),
+                        JsonSchema::string(Some(
+                            "When set, return a JSON timing record with this label.".to_string(),
+                        )),
+                    ),
                 ]), /*required*/ None, Some(false.into())),
             output_schema: None,
         })
