@@ -32,6 +32,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::config::CurrentTimeReminderConfig;
+use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
@@ -496,6 +497,72 @@ async fn request_user_input_stays_direct_in_code_mode_only() {
 }
 
 #[tokio::test]
+async fn worktree_tools_are_direct_model_only_in_default_tool_plan() {
+    let plan = probe(|_| {}).await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+    assert_eq!(
+        plan.exposure("enter_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+    assert_eq!(
+        plan.exposure("exit_worktree"),
+        ToolExposure::DirectModelOnly
+    );
+}
+
+#[tokio::test]
+async fn worktree_tools_stay_visible_without_ready_local_primary_environment() {
+    let plan = probe(|turn| {
+        turn.environments = TurnEnvironmentSnapshot::default();
+    })
+    .await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+}
+
+#[tokio::test]
+async fn worktree_tools_stay_visible_for_remote_primary_environment() {
+    let plan = probe(|turn| {
+        let cwd = turn
+            .environments
+            .primary()
+            .expect("primary environment")
+            .cwd()
+            .clone();
+        turn.environments.turn_environments =
+            vec![crate::session::turn_context::TurnEnvironment::new(
+                "remote".to_string(),
+                Arc::new(
+                    codex_exec_server::Environment::create_for_tests(Some(
+                        "ws://127.0.0.1:1/remote-exec-server".to_string(),
+                    ))
+                    .expect("remote test environment"),
+                ),
+                cwd,
+                /*shell*/ None,
+            )];
+    })
+    .await;
+
+    plan.assert_visible_contains(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_contains(&["enter_worktree", "exit_worktree"]);
+}
+
+#[tokio::test]
+async fn worktree_tools_are_not_exposed_in_code_mode_only() {
+    let plan = probe(|turn| {
+        set_features(turn, &[Feature::CodeMode, Feature::CodeModeOnly]);
+    })
+    .await;
+
+    plan.assert_visible_lacks(&["enter_worktree", "exit_worktree"]);
+    plan.assert_registered_lacks(&["enter_worktree", "exit_worktree"]);
+}
+
+#[tokio::test]
 async fn shell_family_registers_visible_unified_exec_and_hidden_legacy_shell() {
     let plan = probe(|turn| {
         set_features(turn, &[Feature::ShellTool, Feature::UnifiedExec]);
@@ -687,6 +754,7 @@ async fn environment_tools_follow_the_step_context() {
     let step_context = Arc::new(StepContext::new(
         Arc::clone(&turn),
         environments,
+        turn.config.effective_workspace_roots(),
         Vec::new(),
         crate::session::McpRuntimeSnapshot::new_uninitialized_for_test(&turn.config),
         /*loaded_agents_md*/ None,

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::SkillInjections;
+use crate::agents_md::LoadedAgentsMd;
 use crate::build_skill_injections;
 use crate::client::ModelClientSession;
 use crate::client_common::Prompt;
@@ -80,6 +81,7 @@ use codex_extension_api::TurnInputContext;
 use codex_extension_api::TurnInputEnvironment;
 use codex_features::Feature;
 use codex_git_utils::get_git_repo_root_with_fs;
+use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ServiceTier;
@@ -103,6 +105,7 @@ use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
 use codex_protocol::protocol::SafetyBufferingEvent;
 use codex_protocol::protocol::TurnDiffEvent;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use codex_tools::ToolName;
@@ -166,6 +169,8 @@ pub(crate) async fn run_turn(
 
     // run_turn owns the step used to seed context and make the first sampling request.
     let first_step_context = sess.capture_step_context(Arc::clone(&turn_context)).await;
+    let mut world_state_step_signature =
+        StepWorldStateSignature::from_step_context(first_step_context.as_ref());
     // Keep the exact model-visible state used by this turn and its inline compactions.
     let (mut world_state, display_roots) = tokio::join!(
         sess.record_context_updates_and_set_reference_context_item(first_step_context.as_ref()),
@@ -257,14 +262,12 @@ pub(crate) async fn run_turn(
             )
             .await?;
 
-            if turn_context
-                .config
-                .features
-                .enabled(Feature::DeferredExecutor)
-            {
+            let step_signature = StepWorldStateSignature::from_step_context(step_context.as_ref());
+            if step_signature != world_state_step_signature {
                 world_state = sess
                     .record_step_world_state_if_changed(&world_state, step_context.as_ref())
                     .await;
+                world_state_step_signature = step_signature;
             }
 
             // Construct the input that we will send to the model.
@@ -456,6 +459,29 @@ pub(crate) async fn run_turn(
     }
 
     Ok(last_agent_message)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct StepWorldStateSignature {
+    ready_environment_selections: Vec<TurnEnvironmentSelection>,
+    all_environment_selections: Vec<TurnEnvironmentSelection>,
+    selected_capability_roots: Vec<SelectedCapabilityRoot>,
+    loaded_agents_md: Option<LoadedAgentsMd>,
+}
+
+impl StepWorldStateSignature {
+    fn from_step_context(step_context: &StepContext) -> Self {
+        Self {
+            ready_environment_selections: step_context.environments.to_selections(),
+            all_environment_selections: step_context.environments.selections_including_starting(),
+            selected_capability_roots: step_context
+                .selected_capability_roots
+                .iter()
+                .map(|root| root.selected_root().clone())
+                .collect(),
+            loaded_agents_md: step_context.loaded_agents_md.as_deref().cloned(),
+        }
+    }
 }
 
 #[instrument(level = "trace", skip_all)]

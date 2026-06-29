@@ -35,6 +35,7 @@ pub(crate) struct ToolCallRuntime {
     step_context: Arc<StepContext>,
     tracker: SharedTurnDiffTracker,
     parallel_execution: Arc<RwLock<()>>,
+    serial_tool_call_seen: Arc<AtomicBool>,
 }
 
 impl ToolCallRuntime {
@@ -50,6 +51,7 @@ impl ToolCallRuntime {
             step_context,
             tracker,
             parallel_execution: Arc::new(RwLock::new(())),
+            serial_tool_call_seen: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -93,6 +95,11 @@ impl ToolCallRuntime {
         let turn = Arc::clone(&step_context.turn);
         let tracker = Arc::clone(&self.tracker);
         let lock = Arc::clone(&self.parallel_execution);
+        let serial_tool_call_seen = Arc::clone(&self.serial_tool_call_seen);
+        let refresh_step_context_after_serial_tool = serial_tool_call_seen.load(Ordering::Acquire);
+        if !supports_parallel {
+            serial_tool_call_seen.store(true, Ordering::Release);
+        }
         let invocation_cancellation_token = cancellation_token.clone();
         let wait_for_runtime_cancellation = self.router.tool_waits_for_runtime_cancellation(&call);
         let started = Instant::now();
@@ -114,10 +121,17 @@ impl ToolCallRuntime {
 
         let mut handle: AbortOnDropHandle<Result<AnyToolResult, FunctionCallError>> =
             AbortOnDropHandle::new(tokio::spawn(async move {
-                let _guard = if supports_parallel {
-                    Either::Left(lock.read().await)
+                let _guard = {
+                    if supports_parallel {
+                        Either::Left(lock.read().await)
+                    } else {
+                        Either::Right(lock.write().await)
+                    }
+                };
+                let step_context = if refresh_step_context_after_serial_tool {
+                    session.capture_step_context(Arc::clone(&turn)).await
                 } else {
-                    Either::Right(lock.write().await)
+                    step_context
                 };
 
                 router
@@ -543,6 +557,86 @@ mod tests {
             .drain(..)
             .collect::<Vec<_>>();
         assert_eq!(vec![ToolCallOutcome::Aborted], actual);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_for_serial_tool_lock_returns_aborted_response()
+    -> anyhow::Result<()> {
+        let (session, turn_context) = crate::session::tests::make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+        let cleanup_tool_name = codex_tools::ToolName::plain("cleanup_tool");
+        let queued_tool_name = codex_tools::ToolName::plain("queued_tool");
+        let (started_tx, started_rx) = oneshot::channel();
+        let (cleanup_started_tx, cleanup_started_rx) = oneshot::channel();
+        let allow_cleanup = Arc::new(Notify::new());
+        let cleanup_handler = Arc::new(CancellationCleanupHandler {
+            tool_name: cleanup_tool_name.clone(),
+            started: std::sync::Mutex::new(Some(started_tx)),
+            cleanup_started: std::sync::Mutex::new(Some(cleanup_started_tx)),
+            allow_cleanup: Arc::clone(&allow_cleanup),
+        }) as Arc<dyn CoreToolRuntime>;
+        let queued_handler = Arc::new(ImmediateHandler {
+            tool_name: queued_tool_name.clone(),
+        }) as Arc<dyn CoreToolRuntime>;
+        let step_context = StepContext::for_test(Arc::clone(&turn_context));
+        let router = Arc::new(ToolRouter::from_parts(
+            ToolRegistry::from_tools([cleanup_handler, queued_handler]),
+            Vec::new(),
+        ));
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+        let runtime = ToolCallRuntime::new(router, session, step_context, tracker);
+        let cleanup_token = CancellationToken::new();
+        let queued_token = CancellationToken::new();
+
+        let cleanup_task = tokio::spawn(runtime.clone().handle_tool_call(
+            ToolCall {
+                tool_name: cleanup_tool_name,
+                call_id: "call-cleanup".to_string(),
+                payload: ToolPayload::Function {
+                    arguments: "{}".to_string(),
+                },
+            },
+            cleanup_token.clone(),
+        ));
+        started_rx.await.expect("first handler should start");
+
+        let queued_task = tokio::spawn(runtime.handle_tool_call(
+            ToolCall {
+                tool_name: queued_tool_name,
+                call_id: "call-queued".to_string(),
+                payload: ToolPayload::Function {
+                    arguments: "{}".to_string(),
+                },
+            },
+            queued_token.clone(),
+        ));
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        queued_token.cancel();
+
+        let queued_response = tokio::time::timeout(Duration::from_secs(1), queued_task)
+            .await
+            .expect("queued cancellation should not wait for the serial lock holder")
+            .expect("queued tool response task should join")?;
+        let ResponseInputItem::FunctionCallOutput { output, .. } = queued_response else {
+            anyhow::bail!("cancelled queued tool should return function output");
+        };
+        let FunctionCallOutputBody::Text(text) = output.body else {
+            anyhow::bail!("cancelled queued tool output should be text");
+        };
+        assert!(text.contains("aborted by user"));
+
+        cleanup_token.cancel();
+        cleanup_started_rx
+            .await
+            .expect("first handler should start cleanup");
+        allow_cleanup.notify_one();
+        let _ = tokio::time::timeout(Duration::from_secs(1), cleanup_task)
+            .await
+            .expect("timed out waiting for cleanup response")
+            .expect("cleanup response task should join")?;
 
         Ok(())
     }
