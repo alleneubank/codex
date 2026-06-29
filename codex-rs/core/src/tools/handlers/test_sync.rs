@@ -3,8 +3,11 @@ use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
+use serde_json::json;
 use tokio::sync::Barrier;
 use tokio::time::sleep;
 
@@ -47,6 +50,8 @@ struct TestSyncArgs {
     sleep_after_ms: Option<u64>,
     #[serde(default)]
     barrier: Option<BarrierArgs>,
+    #[serde(default)]
+    timing_label: Option<String>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -92,6 +97,7 @@ impl TestSyncHandler {
         };
 
         let args: TestSyncArgs = parse_arguments(&arguments)?;
+        let start_ms = args.timing_label.as_ref().map(|_| unix_time_millis());
 
         if let Some(delay) = args.sleep_before_ms
             && delay > 0
@@ -109,14 +115,32 @@ impl TestSyncHandler {
             sleep(Duration::from_millis(delay)).await;
         }
 
+        let output = match args.timing_label {
+            Some(label) => json!({
+                "label": label,
+                "start_ms": start_ms.unwrap_or_else(unix_time_millis),
+                "end_ms": unix_time_millis(),
+            })
+            .to_string(),
+            None => "ok".to_string(),
+        };
+
         Ok(boxed_tool_output(FunctionToolOutput::from_text(
-            "ok".to_string(),
+            output,
             Some(true),
         )))
     }
 }
 
 impl CoreToolRuntime for TestSyncHandler {}
+
+fn unix_time_millis() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
 
 async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
     if args.participants == 0 {

@@ -613,9 +613,9 @@ async fn shell_command_timeout_includes_timeout_prefix_and_metadata() -> Result<
     let test = builder.build(&server).await?;
 
     let call_id = "shell-command-timeout";
-    let timeout_ms = 50u64;
+    let timeout_ms = 200u64;
     let args = json!({
-        "command": "yes line | head -n 400; sleep 1",
+        "command": "printf 'line\\n'; sleep 5",
         "login": false,
         "timeout_ms": timeout_ms,
     });
@@ -684,7 +684,12 @@ async fn shell_command_timeout_includes_timeout_prefix_and_metadata() -> Result<
 
         // Fallback: accept the signal classification path to deflake the test.
         let signal_pattern = r"(?is)^execution error:.*signal.*$";
-        assert_regex_match(signal_pattern, output_str);
+        assert!(
+            Regex::new(signal_pattern)
+                .expect("signal timeout output regex should compile")
+                .is_match(output_str),
+            "timeout output did not match accepted formats:\n{output_str}"
+        );
     }
 
     Ok(())
