@@ -915,6 +915,21 @@ impl TurnEnvironmentSnapshot {
             .collect()
     }
 
+    pub(crate) fn selections_including_starting(&self) -> Vec<TurnEnvironmentSelection> {
+        self.environments
+            .iter()
+            .filter_map(|environment| match environment {
+                TurnEnvironmentState::Ready(environment) => Some(environment.selection()),
+                TurnEnvironmentState::Starting(environment) => Some(
+                    environment
+                        .config_origin
+                        .into_input_selection(environment.selection.clone()),
+                ),
+                TurnEnvironmentState::Failed => None,
+            })
+            .collect()
+    }
+
     pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
         self.primary()
             .map(|environment| environment.environment.get_filesystem())
@@ -1484,6 +1499,10 @@ url = "ws://127.0.0.1:8765"
             vec![resolved_remote.clone()]
         );
         assert_eq!(starting.to_selections(), vec![local.clone()]);
+        assert_eq!(
+            starting.selections_including_starting(),
+            vec![remote.clone(), local.clone()]
+        );
         assert!(starting.single_local_environment().is_none());
 
         let next_config = EnvironmentConfig {

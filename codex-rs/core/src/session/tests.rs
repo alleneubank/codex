@@ -43,6 +43,10 @@ use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::WindowsSandboxModeToml;
 use core_test_support::test_codex::TurnInputRequest as ExternalTurnInputRequest;
 
+use codex_exec_server::Environment;
+use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use codex_exec_server::REMOTE_ENVIRONMENT_ID;
 use codex_features::Feature;
 use codex_file_system::FileSystemSandboxContext;
 use codex_http_client::ClientRouteClass;
@@ -108,7 +112,9 @@ use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolCallSource;
@@ -219,6 +225,7 @@ use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration as StdDuration;
@@ -292,6 +299,7 @@ impl StepContext {
 }
 
 mod guardian_tests;
+mod worktree_tests;
 
 struct InstructionsTestCase {
     slug: &'static str,
@@ -3775,7 +3783,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         active_permission_profile: None,
@@ -6619,6 +6627,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         agent_status: agent_status_tx,
         state: Mutex::new(state),
         thread_settings_persistence: Semaphore::new(/*permits*/ 1),
+        active_worktree: Mutex::new(None),
+        worktree_transition_revision: AtomicU64::new(0),
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         guardian_context_mode: GuardianContextMode::from_features(&config.features),
@@ -6712,6 +6722,14 @@ async fn load_latest_config_for_session(session: &Session) -> Config {
 async fn make_session_with_config_and_rx(
     mutator: impl FnOnce(&mut Config),
 ) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
+    make_session_with_config_and_rx_with_environments(mutator, None, None).await
+}
+
+pub(crate) async fn make_session_with_config_and_rx_with_environments(
+    mutator: impl FnOnce(&mut Config),
+    environment_selections: Option<Vec<TurnEnvironmentSelection>>,
+    inherited_environments: Option<TurnEnvironmentSnapshot>,
+) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let mut config = build_test_config(codex_home.path()).await;
     mutator(&mut config);
@@ -6733,7 +6751,8 @@ async fn make_session_with_config_and_rx(
             developer_instructions: None,
         },
     };
-    let default_environments = vec![local(config.cwd.clone())];
+    let default_environments =
+        environment_selections.unwrap_or_else(|| vec![local(config.cwd.clone())]);
     let session_configuration = SessionConfiguration {
         provider: create_model_provider(
             config.model_provider.clone(),
@@ -6816,7 +6835,7 @@ async fn make_session_with_config_and_rx(
         AgentControl::default(),
         /*reserved_thread_id*/ None,
         environment_manager,
-        /*inherited_environments*/ None,
+        inherited_environments,
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
@@ -8925,6 +8944,8 @@ where
         agent_status: agent_status_tx,
         state: Mutex::new(state),
         thread_settings_persistence: Semaphore::new(/*permits*/ 1),
+        active_worktree: Mutex::new(None),
+        worktree_transition_revision: AtomicU64::new(0),
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         guardian_context_mode: GuardianContextMode::from_features(&config.features),
