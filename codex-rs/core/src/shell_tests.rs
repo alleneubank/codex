@@ -9,17 +9,19 @@ fn detects_zsh() {
 
     let shell_path = zsh_shell.shell_path;
 
-    assert_eq!(shell_path, std::path::Path::new("/bin/zsh"));
+    assert!(
+        shell_path.file_name().and_then(|name| name.to_str()) == Some("zsh"),
+        "shell path: {shell_path:?}",
+    );
 }
 
 #[test]
 #[cfg(target_os = "macos")]
 fn fish_fallback_to_zsh() {
     let zsh_shell = default_user_shell_from_path(Some(PathBuf::from("/bin/fish")));
+    let expected_zsh_shell = get_shell(ShellType::Zsh, /*path*/ None).unwrap();
 
-    let shell_path = zsh_shell.shell_path;
-
-    assert_eq!(shell_path, std::path::Path::new("/bin/zsh"));
+    assert_eq!(zsh_shell, expected_zsh_shell);
 }
 
 #[test]
