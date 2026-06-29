@@ -12,6 +12,7 @@ mod status;
 /// Git configuration that rejects implicitly discovered bare repositories while
 /// preserving repositories selected explicitly through `GIT_DIR` or `--git-dir`.
 pub const SAFE_BARE_REPOSITORY_CONFIG: &str = "safe.bareRepository=explicit";
+mod worktree;
 
 pub use apply::ApplyGitRequest;
 pub use apply::ApplyGitResult;
@@ -48,3 +49,11 @@ pub use info::recent_commits;
 pub use info::resolve_root_git_project_for_trust;
 pub use platform::create_symlink;
 pub use status::get_has_changes_in_repo;
+pub use worktree::ManagedWorktree;
+pub use worktree::WorktreeInfo;
+pub use worktree::create_or_reuse_managed_worktree;
+pub use worktree::inspect_worktree;
+pub use worktree::managed_worktree_path;
+pub use worktree::managed_worktrees_dir;
+pub use worktree::remove_managed_worktree;
+pub use worktree::validate_managed_same_repository_worktree_with_info;
