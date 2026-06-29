@@ -41,6 +41,7 @@ impl EnvironmentsState {
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
         current_date: Option<String>,
+        workspace_roots: &[PathUri],
     ) -> Self {
         let shell_version = if turn_context
             .config

@@ -42,6 +42,10 @@ use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::WindowsSandboxModeToml;
 use core_test_support::test_codex::TurnInputRequest as ExternalTurnInputRequest;
 
+use codex_exec_server::Environment;
+use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use codex_exec_server::REMOTE_ENVIRONMENT_ID;
 use codex_features::Feature;
 use codex_file_system::FileSystemSandboxContext;
 use codex_http_client::ClientRouteClass;
@@ -106,7 +110,9 @@ use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolCallSource;
@@ -216,6 +222,7 @@ use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration as StdDuration;
@@ -250,6 +257,10 @@ impl StepContext {
             selected.approvals_reviewer = turn.config.approvals_reviewer;
         });
         settings.service_tier = turn.config.service_tier.clone();
+        let workspace_roots = environments
+            .primary()
+            .map(|environment| environment.workspace_roots().to_vec())
+            .unwrap_or_default();
         Arc::new(Self {
             token_budget: token_budget::resolve_token_budget(
                 turn.configured_token_budget.as_ref(),
@@ -260,6 +271,7 @@ impl StepContext {
             session_telemetry: turn.session_telemetry.clone(),
             turn: Arc::clone(&turn),
             environments,
+            workspace_roots,
             selected_capability_roots: Vec::new(),
             executor_capability_discovery: None,
             mcp: Arc::new(codex_mcp::McpBinding::empty(mcp_config_for_test(
@@ -289,6 +301,7 @@ impl StepContext {
 }
 
 mod guardian_tests;
+mod worktree_tests;
 
 struct InstructionsTestCase {
     slug: &'static str,
@@ -6430,6 +6443,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         tx_event,
         agent_status: agent_status_tx,
         state: Mutex::new(state),
+        active_worktree: Mutex::new(None),
+        worktree_transition_revision: AtomicU64::new(0),
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         windows_sandbox_proxy_settings_mode:
@@ -8709,6 +8724,8 @@ where
         tx_event,
         agent_status: agent_status_tx,
         state: Mutex::new(state),
+        active_worktree: Mutex::new(None),
+        worktree_transition_revision: AtomicU64::new(0),
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         windows_sandbox_proxy_settings_mode:
