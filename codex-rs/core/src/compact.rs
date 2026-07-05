@@ -94,7 +94,7 @@ pub(crate) async fn build_compaction_initial_context(
             step_context,
         } => {
             let items = sess
-                .build_initial_context_with_world_state(
+                .build_full_initial_context_with_world_state(
                     step_context.turn.as_ref(),
                     world_state.as_ref(),
                 )
