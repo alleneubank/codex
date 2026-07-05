@@ -234,6 +234,7 @@ define_runtime_action_bindings! {
         toggle_fast_mode,
         toggle_raw_output,
         toggle_side_conversation,
+        cycle_permission_mode,
     ],
     "chat" => Chat, chat, chat [
         interrupt_turn,

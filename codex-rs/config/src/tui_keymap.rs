@@ -116,6 +116,8 @@ pub struct TuiGlobalKeymap {
     pub toggle_raw_output: Option<KeybindingsSpec>,
     /// Switch between a side conversation and its parent without closing either.
     pub toggle_side_conversation: Option<KeybindingsSpec>,
+    /// Cycle through permission modes.
+    pub cycle_permission_mode: Option<KeybindingsSpec>,
 }
 
 /// Chat context keybindings.

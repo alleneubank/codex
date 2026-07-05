@@ -93,6 +93,8 @@ pub(crate) struct AppKeymap {
     pub(crate) toggle_raw_output: Vec<KeyBinding>,
     /// Switch between a side conversation and its parent without closing either.
     pub(crate) toggle_side_conversation: Vec<KeyBinding>,
+    /// Cycle through permission modes.
+    pub(crate) cycle_permission_mode: Vec<KeyBinding>,
 }
 
 /// Chat-level keybindings evaluated at the app event layer.
@@ -574,6 +576,16 @@ impl RuntimeKeymap {
                     binding.action.context.overlaps(KeymapContext::Global)
                         && binding.chord.prefix.parts() == key_hint::alt(KeyCode::Char('a')).parts()
                 }));
+        let cycle_permission_mode_default_is_shadowed =
+            keymap.global.cycle_permission_mode.is_none()
+                && (configured_main_surface_alias_is_used(keymap, "alt-p")
+                    || configured_context_alias_is_used(&keymap.list, "alt-p")
+                    || configured_context_alias_is_used(&keymap.approval, "alt-p")
+                    || chords.bindings.iter().any(|binding| {
+                        binding.action.context.overlaps(KeymapContext::Global)
+                            && binding.chord.prefix.parts()
+                                == key_hint::alt(KeyCode::Char('p')).parts()
+                    }));
 
         let app = AppKeymap {
             open_agents: if open_agents_default_is_shadowed {
@@ -627,6 +639,15 @@ impl RuntimeKeymap {
                     keymap.global.toggle_side_conversation.as_ref(),
                     &defaults.app.toggle_side_conversation,
                     "tui.keymap.global.toggle_side_conversation",
+                )?
+            },
+            cycle_permission_mode: if cycle_permission_mode_default_is_shadowed {
+                Vec::new()
+            } else {
+                resolve_bindings(
+                    keymap.global.cycle_permission_mode.as_ref(),
+                    &defaults.app.cycle_permission_mode,
+                    "tui.keymap.global.cycle_permission_mode",
                 )?
             },
         };
@@ -961,7 +982,6 @@ impl RuntimeKeymap {
             chat.increase_reasoning_effort
                 .retain(|binding| *binding != key_hint::shift(KeyCode::Up));
         }
-
         let pager = PagerKeymap {
             scroll_up: resolve_local!(keymap, defaults, pager, scroll_up),
             scroll_down: resolve_local!(keymap, defaults, pager, scroll_down),
@@ -1034,6 +1054,10 @@ impl RuntimeKeymap {
             (
                 keymap.global.toggle_side_conversation.as_ref(),
                 app.toggle_side_conversation.as_slice(),
+            ),
+            (
+                keymap.global.cycle_permission_mode.as_ref(),
+                app.cycle_permission_mode.as_slice(),
             ),
             (keymap.list.move_up.as_ref(), list_move_up.as_slice()),
             (keymap.list.move_down.as_ref(), list_move_down.as_slice()),
@@ -1180,6 +1204,7 @@ impl RuntimeKeymap {
                 toggle_fast_mode: default_bindings![],
                 toggle_raw_output: default_bindings![alt(KeyCode::Char('r'))],
                 toggle_side_conversation: default_bindings![ctrl(KeyCode::Char('/'))],
+                cycle_permission_mode: default_bindings![alt(KeyCode::Char('p'))],
             },
             chords: Arc::default(),
             chat: ChatKeymap {
@@ -1481,6 +1506,10 @@ impl RuntimeKeymap {
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
                 ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
+                (
+                    "cycle_permission_mode",
+                    self.app.cycle_permission_mode.as_slice(),
+                ),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
@@ -1526,6 +1555,10 @@ impl RuntimeKeymap {
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
                 ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
+                (
+                    "cycle_permission_mode",
+                    self.app.cycle_permission_mode.as_slice(),
+                ),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
@@ -1577,6 +1610,10 @@ impl RuntimeKeymap {
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
                 ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
+                (
+                    "cycle_permission_mode",
+                    self.app.cycle_permission_mode.as_slice(),
+                ),
             ],
             [
                 ("list.move_up", self.list.move_up.as_slice()),
@@ -1653,6 +1690,10 @@ impl RuntimeKeymap {
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
                 ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
+                (
+                    "cycle_permission_mode",
+                    self.app.cycle_permission_mode.as_slice(),
+                ),
                 (
                     "composer.history_search_previous",
                     self.composer.history_search_previous.as_slice(),
@@ -2548,6 +2589,10 @@ mod tests {
             runtime.app.clear_terminal,
             vec![key_hint::ctrl(KeyCode::Char('l'))]
         );
+        assert_eq!(
+            runtime.app.cycle_permission_mode,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
         assert_eq!(runtime.app.toggle_fast_mode, Vec::new());
         assert_eq!(
             runtime.chat.interrupt_turn,
@@ -3372,6 +3417,110 @@ mod tests {
             runtime.app.toggle_raw_output,
             vec![key_hint::plain(KeyCode::F(12))]
         );
+    }
+
+    #[test]
+    fn permission_mode_cycle_can_be_remapped() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.cycle_permission_mode = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert_eq!(
+            runtime.app.cycle_permission_mode,
+            vec![key_hint::plain(KeyCode::F(12))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.chat.edit_queued_message = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(
+            runtime.chat.edit_queued_message,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_composer_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.composer.submit = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(
+            runtime.composer.submit,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_editor_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.editor.move_left = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(
+            runtime.editor.move_left,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_vim_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.vim_normal.move_left = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(
+            runtime.vim_normal.move_left,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_list_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.list.accept = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(runtime.list.accept, vec![key_hint::alt(KeyCode::Char('p'))]);
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_approval_alt_p_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.approval.cancel = Some(one("alt-p"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
+        assert_eq!(
+            runtime.approval.cancel,
+            vec![key_hint::alt(KeyCode::Char('p'))]
+        );
+    }
+
+    #[test]
+    fn permission_mode_cycle_default_yields_to_existing_global_chord_prefix() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.open_transcript = Some(one("alt-p ctrl-t"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("existing chord remains valid");
+
+        assert!(runtime.app.cycle_permission_mode.is_empty());
     }
 
     #[test]
