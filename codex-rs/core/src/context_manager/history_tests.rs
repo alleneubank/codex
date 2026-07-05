@@ -5,6 +5,7 @@ use crate::context::world_state::WorldStateSection;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_protocol::AgentPath;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
@@ -223,7 +224,7 @@ fn reference_context_item() -> TurnContextItem {
         current_date: Some("2026-03-23".to_string()),
         timezone: Some("America/Los_Angeles".to_string()),
         approval_policy: AskForApproval::OnRequest,
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
         permission_profile: None,
         network: None,

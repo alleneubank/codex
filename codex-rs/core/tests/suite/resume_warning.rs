@@ -5,6 +5,7 @@ use std::sync::Arc;
 use codex_core::NewThread;
 use codex_login::CodexAuth;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::protocol::EventMsg;
@@ -34,7 +35,7 @@ fn resume_history(
         current_date: None,
         timezone: None,
         approval_policy: config.permissions.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: config.legacy_sandbox_policy(),
         permission_profile: None,
         network: None,

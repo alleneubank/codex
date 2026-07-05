@@ -76,7 +76,7 @@ pub(crate) async fn build_compaction_initial_context(
     match initial_context_injection {
         InitialContextInjection::BeforeLastUserMessage(world_state) => {
             let items = sess
-                .build_initial_context_with_world_state(turn_context, world_state.as_ref())
+                .build_full_initial_context_with_world_state(turn_context, world_state.as_ref())
                 .await;
             (items, Some(Arc::clone(world_state)))
         }

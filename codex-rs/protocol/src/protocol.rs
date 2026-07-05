@@ -5967,7 +5967,7 @@ mod tests {
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            approvals_reviewer: None,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
             sandbox_policy: SandboxPolicy::DangerFullAccess,
             permission_profile: None,
             network: Some(TurnContextNetworkItem {

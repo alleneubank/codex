@@ -5,6 +5,7 @@ use crate::config::RolloutConfig;
 use chrono::TimeZone;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::AskForApproval;
@@ -1212,7 +1213,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            approvals_reviewer: None,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             permission_profile: None,
             network: None,

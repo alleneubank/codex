@@ -155,6 +155,7 @@ mod tests {
     use chrono::DateTime;
     use chrono::Utc;
     use codex_protocol::ThreadId;
+    use codex_protocol::config_types::ApprovalsReviewer;
     use codex_protocol::items::TurnItem;
     use codex_protocol::items::UserMessageItem;
     use codex_protocol::models::ContentItem;
@@ -381,7 +382,7 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::Never,
-                approvals_reviewer: None,
+                approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: SandboxPolicy::DangerFullAccess,
                 permission_profile: None,
                 network: None,
@@ -427,7 +428,7 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                approvals_reviewer: None,
+                approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: SandboxPolicy::DangerFullAccess,
                 permission_profile: Some(permission_profile.clone()),
                 network: None,
@@ -469,7 +470,7 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                approvals_reviewer: None,
+                approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 permission_profile: None,
                 network: None,
@@ -508,7 +509,7 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                approvals_reviewer: None,
+                approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 permission_profile: None,
                 network: None,

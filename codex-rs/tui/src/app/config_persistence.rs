@@ -413,7 +413,7 @@ impl App {
                         serde_json::json!(auto_review_preset.approvals_reviewer.to_string()),
                     ));
                     if previous_approvals_reviewer != auto_review_preset.approvals_reviewer {
-                        permissions_history_label = Some("Approve for me");
+                        permissions_history_label = Some("Auto");
                     }
                 } else if !effective_enabled {
                     feature_edits.push(crate::config_update::clear_config_value(
@@ -434,7 +434,7 @@ impl App {
                 if !self.try_set_approval_policy_on_config(
                     &mut feature_config,
                     auto_review_preset.approval_policy,
-                    "Failed to enable Approve for me",
+                    "Failed to enable Auto",
                     "failed to set auto-review approval policy on staged config",
                 ) {
                     continue;
@@ -443,7 +443,7 @@ impl App {
                     .try_set_builtin_active_permission_profile_on_config(
                         &mut feature_config,
                         auto_review_preset.active_permission_profile.clone(),
-                        "Failed to enable Approve for me",
+                        "Failed to enable Auto",
                         "failed to set auto-review permission profile on staged config",
                     )
                 else {
@@ -562,7 +562,7 @@ impl App {
                 "failed to set auto-review permission profile on chat config"
             );
             self.chat_widget
-                .add_error_message(format!("Failed to enable Approve for me: {err}"));
+                .add_error_message(format!("Failed to enable Auto: {err}"));
         }
         if permission_profile_override.is_some() {
             self.runtime_permission_profile_override =
@@ -830,7 +830,7 @@ impl App {
                     "failed to sync effective approval policy after an overridden write"
                 );
                 self.chat_widget.add_error_message(format!(
-                    "Failed to refresh overridden Approve for me settings: {err}"
+                    "Failed to refresh overridden Auto settings: {err}"
                 ));
             } else {
                 self.chat_widget.set_approval_policy(policy);
@@ -858,7 +858,7 @@ impl App {
         let Some(permission_profile) = self.try_set_builtin_active_permission_profile_on_config(
             &mut config,
             auto_review_preset.active_permission_profile.clone(),
-            "Failed to refresh overridden Approve for me settings",
+            "Failed to refresh overridden Auto settings",
             "failed to sync overridden Auto-review permission profile",
         ) else {
             return;
@@ -875,9 +875,8 @@ impl App {
                 error = %err,
                 "failed to sync overridden Auto-review permission profile on chat config"
             );
-            self.chat_widget.add_error_message(format!(
-                "Failed to refresh overridden Approve for me settings: {err}"
-            ));
+            self.chat_widget
+                .add_error_message(format!("Failed to refresh overridden Auto settings: {err}"));
             return;
         }
 
