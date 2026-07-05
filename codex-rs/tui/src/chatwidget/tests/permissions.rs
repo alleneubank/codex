@@ -61,7 +61,9 @@ fn windows_sandbox_requirements_stack(
     requirements_stack(requirements_toml)
 }
 
-fn requirements_stack(requirements_toml: codex_config::ConfigRequirementsToml) -> ConfigLayerStack {
+pub(super) fn requirements_stack(
+    requirements_toml: codex_config::ConfigRequirementsToml,
+) -> ConfigLayerStack {
     let mut requirements_with_sources = codex_config::ConfigRequirementsWithSources::default();
     requirements_with_sources
         .merge_unset_fields(RequirementSource::Unknown, requirements_toml.clone());
@@ -255,7 +257,7 @@ async fn profile_permissions_selection_emits_auto_review_mode_event() {
             approval_policy: Some(AskForApproval::OnRequest),
             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
             display_label,
-        }) if profile_id == ":workspace" && display_label == "Approve for me"
+        }) if profile_id == ":workspace" && display_label == "Auto"
     ));
 }
 
@@ -818,7 +820,7 @@ async fn permissions_selection_history_snapshot_full_access_to_default() {
     chat.open_permissions_popup();
     let popup = render_bottom_popup(&chat, /*width*/ 120);
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
-    if popup.contains("Approve for me") {
+    if popup.contains("Auto") {
         chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     }
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
@@ -888,8 +890,8 @@ async fn permissions_selection_hides_auto_review_when_feature_disabled() {
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        !popup.contains("Approve for me"),
-        "expected Approve for me to stay hidden until the feature is enabled: {popup}"
+        !popup.contains("Auto"),
+        "expected Auto to stay hidden until the feature is enabled: {popup}"
     );
 }
 
@@ -919,8 +921,8 @@ async fn permissions_selection_hides_auto_review_when_feature_disabled_even_if_a
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        !popup.contains("Approve for me"),
-        "expected Approve for me to stay hidden when the feature is disabled: {popup}"
+        !popup.contains("Auto"),
+        "expected Auto to stay hidden when the feature is disabled: {popup}"
     );
 }
 
@@ -965,8 +967,8 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        popup.contains("Approve for me (current)"),
-        "expected Approve for me to be current after SessionConfigured sync: {popup}"
+        popup.contains("Auto (current)"),
+        "expected Auto to be current after SessionConfigured sync: {popup}"
     );
 }
 
@@ -1015,8 +1017,8 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
     let popup = render_bottom_popup(&chat, /*width*/ 120);
 
     assert!(
-        popup.contains("Approve for me (current)"),
-        "expected Approve for me to be current even with custom workspace-write details: {popup}"
+        popup.contains("Auto (current)"),
+        "expected Auto to be current even with custom workspace-write details: {popup}"
     );
 }
 
@@ -1050,7 +1052,7 @@ async fn permissions_selection_can_disable_auto_review() {
             event,
             AppEvent::UpdateApprovalsReviewer(ApprovalsReviewer::User)
         )),
-        "expected selecting Ask for approval from Approve for me to switch back to manual approval review: {events:?}"
+        "expected selecting Ask for approval from Auto to switch back to manual approval review: {events:?}"
     );
     assert!(
         !events
@@ -1095,8 +1097,8 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
     assert!(
         popup
             .lines()
-            .any(|line| line.contains("Approve for me") && line.contains('›')),
-        "expected one Down from Ask for approval to select Approve for me: {popup}"
+            .any(|line| line.contains("Auto") && line.contains('›')),
+        "expected one Down from Ask for approval to select Auto: {popup}"
     );
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
@@ -1140,6 +1142,269 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
         active_permission_profile_update,
         ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE)
     );
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_moves_from_ask_to_auto() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let event = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::SelectPermissionProfile(selection) => Some(selection),
+            _ => None,
+        })
+        .expect("expected permission profile selection");
+    assert_eq!(event.profile_id, BUILT_IN_PERMISSION_PROFILE_WORKSPACE);
+    assert_eq!(event.approval_policy, Some(AskForApproval::OnRequest));
+    assert_eq!(
+        event.approvals_reviewer,
+        Some(ApprovalsReviewer::AutoReview)
+    );
+    assert_eq!(event.display_label, "Auto");
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_routes_full_access_through_confirmation() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.config.notices.hide_full_access_warning = None;
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::AutoReview);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let (preset, return_to_permissions, profile_selection) =
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .find_map(|event| match event {
+                AppEvent::OpenFullAccessConfirmation {
+                    preset,
+                    return_to_permissions,
+                    profile_selection,
+                } => Some((preset, return_to_permissions, profile_selection)),
+                _ => None,
+            })
+            .expect("expected full-access confirmation");
+    assert_eq!(preset.id, "full-access");
+    assert!(return_to_permissions);
+    let profile_selection = profile_selection.expect("expected profile selection");
+    assert_eq!(
+        profile_selection.profile_id,
+        BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS
+    );
+    assert_eq!(
+        profile_selection.approval_policy,
+        Some(AskForApproval::Never)
+    );
+    assert_eq!(
+        profile_selection.approvals_reviewer,
+        Some(ApprovalsReviewer::User)
+    );
+    assert_eq!(profile_selection.display_label, "Full Access");
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_wraps_from_full_access_to_read_only() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::Never.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::Disabled,
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let event = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::SelectPermissionProfile(selection) => Some(selection),
+            _ => None,
+        })
+        .expect("expected permission profile selection");
+    #[cfg(target_os = "windows")]
+    {
+        assert_eq!(event.profile_id, ":read-only");
+        assert_eq!(event.approval_policy, Some(AskForApproval::OnRequest));
+        assert_eq!(event.approvals_reviewer, Some(ApprovalsReviewer::User));
+        assert_eq!(event.display_label, "Read Only");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        assert_eq!(event.profile_id, BUILT_IN_PERMISSION_PROFILE_WORKSPACE);
+        assert_eq!(event.approval_policy, Some(AskForApproval::OnRequest));
+        assert_eq!(event.approvals_reviewer, Some(ApprovalsReviewer::User));
+        assert_eq!(event.display_label, ASK_FOR_APPROVAL_LABEL);
+    }
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_skips_auto_when_guardian_disabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ false);
+    chat.config.notices.hide_full_access_warning = None;
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let (preset, profile_selection) = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::OpenFullAccessConfirmation {
+                preset,
+                profile_selection,
+                ..
+            } => Some((preset, profile_selection)),
+            _ => None,
+        })
+        .expect("expected full-access confirmation");
+    assert_eq!(preset.id, "full-access");
+    let profile_selection = profile_selection.expect("expected profile selection");
+    assert_eq!(
+        profile_selection.approvals_reviewer,
+        Some(ApprovalsReviewer::User)
+    );
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_skips_auto_when_reviewer_disallowed() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.config.config_layer_stack = requirements_stack(codex_config::ConfigRequirementsToml {
+        allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::User]),
+        ..Default::default()
+    });
+    chat.config.notices.hide_full_access_warning = None;
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let (preset, profile_selection) = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::OpenFullAccessConfirmation {
+                preset,
+                profile_selection,
+                ..
+            } => Some((preset, profile_selection)),
+            AppEvent::SelectPermissionProfile(selection)
+                if selection.approvals_reviewer == Some(ApprovalsReviewer::AutoReview) =>
+            {
+                panic!("auto-review should be filtered out")
+            }
+            _ => None,
+        })
+        .expect("expected full-access confirmation");
+    assert_eq!(preset.id, "full-access");
+    let profile_selection = profile_selection.expect("expected profile selection");
+    assert_eq!(
+        profile_selection.approvals_reviewer,
+        Some(ApprovalsReviewer::User)
+    );
+}
+
+#[tokio::test]
+async fn permission_mode_cycle_respects_disallowed_full_access() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.config.config_layer_stack = requirements_stack(codex_config::ConfigRequirementsToml {
+        allowed_sandbox_modes: Some(vec![
+            codex_config::SandboxModeRequirement::ReadOnly,
+            codex_config::SandboxModeRequirement::WorkspaceWrite,
+        ]),
+        ..Default::default()
+    });
+    chat.config
+        .permissions
+        .approval_policy
+        .set(AskForApproval::OnRequest.to_core())
+        .expect("set approval policy");
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+        ))
+        .expect("set permission profile");
+    chat.set_approvals_reviewer(ApprovalsReviewer::AutoReview);
+
+    chat.cycle_permission_mode_from_keybinding();
+
+    let event = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::SelectPermissionProfile(selection) => Some(selection),
+            AppEvent::OpenFullAccessConfirmation { .. } => {
+                panic!("full access should be filtered out")
+            }
+            _ => None,
+        })
+        .expect("expected permission profile selection");
+    #[cfg(target_os = "windows")]
+    {
+        assert_eq!(event.profile_id, ":read-only");
+        assert_eq!(event.display_label, "Read Only");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        assert_eq!(event.profile_id, BUILT_IN_PERMISSION_PROFILE_WORKSPACE);
+        assert_eq!(event.display_label, ASK_FOR_APPROVAL_LABEL);
+    }
+    assert_eq!(event.approvals_reviewer, Some(ApprovalsReviewer::User));
 }
 
 #[tokio::test]

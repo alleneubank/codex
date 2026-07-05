@@ -198,6 +198,9 @@ pub(crate) async fn run_turn(
         model: turn_context.model_info.slug.clone(),
         comp_hash: turn_context.model_info.comp_hash.clone(),
         realtime_active: Some(turn_context.realtime_active),
+        permission_profile: turn_context.permission_profile(),
+        approval_policy: turn_context.approval_policy.value(),
+        approvals_reviewer: Some(turn_context.config.approvals_reviewer),
     }))
     .await;
     for response_item in injection_items {

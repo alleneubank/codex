@@ -4,6 +4,7 @@ use super::tests::build_world_state_from_turn_context;
 use super::tests::make_session_and_context;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
@@ -174,7 +175,7 @@ async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previ
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -221,7 +222,7 @@ async fn record_initial_history_resumed_hydrates_previous_turn_settings_from_lif
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -290,7 +291,37 @@ async fn record_initial_history_resumed_hydrates_previous_turn_settings_from_lif
             model: previous_model.to_string(),
             comp_hash: Some("comp-hash-a".to_string()),
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
+    );
+}
+
+#[tokio::test]
+async fn record_initial_history_resumed_preserves_previous_approvals_reviewer() {
+    let (session, turn_context) = make_session_and_context().await;
+    let mut previous_context_item = turn_context.to_turn_context_item();
+    previous_context_item.approvals_reviewer = Some(ApprovalsReviewer::AutoReview);
+
+    session
+        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
+            conversation_id: ThreadId::default(),
+            history: Arc::new(completed_user_turn_rollout(
+                previous_context_item,
+                Vec::new(),
+            )),
+            rollout_path: Some(PathBuf::from("/tmp/resume.jsonl")),
+        }))
+        .await;
+
+    let previous_turn_settings = session
+        .previous_turn_settings()
+        .await
+        .expect("expected previous turn settings");
+    assert_eq!(
+        previous_turn_settings.approvals_reviewer,
+        Some(ApprovalsReviewer::AutoReview)
     );
 }
 
@@ -406,6 +437,9 @@ async fn reconstruct_history_rollback_keeps_history_and_metadata_in_sync_for_com
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -507,6 +541,9 @@ async fn reconstruct_history_rollback_keeps_history_and_metadata_in_sync_for_inc
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -639,6 +676,9 @@ async fn reconstruct_history_rollback_skips_non_user_turns_for_history_and_metad
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -744,6 +784,9 @@ async fn reconstruct_history_rollback_counts_inter_agent_assistant_turns() {
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -977,6 +1020,9 @@ async fn record_initial_history_resumed_rollback_drops_incomplete_user_turn_comp
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -1284,7 +1330,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -1360,6 +1406,9 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
             model: previous_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -1373,7 +1422,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
             current_date: turn_context.current_date.clone(),
             timezone: turn_context.timezone.clone(),
             approval_policy: turn_context.approval_policy.value(),
-            approvals_reviewer: None,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
             sandbox_policy: turn_context.sandbox_policy(),
             permission_profile: None,
             network: None,
@@ -1405,7 +1454,7 @@ async fn record_initial_history_resumed_aborted_turn_without_id_clears_active_tu
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -1510,6 +1559,9 @@ async fn record_initial_history_resumed_aborted_turn_without_id_clears_active_tu
             model: previous_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert!(session.reference_context_item().await.is_none());
@@ -1535,7 +1587,7 @@ async fn record_initial_history_resumed_unmatched_abort_preserves_active_turn_fo
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -1639,6 +1691,9 @@ async fn record_initial_history_resumed_unmatched_abort_preserves_active_turn_fo
             model: current_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -1662,7 +1717,7 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clea
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -1758,6 +1813,9 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clea
             model: previous_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert!(session.reference_context_item().await.is_none());
@@ -1809,6 +1867,9 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_preserves_turn_
             model: turn_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -1832,7 +1893,7 @@ async fn record_initial_history_resumed_replaced_incomplete_compacted_turn_clear
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         network: None,
@@ -1940,6 +2001,9 @@ async fn record_initial_history_resumed_replaced_incomplete_compacted_turn_clear
             model: previous_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert!(session.reference_context_item().await.is_none());
