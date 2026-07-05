@@ -260,6 +260,9 @@ pub(crate) struct PreviousTurnSettings {
     pub(crate) model: String,
     pub(crate) comp_hash: Option<String>,
     pub(crate) realtime_active: Option<bool>,
+    pub(crate) permission_profile: PermissionProfile,
+    pub(crate) approval_policy: AskForApproval,
+    pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
 }
 
 use crate::exec_policy::ExecPolicyUpdateError;
@@ -3464,7 +3467,7 @@ impl Session {
         items
     }
 
-    pub(crate) async fn build_initial_context_with_world_state(
+    pub(crate) async fn build_full_initial_context_with_world_state(
         &self,
         turn_context: &TurnContext,
         world_state: &WorldState,
@@ -3741,7 +3744,7 @@ impl Session {
         };
         let (window_number, window_ids) = window;
         let context_items = self
-            .build_initial_context_with_world_state(turn_context, world_state.as_ref())
+            .build_full_initial_context_with_world_state(turn_context, world_state.as_ref())
             .await
             .into_iter()
             .map(ResponseItemEnvelope::new)

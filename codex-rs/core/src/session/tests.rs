@@ -49,6 +49,7 @@ use codex_protocol::AgentPath;
 use codex_protocol::ResponseItemId;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
@@ -3558,6 +3559,9 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
             model: previous_model.to_string(),
             comp_hash: None,
             realtime_active: Some(turn_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(raw_history_items(&history), Vec::<ResponseItem>::new());
@@ -3602,6 +3606,9 @@ async fn thread_rollback_drops_last_turn_from_history() {
         model: "stale-model".to_string(),
         comp_hash: None,
         realtime_active: Some(tc.realtime_active),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
     }))
     .await;
     {
@@ -3794,6 +3801,9 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         model: "stale-model".to_string(),
         comp_hash: None,
         realtime_active: None,
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
     }))
     .await;
 
@@ -3811,6 +3821,9 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
             model: tc.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(tc.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         })
     );
     assert_eq!(
@@ -5725,7 +5738,7 @@ async fn build_initial_context(
 ) -> Vec<ResponseItem> {
     let world_state = build_world_state_from_turn_context(session, turn_context).await;
     session
-        .build_initial_context_with_world_state(turn_context.as_ref(), &world_state)
+        .build_full_initial_context_with_world_state(turn_context.as_ref(), &world_state)
         .await
 }
 
@@ -9466,6 +9479,9 @@ async fn build_initial_context_restates_realtime_start_when_reference_context_is
         model: turn_context.model_info.slug.clone(),
         comp_hash: None,
         realtime_active: Some(true),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
     };
 
     session
@@ -9758,6 +9774,9 @@ async fn build_initial_context_prepends_model_switch_message() {
         model: "previous-regular-model".to_string(),
         comp_hash: None,
         realtime_active: None,
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
     };
 
     session
@@ -9812,6 +9831,9 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
             model: previous_context.model_info.slug.clone(),
             comp_hash: None,
             realtime_active: Some(previous_context.realtime_active),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: Some(ApprovalsReviewer::User),
         }))
         .await;
     let turn_context = Arc::new(turn_context);
