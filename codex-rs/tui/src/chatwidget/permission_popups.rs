@@ -100,7 +100,7 @@ impl ChatWidget {
 
                 if guardian_approval_enabled {
                     items.push(SelectionItem {
-                        name: APPROVE_FOR_ME_LABEL.to_string(),
+                        name: AUTO_LABEL.to_string(),
                         description: Some(AUTO_REVIEW_DESCRIPTION.to_string()),
                         is_current: current_review_policy == ApprovalsReviewer::AutoReview
                             && Self::preset_matches_current(
@@ -111,7 +111,7 @@ impl ChatWidget {
                             ),
                         actions: self.permission_mode_actions(
                             &preset,
-                            APPROVE_FOR_ME_LABEL.to_string(),
+                            AUTO_LABEL.to_string(),
                             ApprovalsReviewer::AutoReview,
                             /*profile_selection*/ None,
                             /*return_to_permissions*/ !include_read_only,
@@ -217,6 +217,96 @@ impl ChatWidget {
             ..Default::default()
         });
         self.request_redraw();
+    }
+
+    pub(super) fn cycle_legacy_permission_mode_from_keybinding(&mut self) {
+        let include_read_only = cfg!(target_os = "windows");
+        let current_approval =
+            AskForApproval::from(self.config.permissions.approval_policy.value());
+        let current_permission_profile = self.config.permissions.permission_profile().clone();
+        let current_reviewer = self.config.approvals_reviewer;
+        let guardian_approval_enabled = self.config.features.enabled(Feature::GuardianApproval);
+        let presets = builtin_approval_presets();
+
+        let mut cycle_items = Vec::new();
+        for (preset_id, reviewer, label) in [
+            ("read-only", ApprovalsReviewer::User, "Read Only"),
+            ("auto", ApprovalsReviewer::User, ASK_FOR_APPROVAL_LABEL),
+            ("auto", ApprovalsReviewer::AutoReview, AUTO_LABEL),
+            ("full-access", ApprovalsReviewer::User, "Full Access"),
+        ] {
+            if !include_read_only && preset_id == "read-only" {
+                continue;
+            }
+            if reviewer == ApprovalsReviewer::AutoReview && !guardian_approval_enabled {
+                continue;
+            }
+            if self
+                .config
+                .config_layer_stack
+                .requirements()
+                .approvals_reviewer
+                .can_set(&reviewer)
+                .is_err()
+            {
+                continue;
+            }
+            let Some(preset) = presets.iter().find(|preset| preset.id == preset_id) else {
+                continue;
+            };
+            if self
+                .config
+                .permissions
+                .approval_policy
+                .can_set(&preset.approval)
+                .is_err()
+                || self
+                    .config
+                    .permissions
+                    .can_set_permission_profile(&preset.permission_profile)
+                    .is_err()
+                || !self.config.is_permission_profile_allowed(
+                    preset.active_permission_profile.id.as_str(),
+                    &preset.permission_profile,
+                )
+            {
+                continue;
+            }
+            cycle_items.push((preset, reviewer, label));
+        }
+
+        if cycle_items.is_empty() {
+            self.add_error_message("No permission modes are available.".to_string());
+            return;
+        }
+
+        let current_index = cycle_items.iter().position(|(preset, reviewer, _)| {
+            current_reviewer == *reviewer
+                && Self::preset_matches_current(
+                    current_approval,
+                    &current_permission_profile,
+                    self.config.cwd.as_path(),
+                    preset,
+                )
+        });
+        let next_index = current_index.map_or(0, |index| (index + 1) % cycle_items.len());
+        let (preset, approvals_reviewer, label) = cycle_items[next_index];
+        let selection = PermissionProfileSelection {
+            profile_id: preset.active_permission_profile.id.clone(),
+            approval_policy: Some(AskForApproval::from(preset.approval)),
+            approvals_reviewer: Some(approvals_reviewer),
+            display_label: label.to_string(),
+        };
+        let actions = self.permission_mode_actions(
+            preset,
+            label.to_string(),
+            approvals_reviewer,
+            Some(selection),
+            /*return_to_permissions*/ true,
+        );
+        for action in actions {
+            action(&self.app_event_tx);
+        }
     }
 
     pub(crate) fn approve_recent_auto_review_denial(&mut self, thread_id: ThreadId, id: String) {

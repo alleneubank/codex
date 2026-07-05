@@ -1125,7 +1125,7 @@ fn approval_mode_display(config: &Config) -> String {
     let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
     if approval_policy == AskForApproval::OnRequest {
         return match config.approvals_reviewer {
-            ApprovalsReviewer::AutoReview => "Approve for me".to_string(),
+            ApprovalsReviewer::AutoReview => "Auto".to_string(),
             ApprovalsReviewer::User => "Ask for approval".to_string(),
         };
     }
