@@ -3100,6 +3100,7 @@
             "global": {
               "clear_terminal": null,
               "copy": null,
+              "cycle_permission_mode": null,
               "open_external_editor": null,
               "open_transcript": null,
               "queue": null,
@@ -3620,6 +3621,14 @@
           ],
           "description": "Copy the last agent response to the clipboard."
         },
+        "cycle_permission_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Cycle through permission modes."
+        },
         "open_external_editor": {
           "allOf": [
             {
@@ -3770,6 +3779,7 @@
           "default": {
             "clear_terminal": null,
             "copy": null,
+            "cycle_permission_mode": null,
             "open_external_editor": null,
             "open_transcript": null,
             "queue": null,

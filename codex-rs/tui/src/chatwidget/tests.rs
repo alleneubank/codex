@@ -243,6 +243,7 @@ mod guardian;
 pub(crate) mod helpers;
 mod history_replay;
 mod mcp_startup;
+mod permission_profile_cycle;
 mod permissions;
 mod plan_mode;
 #[path = "tests/plugin_catalog_tests.rs"]
@@ -261,3 +262,11 @@ pub(crate) use helpers::make_chatwidget_manual_with_sender;
 pub(crate) use helpers::set_chatgpt_auth;
 pub(crate) use helpers::set_fast_mode_test_catalog;
 pub(super) use helpers::*;
+
+pub(crate) fn set_permission_profile_catalog(
+    chat: &mut ChatWidget,
+    custom_permission_profiles: Vec<crate::legacy_core::config::PermissionProfileCatalogEntry>,
+) {
+    chat.config.explicit_permission_profile_mode = true;
+    chat.config.custom_permission_profiles = custom_permission_profiles;
+}
