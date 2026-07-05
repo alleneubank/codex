@@ -7,6 +7,7 @@ use codex_core::context::ContextualUserFragment;
 use codex_core::context::PermissionsInstructions;
 use codex_core::load_exec_policy;
 use codex_models_manager::model_info::model_info_from_slug;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ApprovalMessages;
 use codex_protocol::openai_models::ModelMessages;
@@ -406,6 +407,81 @@ async fn permissions_message_added_on_override_change() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn permissions_message_added_on_approvals_reviewer_change() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let req1 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+    let req2 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_config(move |config| {
+        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+    });
+    let test = builder.build(&server).await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello 1".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
+            approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello 2".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_1 = permissions_texts(&req1.single_request());
+    let permissions_2 = permissions_texts(&req2.single_request());
+
+    assert_eq!(permissions_1.len(), 1);
+    assert_eq!(permissions_2.len(), 2);
+    assert!(
+        permissions_2
+            .iter()
+            .any(|text| text.contains("`approvals_reviewer` is `auto_review`")),
+        "{permissions_2:?}"
+    );
+    let unique = permissions_2.into_iter().collect::<HashSet<String>>();
+    assert_eq!(unique.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn permissions_message_not_added_when_no_change() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -555,7 +631,6 @@ async fn resume_replays_permissions_messages() -> Result<()> {
         sse(vec![ev_response_created("resp-3"), ev_completed("resp-3")]),
     )
     .await;
-
     let mut builder = test_codex().with_config(|config| {
         config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
     });
@@ -773,6 +848,273 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
     assert_eq!(new_permissions.len(), 1);
     assert_eq!(permissions_fork, permissions_resume);
     assert!(!permissions_base.contains(&new_permissions[0]));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_and_fork_append_permissions_messages_for_reviewer_change() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let _req1 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+    let req2 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
+    )
+    .await;
+    let req3 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-3"), ev_completed("resp-3")]),
+    )
+    .await;
+    let req4 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-4"), ev_completed("resp-4")]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+    });
+    let initial = builder.build(&server).await?;
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path");
+    let home = initial.home.clone();
+
+    initial
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello auto reviewer 1".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    initial
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello auto reviewer 2".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_base = permissions_texts(&req2.single_request());
+    assert_eq!(permissions_base.len(), 1);
+    assert!(
+        permissions_base[0].contains("`approvals_reviewer` is `auto_review`"),
+        "{permissions_base:?}"
+    );
+
+    builder = builder.with_config(|config| {
+        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+        config.approvals_reviewer = ApprovalsReviewer::User;
+    });
+    let resumed = builder.resume(&server, home, rollout_path.clone()).await?;
+    resumed
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_resume = permissions_texts(&req3.single_request());
+    assert_eq!(permissions_resume.len(), permissions_base.len() + 1);
+    assert_eq!(
+        &permissions_resume[..permissions_base.len()],
+        permissions_base.as_slice()
+    );
+    let resume_update = permissions_resume.last().expect("new permissions");
+    assert!(!resume_update.contains("`approvals_reviewer` is `auto_review`"));
+    assert!(!permissions_base.contains(resume_update));
+
+    let mut fork_config = initial.config.clone();
+    fork_config.approvals_reviewer = ApprovalsReviewer::User;
+    let forked = initial
+        .thread_manager
+        .fork_thread(
+            ForkSnapshot::Interrupted,
+            fork_config,
+            rollout_path,
+            /*thread_source*/ None,
+            /*parent_trace*/ None,
+        )
+        .await?;
+    forked
+        .thread
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after fork".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_fork = permissions_texts(&req4.single_request());
+    assert_eq!(permissions_fork, permissions_resume);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_and_fork_do_not_append_permissions_messages_for_same_reviewer() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let _req1 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+    let req2 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-2"), ev_completed("resp-2")]),
+    )
+    .await;
+    let req3 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-3"), ev_completed("resp-3")]),
+    )
+    .await;
+    let req4 = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-4"), ev_completed("resp-4")]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+    });
+    let initial = builder.build(&server).await?;
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path");
+    let home = initial.home.clone();
+
+    initial
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello auto reviewer 1".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    initial
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello auto reviewer 2".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_base = permissions_texts(&req2.single_request());
+    assert_eq!(permissions_base.len(), 1);
+    assert!(
+        permissions_base[0].contains("`approvals_reviewer` is `auto_review`"),
+        "{permissions_base:?}"
+    );
+
+    builder = builder.with_config(|config| {
+        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+    });
+    let resumed = builder.resume(&server, home, rollout_path.clone()).await?;
+    resumed
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_resume = permissions_texts(&req3.single_request());
+    assert_eq!(permissions_resume, permissions_base);
+
+    let forked = initial
+        .thread_manager
+        .fork_thread(
+            ForkSnapshot::Interrupted,
+            initial.config.clone(),
+            rollout_path,
+            /*thread_source*/ None,
+            /*parent_trace*/ None,
+        )
+        .await?;
+    forked
+        .thread
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after fork".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let permissions_fork = permissions_texts(&req4.single_request());
+    assert_eq!(permissions_fork, permissions_base);
 
     Ok(())
 }

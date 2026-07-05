@@ -697,7 +697,7 @@ fn status_approval_label(
 ) -> String {
     if approval_policy == AskForApproval::OnRequest {
         return match approvals_reviewer {
-            ApprovalsReviewer::AutoReview => "Approve for me".to_string(),
+            ApprovalsReviewer::AutoReview => "Auto".to_string(),
             ApprovalsReviewer::User => "Ask for approval".to_string(),
         };
     }

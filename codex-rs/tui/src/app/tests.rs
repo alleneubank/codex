@@ -40,6 +40,7 @@ use crate::app_event::ConsolidationScrollbackReflow;
 use crate::diff_model::FileChange;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
+use crate::legacy_core::config::PermissionProfileCatalogEntry;
 use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
 use codex_app_server_client::AppServerPath;
@@ -2352,6 +2353,101 @@ default_permissions = "locked-down"
 }
 
 #[tokio::test]
+async fn alt_p_dispatches_permission_profile_cycle() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    crate::chatwidget::tests::set_permission_profile_catalog(
+        &mut app.chat_widget,
+        vec![PermissionProfileCatalogEntry {
+            id: "locked-down".to_string(),
+            description: None,
+            allowed: true,
+        }],
+    );
+    app.chat_widget
+        .set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    app.chat_widget
+        .set_approval_policy(AskForApproval::OnRequest);
+    app.chat_widget
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new("locked-down"),
+        ))?;
+    app.chat_widget
+        .set_approvals_reviewer(ApprovalsReviewer::User);
+
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+
+    app.handle_key_event(
+        &mut tui,
+        &mut app_server,
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT),
+    )
+    .await;
+
+    let selection = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::SelectPermissionProfile(selection) => Some(selection),
+            _ => None,
+        })
+        .expect("expected permission profile selection");
+    assert_eq!(selection.profile_id, ":workspace");
+    assert_eq!(selection.approval_policy, Some(AskForApproval::OnRequest));
+    assert_eq!(selection.approvals_reviewer, Some(ApprovalsReviewer::User));
+    assert_eq!(selection.display_label, "Ask for approval");
+
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn remapped_key_dispatches_permission_mode_cycle() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.keymap.app.cycle_permission_mode = vec![crate::key_hint::KeyBinding::new(
+        KeyCode::F(12),
+        KeyModifiers::NONE,
+    )];
+    app.chat_widget
+        .set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    app.chat_widget
+        .set_approval_policy(AskForApproval::OnRequest);
+    app.chat_widget
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            PermissionProfile::workspace_write(),
+            ActivePermissionProfile::new(":workspace"),
+        ))?;
+    app.chat_widget
+        .set_approvals_reviewer(ApprovalsReviewer::User);
+
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+
+    app.handle_key_event(
+        &mut tui,
+        &mut app_server,
+        KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE),
+    )
+    .await;
+
+    let selection = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::SelectPermissionProfile(selection) => Some(selection),
+            _ => None,
+        })
+        .expect("expected permission profile selection");
+    assert_eq!(selection.profile_id, ":workspace");
+    assert_eq!(selection.approval_policy, Some(AskForApproval::OnRequest));
+    assert_eq!(
+        selection.approvals_reviewer,
+        Some(ApprovalsReviewer::AutoReview)
+    );
+    assert_eq!(selection.display_label, "Auto");
+
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<()> {
     let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
@@ -2441,7 +2537,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("Permissions updated to Approve for me"));
+    assert!(rendered.contains("Permissions updated to Auto"));
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
     assert!(config.contains("guardian_approval = true"));
