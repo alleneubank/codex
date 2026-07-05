@@ -63,6 +63,7 @@ const KEYMAP_COMMON_ACTIONS: &[(&str, &str)] = &[
     ("chat", "interrupt_turn"),
     ("editor", "insert_newline"),
     ("composer", "queue"),
+    ("global", "cycle_permission_mode"),
     ("global", "toggle_fast_mode"),
     ("global", "open_external_editor"),
     ("global", "copy"),

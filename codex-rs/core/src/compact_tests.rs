@@ -3,6 +3,7 @@ use crate::session::tests::build_world_state_from_turn_context;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ResponseItemId;
+use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::InternalChatMessageMetadataPassthrough;
 use pretty_assertions::assert_eq;
@@ -19,7 +20,7 @@ async fn process_compacted_history_with_test_session(
         .await;
     let world_state = Arc::new(build_world_state_from_turn_context(&session, &turn_context).await);
     let initial_context = session
-        .build_initial_context_with_world_state(&turn_context, world_state.as_ref())
+        .build_full_initial_context_with_world_state(&turn_context, world_state.as_ref())
         .await;
     let initial_context_injection = InitialContextInjection::BeforeLastUserMessage(world_state);
     let (refreshed, _) = crate::compact_remote::process_compacted_history(
@@ -331,6 +332,15 @@ async fn process_compacted_history_replaces_developer_messages() {
 
 #[tokio::test]
 async fn process_compacted_history_reinjects_full_initial_context() {
+    let (_, turn_context) = crate::session::tests::make_session_and_context().await;
+    let previous_turn_settings = PreviousTurnSettings {
+        model: turn_context.model_info.slug.clone(),
+        comp_hash: turn_context.model_info.comp_hash.clone(),
+        realtime_active: Some(turn_context.realtime_active),
+        permission_profile: turn_context.permission_profile(),
+        approval_policy: turn_context.approval_policy.value(),
+        approvals_reviewer: Some(turn_context.config.approvals_reviewer),
+    };
     let compacted_history = vec![ResponseItem::Message {
         id: None,
         role: "user".to_string(),
@@ -342,9 +352,22 @@ async fn process_compacted_history_reinjects_full_initial_context() {
     }];
     let (refreshed, mut expected) = process_compacted_history_with_test_session(
         compacted_history,
-        /*previous_turn_settings*/ None,
+        Some(&previous_turn_settings),
     )
     .await;
+    assert!(
+        expected.iter().any(|item| matches!(
+            item,
+            ResponseItem::Message { role, content, .. }
+                if role == "developer"
+                    && content.iter().any(|content| matches!(
+                        content,
+                        ContentItem::InputText { text }
+                            if text.contains("<permissions instructions>")
+                    ))
+        )),
+        "compaction must reinsert full permissions instructions even when prior permissions match"
+    );
     expected.push(ResponseItem::Message {
         id: None,
         role: "user".to_string(),
@@ -546,6 +569,9 @@ async fn process_compacted_history_reinjects_model_switch_message() {
         model: "previous-regular-model".to_string(),
         comp_hash: None,
         realtime_active: None,
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
     };
 
     let (refreshed, initial_context) = process_compacted_history_with_test_session(

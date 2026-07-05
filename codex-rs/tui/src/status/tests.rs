@@ -505,7 +505,7 @@ async fn status_permissions_workspace_auto_review_shows_reviewer_label() {
 
     assert_eq!(
         permissions_text_for(&config).as_deref(),
-        Some("Workspace (Approve for me)")
+        Some("Workspace (Auto)")
     );
 }
 
