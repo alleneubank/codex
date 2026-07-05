@@ -1,0 +1,21 @@
+---
+source: tui/src/chatwidget/tests/permission_profile_cycle.rs
+expression: popup
+---
+  Update Model Permissions
+
+  1. Ask for approval     Codex can read and edit files in the current
+                          workspace, and run commands. Approval is required to
+                          access the internet or edit other files.
+     Auto (disabled)      Auto-review approves routine local work and denies
+                          or escalates unsafe actions. (disabled: invalid
+                          value for `approvals_reviewer`: `AutoReview` is not
+                          in the allowed set [User] (set by <unspecified>))
+  2. Full Access          Codex can edit files outside this workspace and
+                          access the internet without asking for approval.
+                          Exercise caution when using.
+› 3. Read Only (current)  Codex can read files in the current workspace.
+                          Approval is required to edit files or access the
+                          internet.
+
+  Press enter to confirm or esc to go back

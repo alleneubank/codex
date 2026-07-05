@@ -91,21 +91,31 @@ fn finalize_active_segment<'a>(
         *window = active_segment.window;
     }
 
-    // `previous_turn_settings` come from the newest surviving user turn that established them.
+    // `previous_turn_settings` come from the newest surviving user-turn segment that established
+    // them. A bare `TurnContextItem` without surviving model-visible history is not enough:
+    // pre-sampling compaction could otherwise compact an effectively empty resumed history based
+    // only on old compatibility metadata.
     if previous_turn_settings.is_none() && active_segment.counts_as_user_turn {
         *previous_turn_settings = active_segment.previous_turn_settings;
     }
 
-    // `reference_context_item` comes from the newest surviving user turn baseline, or
-    // from a surviving compaction that explicitly cleared that baseline.
+    // `reference_context_item` comes from the newest surviving turn context baseline, or from a
+    // surviving compaction that explicitly cleared that baseline. A bare `TurnContextItem` should
+    // not become a model-visible baseline unless its segment is known to include a real user turn.
+    let segment_reference_context_item = match active_segment.reference_context_item {
+        TurnReferenceContextItem::Latest(item) if active_segment.counts_as_user_turn => {
+            TurnReferenceContextItem::Latest(item)
+        }
+        TurnReferenceContextItem::Latest(_) => TurnReferenceContextItem::NeverSet,
+        other => other,
+    };
     if matches!(reference_context_item, TurnReferenceContextItem::NeverSet)
-        && (active_segment.counts_as_user_turn
-            || matches!(
-                active_segment.reference_context_item,
-                TurnReferenceContextItem::Cleared
-            ))
+        && !matches!(
+            segment_reference_context_item,
+            TurnReferenceContextItem::NeverSet
+        )
     {
-        *reference_context_item = active_segment.reference_context_item;
+        *reference_context_item = segment_reference_context_item;
     }
 }
 
@@ -228,11 +238,17 @@ impl Session {
                     if turn_ids_are_compatible(
                         active_segment.turn_id.as_deref(),
                         ctx.turn_id.as_deref(),
+                    ) && !matches!(
+                        active_segment.reference_context_item,
+                        TurnReferenceContextItem::Cleared
                     ) {
                         active_segment.previous_turn_settings = Some(PreviousTurnSettings {
                             model: ctx.model.clone(),
                             comp_hash: ctx.comp_hash.clone(),
                             realtime_active: ctx.realtime_active,
+                            permission_profile: ctx.permission_profile(),
+                            approval_policy: ctx.approval_policy,
+                            approvals_reviewer: ctx.approvals_reviewer,
                         });
                         if matches!(
                             active_segment.reference_context_item,
