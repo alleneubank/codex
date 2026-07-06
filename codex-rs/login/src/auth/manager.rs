@@ -191,6 +191,8 @@ const REFRESH_TOKEN_INVALIDATED_MESSAGE: &str = "Your access token could not be 
 const REFRESH_TOKEN_UNKNOWN_MESSAGE: &str =
     "Your access token could not be refreshed. Please log out and sign in again.";
 const REFRESH_TOKEN_ACCOUNT_MISMATCH_MESSAGE: &str = "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.";
+const REFRESH_TOKEN_ACCOUNT_CHANGED_MESSAGE: &str =
+    "Auth recovery changed ChatGPT accounts. Start a new session to continue with the new account.";
 const REFRESH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 pub(super) const REVOKE_TOKEN_URL: &str = "https://auth.openai.com/oauth/revoke";
 pub const REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR: &str = "CODEX_REFRESH_TOKEN_URL_OVERRIDE";
@@ -280,6 +282,14 @@ impl RefreshTokenError {
             Self::Transient(_) => None,
         }
     }
+
+    pub fn is_account_changed(&self) -> bool {
+        matches!(
+            self,
+            Self::Permanent(error) if error.reason == RefreshTokenFailedReason::Other
+                && error.message == REFRESH_TOKEN_ACCOUNT_CHANGED_MESSAGE
+        )
+    }
 }
 
 impl From<RefreshTokenError> for std::io::Error {
@@ -289,6 +299,13 @@ impl From<RefreshTokenError> for std::io::Error {
             RefreshTokenError::Transient(inner) => inner,
         }
     }
+}
+
+fn account_changed_refresh_error() -> RefreshTokenError {
+    RefreshTokenError::Permanent(RefreshTokenFailedError::new(
+        RefreshTokenFailedReason::Other,
+        REFRESH_TOKEN_ACCOUNT_CHANGED_MESSAGE,
+    ))
 }
 
 impl CodexAuth {
@@ -578,6 +595,21 @@ impl CodexAuth {
         }
     }
 
+    /// Returns the account id used for ChatGPT-scoped backend requests.
+    pub fn get_chatgpt_account_id(&self) -> Option<String> {
+        match self {
+            Self::Chatgpt(_) | Self::ChatgptAuthTokens(_) => {
+                self.get_current_token_data().and_then(|token_data| {
+                    token_data
+                        .id_token
+                        .chatgpt_account_id
+                        .or(token_data.account_id)
+                })
+            }
+            _ => self.get_account_id(),
+        }
+    }
+
     /// Returns false if Codex backend auth omits the FedRAMP claim.
     pub fn is_fedramp_account(&self) -> bool {
         match self {
@@ -822,10 +854,14 @@ impl ManagedChatGptAgentIdentityBinding {
                 });
         let account_id = forced_workspace_id
             .or(token_data
-                .account_id
+                .id_token
+                .chatgpt_account_id
                 .clone()
                 .filter(|value| !value.is_empty()))
-            .or(token_data.id_token.chatgpt_account_id.clone())?;
+            .or(token_data
+                .account_id
+                .clone()
+                .filter(|value| !value.is_empty()))?;
         let chatgpt_user_id = token_data
             .id_token
             .chatgpt_user_id
@@ -1796,7 +1832,8 @@ enum UnauthorizedRecoveryMode {
 // For API key based authentication, we don't do anything and let the error bubble to the user.
 //
 // For ChatGPT based authentication, we:
-// 1. Attempt to reload the auth data from disk. We only reload if the account id matches the one the current process is running as.
+// 1. Attempt to reload the auth data from disk. If reload crosses accounts, the
+//    active request must stop instead of retrying under the new account.
 // 2. Attempt to refresh the token using OAuth token refresh flow.
 // If after both steps the server still responds with 401 we let the error bubble to the user.
 //
@@ -1821,10 +1858,29 @@ impl UnauthorizedRecoveryStepResult {
     }
 }
 
+fn auth_account_id_for_recovery(auth: &CodexAuth) -> Option<String> {
+    auth.get_chatgpt_account_id()
+}
+
+fn auth_account_id_changed_after_recovery(
+    expected_account_id: Option<&str>,
+    new_auth: Option<&CodexAuth>,
+    auth_changed: bool,
+) -> bool {
+    if !auth_changed {
+        return false;
+    }
+    let new_account_id = new_auth.and_then(auth_account_id_for_recovery);
+    if let Some(expected) = expected_account_id {
+        return new_account_id.as_deref() != Some(expected);
+    }
+    new_account_id.is_some()
+}
+
 impl UnauthorizedRecovery {
     fn new(manager: Arc<AuthManager>) -> Self {
         let cached_auth = manager.auth_cached();
-        let expected_account_id = cached_auth.as_ref().and_then(CodexAuth::get_account_id);
+        let expected_account_id = cached_auth.as_ref().and_then(auth_account_id_for_recovery);
         let mode = if manager.has_external_auth() {
             UnauthorizedRecoveryMode::External
         } else {
@@ -1929,22 +1985,28 @@ impl UnauthorizedRecovery {
             UnauthorizedRecoveryStep::Reload => {
                 match self
                     .manager
-                    .reload_if_account_id_matches(self.expected_account_id.as_deref())
+                    .reload_for_unauthorized_recovery(self.expected_account_id.as_deref())
                     .await
                 {
-                    ReloadOutcome::ReloadedChanged => {
+                    Some((ReloadOutcome::ReloadedChanged, auth_account_id_changed)) => {
                         self.step = UnauthorizedRecoveryStep::RefreshToken;
-                        return Ok(UnauthorizedRecoveryStepResult {
-                            auth_state_changed: Some(true),
-                        });
+                        let auth_state_changed = Some(true);
+                        if auth_account_id_changed {
+                            self.step = UnauthorizedRecoveryStep::Done;
+                            return Err(account_changed_refresh_error());
+                        }
+                        return Ok(UnauthorizedRecoveryStepResult { auth_state_changed });
                     }
-                    ReloadOutcome::ReloadedNoChange => {
+                    Some((ReloadOutcome::ReloadedNoChange, auth_account_id_changed)) => {
                         self.step = UnauthorizedRecoveryStep::RefreshToken;
-                        return Ok(UnauthorizedRecoveryStepResult {
-                            auth_state_changed: Some(false),
-                        });
+                        let auth_state_changed = Some(false);
+                        if auth_account_id_changed {
+                            self.step = UnauthorizedRecoveryStep::Done;
+                            return Err(account_changed_refresh_error());
+                        }
+                        return Ok(UnauthorizedRecoveryStepResult { auth_state_changed });
                     }
-                    ReloadOutcome::Skipped => {
+                    Some((ReloadOutcome::Skipped, _)) | None => {
                         self.step = UnauthorizedRecoveryStep::Done;
                         return Err(RefreshTokenError::Permanent(RefreshTokenFailedError::new(
                             RefreshTokenFailedReason::Other,
@@ -1954,15 +2016,38 @@ impl UnauthorizedRecovery {
                 }
             }
             UnauthorizedRecoveryStep::RefreshToken => {
-                self.manager.refresh_token_from_authority().await?;
+                let auth_before_refresh = self.manager.auth_cached();
+                if let Err(err) = self.manager.refresh_token_from_authority().await {
+                    self.step = UnauthorizedRecoveryStep::Done;
+                    return Err(err);
+                }
+                let auth_after_refresh = self.manager.auth_cached();
+                let auth_changed = !AuthManager::auths_equal_for_refresh(
+                    auth_before_refresh.as_ref(),
+                    auth_after_refresh.as_ref(),
+                );
+                let auth_account_id_changed = auth_account_id_changed_after_recovery(
+                    self.expected_account_id.as_deref(),
+                    auth_after_refresh.as_ref(),
+                    auth_changed,
+                );
                 self.step = UnauthorizedRecoveryStep::Done;
+                if auth_account_id_changed {
+                    return Err(account_changed_refresh_error());
+                }
                 return Ok(UnauthorizedRecoveryStepResult {
                     auth_state_changed: Some(true),
                 });
             }
             UnauthorizedRecoveryStep::ExternalRefresh => {
-                self.manager.refresh_token_from_authority().await?;
+                let auth_account_id_changed = self
+                    .manager
+                    .refresh_external_auth(ExternalAuthRefreshReason::Unauthorized)
+                    .await?;
                 self.step = UnauthorizedRecoveryStep::Done;
+                if auth_account_id_changed {
+                    return Err(account_changed_refresh_error());
+                }
                 return Ok(UnauthorizedRecoveryStepResult {
                     auth_state_changed: Some(true),
                 });
@@ -2394,7 +2479,7 @@ impl AuthManager {
         };
 
         let new_auth = self.load_auth().await;
-        let new_account_id = new_auth.as_ref().and_then(CodexAuth::get_account_id);
+        let new_account_id = new_auth.as_ref().and_then(auth_account_id_for_recovery);
 
         if new_account_id.as_deref() != Some(expected_account_id) {
             let found_account_id = new_account_id.as_deref().unwrap_or("unknown");
@@ -2413,6 +2498,46 @@ impl AuthManager {
             ReloadOutcome::ReloadedChanged
         } else {
             ReloadOutcome::ReloadedNoChange
+        }
+    }
+
+    async fn reload_for_unauthorized_recovery(
+        &self,
+        expected_account_id: Option<&str>,
+    ) -> Option<(ReloadOutcome, bool)> {
+        let new_auth = self.load_auth().await?;
+        let cached_before_reload = self.auth_cached();
+        let auth_changed =
+            !Self::auths_equal_for_refresh(cached_before_reload.as_ref(), Some(&new_auth));
+        let auth_account_id_changed = auth_account_id_changed_after_recovery(
+            expected_account_id,
+            Some(&new_auth),
+            auth_changed,
+        );
+        let new_account_id = auth_account_id_for_recovery(&new_auth);
+        match (expected_account_id, new_account_id.as_deref()) {
+            (Some(expected), Some(actual)) if expected != actual => {
+                tracing::info!(
+                    "Reloading auth after 401 with changed account id (expected: {expected}, found: {actual})"
+                );
+            }
+            (Some(expected), None) if auth_changed => {
+                tracing::info!(
+                    "Reloading auth after 401 with unknown account id (expected: {expected})"
+                );
+            }
+            (None, Some(actual)) => {
+                tracing::info!(
+                    "Reloading auth after 401 with account id {actual}; no prior account id was available"
+                );
+            }
+            _ => tracing::info!("Reloading auth after 401"),
+        }
+        self.set_cached_auth(Some(new_auth));
+        if auth_changed {
+            Some((ReloadOutcome::ReloadedChanged, auth_account_id_changed))
+        } else {
+            Some((ReloadOutcome::ReloadedNoChange, auth_account_id_changed))
         }
     }
 
@@ -2733,7 +2858,7 @@ impl AuthManager {
         }
         let expected_account_id = auth_before_reload
             .as_ref()
-            .and_then(CodexAuth::get_account_id);
+            .and_then(CodexAuth::get_chatgpt_account_id);
 
         match self
             .reload_if_account_id_matches(expected_account_id.as_deref())
@@ -2781,6 +2906,7 @@ impl AuthManager {
         let result = if self.has_external_auth() {
             self.refresh_external_auth(ExternalAuthRefreshReason::Unauthorized)
                 .await
+                .map(|_| ())
         } else {
             match auth {
                 CodexAuth::Chatgpt(chatgpt_auth) => {
@@ -2895,7 +3021,7 @@ impl AuthManager {
     async fn refresh_external_auth(
         &self,
         reason: ExternalAuthRefreshReason,
-    ) -> Result<(), RefreshTokenError> {
+    ) -> Result<bool, RefreshTokenError> {
         let Some(external_auth) = self.external_auth_provider() else {
             return Err(RefreshTokenError::Transient(std::io::Error::other(
                 "external auth is not configured",
@@ -2904,7 +3030,8 @@ impl AuthManager {
         let previous_account_id = self
             .auth_cached()
             .as_ref()
-            .and_then(CodexAuth::get_account_id);
+            .and_then(auth_account_id_for_recovery);
+        let previous_account_id_for_comparison = previous_account_id.clone();
         let context = ExternalAuthRefreshContext {
             reason,
             previous_account_id,
@@ -2915,8 +3042,15 @@ impl AuthManager {
             .await
             .map_err(|error| external_auth.classify_error(error))?;
         self.validate_external_auth(&refreshed, external_auth.as_ref())?;
+        let auth_changed =
+            !Self::auths_equal_for_refresh(self.auth_cached().as_ref(), Some(&refreshed));
+        let auth_account_id_changed = auth_account_id_changed_after_recovery(
+            previous_account_id_for_comparison.as_deref(),
+            Some(&refreshed),
+            auth_changed,
+        );
         self.commit_external_auth(refreshed)?;
-        Ok(())
+        Ok(auth_account_id_changed)
     }
 
     fn commit_external_auth(&self, auth: CodexAuth) -> Result<(), RefreshTokenError> {
@@ -2935,7 +3069,6 @@ impl AuthManager {
             )
             .map_err(RefreshTokenError::Transient)?;
         }
-
         self.set_cached_auth(Some(auth));
         Ok(())
     }
@@ -2961,7 +3094,21 @@ impl AuthManager {
         auth: &ChatgptAuth,
         refresh_token: String,
     ) -> Result<(), RefreshTokenError> {
+        let expected_account_id = auth.current_token_data().and_then(|token_data| {
+            token_data
+                .id_token
+                .chatgpt_account_id
+                .or(token_data.account_id)
+        });
         let refresh_response = request_chatgpt_token_refresh(refresh_token, auth.client()).await?;
+        if let Some(id_token) = refresh_response.id_token.as_deref() {
+            let refreshed_account_id = parse_chatgpt_jwt_claims(id_token)
+                .map_err(|err| RefreshTokenError::Transient(std::io::Error::other(err)))?
+                .chatgpt_account_id;
+            if refreshed_account_id.as_deref() != expected_account_id.as_deref() {
+                return Err(account_changed_refresh_error());
+            }
+        }
 
         persist_tokens(
             auth.storage(),
