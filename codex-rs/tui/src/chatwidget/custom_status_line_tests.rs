@@ -899,7 +899,7 @@ async fn windows_app_server_runner_pipes_base64_payload_to_command() -> anyhow::
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
             "https://chatgpt.com/backend-api/".to_string(),
-            /*auth_route_config*/ None,
+            codex_login::test_support::transport_default_auth_route_config(),
         )
         .await,
         feedback: CodexFeedback::new(),
