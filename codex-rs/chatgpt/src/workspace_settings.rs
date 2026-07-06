@@ -96,7 +96,7 @@ pub async fn codex_plugins_enabled_for_workspace(
         return Ok(true);
     }
 
-    let Some(account_id) = auth.get_account_id().filter(|id| !id.is_empty()) else {
+    let Some(account_id) = auth.get_chatgpt_account_id().filter(|id| !id.is_empty()) else {
         return Ok(true);
     };
 

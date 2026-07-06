@@ -86,6 +86,13 @@ fn remote_control_auth_manager_with_home(codex_home: &TempDir) -> Arc<AuthManage
 }
 
 fn remote_control_auth_dot_json(account_id: Option<&str>) -> AuthDotJson {
+    remote_control_auth_dot_json_with_flat_account_id(account_id, account_id)
+}
+
+fn remote_control_auth_dot_json_with_flat_account_id(
+    account_id: Option<&str>,
+    flat_account_id: Option<&str>,
+) -> AuthDotJson {
     #[derive(serde::Serialize)]
     struct Header {
         alg: &'static str,
@@ -96,14 +103,17 @@ fn remote_control_auth_dot_json(account_id: Option<&str>) -> AuthDotJson {
         alg: "none",
         typ: "JWT",
     };
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "email": "user@example.com",
         "https://api.openai.com/auth": {
             "chatgpt_user_id": "user-12345",
-            "user_id": "user-12345",
-            "chatgpt_account_id": "account_id"
+            "user_id": "user-12345"
         }
     });
+    if let Some(account_id) = account_id {
+        payload["https://api.openai.com/auth"]["chatgpt_account_id"] =
+            serde_json::Value::String(account_id.to_string());
+    }
     let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let header_b64 = b64(&serde_json::to_vec(&header).expect("header should serialize"));
     let payload_b64 = b64(&serde_json::to_vec(&payload).expect("payload should serialize"));
@@ -116,7 +126,7 @@ fn remote_control_auth_dot_json(account_id: Option<&str>) -> AuthDotJson {
             id_token: parse_chatgpt_jwt_claims(&fake_jwt).expect("fake jwt should parse"),
             access_token: "Access Token".to_string(),
             refresh_token: "refresh-token".to_string(),
-            account_id: account_id.map(str::to_string),
+            account_id: flat_account_id.map(str::to_string),
         }),
         last_refresh: Some(chrono::Utc::now()),
         agent_identity: None,
@@ -1969,6 +1979,99 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
 
     shutdown_token.cancel();
     let _ = remote_task.await;
+}
+
+#[tokio::test]
+async fn remote_control_auth_recovery_stops_after_account_change_reload() {
+    let codex_home = TempDir::new().expect("temp dir should create");
+    save_auth(
+        codex_home.path(),
+        &remote_control_auth_dot_json(Some("account_a")),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::default(),
+    )
+    .expect("account A auth should save");
+    let auth_manager = AuthManager::shared(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::default(),
+        /*auth_route_config*/ None,
+    )
+    .await;
+    let initial_auth = auth_manager.auth().await.expect("initial auth should load");
+    assert_eq!(
+        initial_auth.get_chatgpt_account_id().as_deref(),
+        Some("account_a")
+    );
+    save_auth(
+        codex_home.path(),
+        &remote_control_auth_dot_json(Some("account_b")),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::default(),
+    )
+    .expect("account B auth should save");
+    let mut auth_recovery = auth_manager.unauthorized_recovery();
+    let (_auth_change_tx, mut auth_change_rx) = watch::channel(0_u64);
+
+    let should_retry = recover_remote_control_auth(&mut auth_recovery, &mut auth_change_rx).await;
+
+    assert!(!should_retry);
+    assert_eq!(
+        auth_manager
+            .auth_cached()
+            .and_then(|auth| auth.get_chatgpt_account_id())
+            .as_deref(),
+        Some("account_b")
+    );
+}
+
+#[tokio::test]
+async fn remote_control_enrollment_prefers_jwt_account_id_over_flat_metadata() {
+    let codex_home = TempDir::new().expect("temp dir should create");
+    save_auth(
+        codex_home.path(),
+        &remote_control_auth_dot_json_with_flat_account_id(
+            Some("jwt_account"),
+            Some("stale_flat_account"),
+        ),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::default(),
+    )
+    .expect("auth should save");
+    let auth_manager = AuthManager::shared(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::default(),
+        /*auth_route_config*/ None,
+    )
+    .await;
+
+    let auth = load_remote_control_auth(&auth_manager)
+        .await
+        .expect("remote-control auth should load");
+    let headers = auth
+        .request_headers()
+        .expect("remote-control auth headers should build");
+
+    assert_eq!(auth.account_id, "jwt_account");
+    assert_eq!(
+        headers
+            .get(REMOTE_CONTROL_ACCOUNT_ID_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("jwt_account")
+    );
+    assert_eq!(
+        headers
+            .get("ChatGPT-Account-ID")
+            .and_then(|value| value.to_str().ok()),
+        Some("jwt_account")
+    );
 }
 
 #[tokio::test]

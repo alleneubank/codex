@@ -983,6 +983,76 @@ async fn refresh_token_returns_transient_error_on_server_failure() -> Result<()>
 
 #[serial_test::serial(auth_env)]
 #[tokio::test]
+async fn proactive_refresh_rejects_account_changing_managed_token() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id_token": jwt_for_account("other-account"),
+            "access_token": "other-access-token",
+            "refresh_token": "other-refresh-token"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ctx = RefreshTokenTestContext::new(&server).await?;
+    let initial_tokens = TokenData {
+        id_token: IdTokenInfo {
+            raw_jwt: jwt_for_account("account-id"),
+            chatgpt_account_id: Some("account-id".to_string()),
+            chatgpt_user_id: Some("user-123".to_string()),
+            ..Default::default()
+        },
+        access_token: access_token_with_expiration(Utc::now() - Duration::minutes(1)),
+        refresh_token: INITIAL_REFRESH_TOKEN.to_string(),
+        account_id: Some("account-id".to_string()),
+    };
+    let initial_auth = AuthDotJson {
+        auth_mode: Some(AuthMode::Chatgpt),
+        openai_api_key: None,
+        tokens: Some(initial_tokens.clone()),
+        last_refresh: Some(Utc::now() - Duration::days(1)),
+        agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
+    };
+    ctx.write_auth(&initial_auth).await?;
+
+    let err = ctx
+        .auth_manager
+        .refresh_token_from_authority()
+        .await
+        .err()
+        .context("account-changing proactive refresh should fail")?;
+    assert!(err.is_account_changed());
+    let auth = ctx
+        .auth_manager
+        .auth_cached()
+        .context("auth should remain cached after rejected proactive refresh")?;
+    assert_eq!(
+        auth.get_token_data().context("token data should remain")?,
+        initial_tokens
+    );
+    assert_eq!(ctx.load_auth()?, initial_auth);
+    let cached = ctx
+        .auth_manager
+        .auth_cached()
+        .context("cached auth should remain")?;
+    assert_eq!(
+        cached
+            .get_token_data()
+            .context("cached token data should remain")?,
+        initial_tokens
+    );
+    server.verify().await;
+    Ok(())
+}
+
+#[serial_test::serial(auth_env)]
+#[tokio::test]
 async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -1082,7 +1152,7 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
 
 #[serial_test::serial(auth_env)]
 #[tokio::test]
-async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
+async fn unauthorized_recovery_reloads_account_mismatch_and_reports_account_change() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = MockServer::start().await;
@@ -1143,9 +1213,9 @@ async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
     let err = recovery
         .next()
         .await
-        .err()
-        .context("recovery should fail due to account mismatch")?;
-    assert_eq!(err.failed_reason(), Some(RefreshTokenFailedReason::Other));
+        .expect_err("recovery should report the reloaded account change");
+    assert!(err.is_account_changed());
+    assert!(!recovery.has_next());
 
     let stored = ctx.load_auth()?;
     assert_eq!(stored, disk_auth);
@@ -1156,11 +1226,14 @@ async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
     let cached_after = ctx
         .auth_manager
         .auth_cached()
-        .context("auth should remain cached after refresh")?;
+        .context("auth should be cached after reload")?;
     let cached_after_tokens = cached_after
         .get_token_data()
-        .context("token data should remain cached")?;
-    assert_eq!(cached_after_tokens, initial_tokens);
+        .context("token data should be cached")?;
+    assert_eq!(
+        cached_after_tokens.account_id.as_deref(),
+        Some("other-account")
+    );
 
     server.verify().await;
     Ok(())
@@ -1307,6 +1380,17 @@ fn jwt_with_payload(payload: serde_json::Value) -> String {
 
 fn minimal_jwt() -> String {
     jwt_with_payload(json!({ "sub": "user-123" }))
+}
+
+fn jwt_for_account(account_id: &str) -> String {
+    jwt_with_payload(json!({
+        "sub": "user-123",
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": account_id,
+            "chatgpt_user_id": "user-123",
+            "user_id": "user-123"
+        }
+    }))
 }
 
 fn access_token_with_expiration(expires_at: chrono::DateTime<Utc>) -> String {

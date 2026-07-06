@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 use crate::SkillInjections;
 use crate::build_skill_injections;
 use crate::client::ModelClientSession;
+use crate::client::is_account_changed_new_session_error;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::collect_explicit_skill_mentions;
@@ -149,6 +150,10 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<ModelClientSession>,
     cancellation_token: CancellationToken,
 ) -> CodexResult<Option<String>> {
+    if sess.is_auth_account_change_fenced() {
+        return Err(crate::client::account_changed_new_session_error());
+    }
+
     let mut client_session =
         prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
     // TODO(ccunningham): Pre-turn compaction runs before context updates and the
@@ -158,6 +163,14 @@ pub(crate) async fn run_turn(
     if let Err(err) = run_pre_sampling_compact(&sess, &turn_context, &mut client_session).await {
         if matches!(err, CodexErr::TurnAborted) {
             return Err(err);
+        }
+        if is_account_changed_new_session_error(&err) {
+            let error = err.to_codex_protocol_error();
+            sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+                .await;
+            sess.send_auth_account_change_error(turn_context.as_ref())
+                .await;
+            return Ok(None);
         }
         let error = err.to_codex_protocol_error();
         sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
@@ -369,6 +382,14 @@ pub(crate) async fn run_turn(
                         if matches!(err, CodexErr::TurnAborted) {
                             return Err(err);
                         }
+                        if is_account_changed_new_session_error(&err) {
+                            let error = err.to_codex_protocol_error();
+                            sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+                                .await;
+                            sess.send_auth_account_change_error(turn_context.as_ref())
+                                .await;
+                            return Ok(None);
+                        }
                         let error = err.to_codex_protocol_error();
                         sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
                             .await;
@@ -459,6 +480,9 @@ pub(crate) async fn run_turn(
             }
             Err(e) => {
                 info!("Turn error: {e:#}");
+                if is_account_changed_new_session_error(&e) {
+                    sess.mark_auth_account_change_fenced();
+                }
                 let error = e.to_codex_protocol_error();
                 sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
                     .await;

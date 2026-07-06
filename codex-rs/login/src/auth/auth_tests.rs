@@ -2,6 +2,7 @@ use super::*;
 use crate::auth::storage::FileAuthStorage;
 use crate::auth::storage::get_auth_file;
 use crate::token_data::IdTokenInfo;
+use crate::token_data::TokenData;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::auth::KnownPlan as InternalKnownPlan;
@@ -15,6 +16,7 @@ use pretty_assertions::assert_eq;
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
@@ -1148,6 +1150,150 @@ async fn external_auth_provider_can_install_headers() {
     );
 }
 
+struct RecordingExternalChatgptAuth {
+    current: CodexAuth,
+    refreshed: CodexAuth,
+    context: StdMutex<Option<ExternalAuthRefreshContext>>,
+}
+
+impl ExternalAuth for RecordingExternalChatgptAuth {
+    fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
+        Box::pin(async { Ok(self.current.clone()) })
+    }
+
+    fn refresh(&self, context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
+        *self
+            .context
+            .lock()
+            .expect("context lock should not be poisoned") = Some(context);
+        let refreshed = self.refreshed.clone();
+        Box::pin(async move { Ok(refreshed) })
+    }
+}
+
+#[tokio::test]
+async fn unauthorized_recovery_external_chatgpt_reports_account_change() {
+    let initial_auth = external_chatgpt_auth_for_testing(WORKSPACE_ID_ALLOWED);
+    let manager = AuthManager::from_auth_for_testing(initial_auth.clone());
+    let external_auth = Arc::new(RecordingExternalChatgptAuth {
+        current: initial_auth,
+        refreshed: external_chatgpt_auth_for_testing(WORKSPACE_ID_SECOND_ALLOWED),
+        context: StdMutex::new(None),
+    });
+    manager
+        .set_external_auth(external_auth.clone())
+        .await
+        .expect("set external auth");
+
+    let mut recovery = manager.unauthorized_recovery();
+    let err = recovery
+        .next()
+        .await
+        .expect_err("external ChatGPT refresh should report account change");
+
+    assert!(err.is_account_changed());
+    let context = external_auth
+        .context
+        .lock()
+        .expect("context lock should not be poisoned")
+        .clone()
+        .expect("refresh context should be recorded");
+    assert_eq!(
+        context.previous_account_id.as_deref(),
+        Some(WORKSPACE_ID_ALLOWED)
+    );
+    let refreshed_auth = manager
+        .auth_cached()
+        .expect("refreshed auth should be cached");
+    assert_eq!(
+        refreshed_auth.get_chatgpt_account_id().as_deref(),
+        Some(WORKSPACE_ID_SECOND_ALLOWED)
+    );
+}
+
+#[tokio::test]
+async fn unauthorized_recovery_external_chatgpt_reports_unknown_to_concrete_account_change() {
+    let initial_auth = external_chatgpt_auth_without_account_for_testing().await;
+    let manager = AuthManager::from_auth_for_testing(initial_auth.clone());
+    let external_auth = Arc::new(RecordingExternalChatgptAuth {
+        current: initial_auth,
+        refreshed: external_chatgpt_auth_for_testing(WORKSPACE_ID_ALLOWED),
+        context: StdMutex::new(None),
+    });
+    manager
+        .set_external_auth(external_auth.clone())
+        .await
+        .expect("set external auth");
+
+    let mut recovery = manager.unauthorized_recovery();
+    let err = recovery
+        .next()
+        .await
+        .expect_err("external ChatGPT refresh should report unknown-to-concrete account change");
+
+    assert!(err.is_account_changed());
+    let context = external_auth
+        .context
+        .lock()
+        .expect("context lock should not be poisoned")
+        .clone()
+        .expect("refresh context should be recorded");
+    assert_eq!(context.previous_account_id, None);
+    let refreshed_auth = manager
+        .auth_cached()
+        .expect("refreshed auth should be cached");
+    assert_eq!(
+        refreshed_auth.get_chatgpt_account_id().as_deref(),
+        Some(WORKSPACE_ID_ALLOWED)
+    );
+}
+
+#[tokio::test]
+async fn recovery_account_change_uses_effective_chatgpt_account_id() {
+    let auth = chatgpt_auth_with_effective_and_flat_account_ids(
+        WORKSPACE_ID_ALLOWED,
+        WORKSPACE_ID_SECOND_ALLOWED,
+        /*last_refresh*/ Some(Utc::now()),
+    )
+    .await;
+
+    assert!(!auth_account_id_changed_after_recovery(
+        Some(WORKSPACE_ID_ALLOWED),
+        Some(&auth),
+        /*auth_changed*/ true,
+    ));
+}
+
+#[tokio::test]
+async fn managed_agent_identity_binding_uses_effective_chatgpt_account_id() {
+    let auth = chatgpt_auth_with_effective_and_flat_account_ids(
+        WORKSPACE_ID_ALLOWED,
+        WORKSPACE_ID_SECOND_ALLOWED,
+        /*last_refresh*/ Some(Utc::now()),
+    )
+    .await;
+
+    let binding = ManagedChatGptAgentIdentityBinding::from_auth(&auth, None)
+        .expect("binding should build from ChatGPT auth");
+
+    assert_eq!(binding.account_id, WORKSPACE_ID_ALLOWED);
+}
+
+#[tokio::test]
+async fn chatgpt_account_id_does_not_require_last_refresh() {
+    let auth = chatgpt_auth_with_effective_and_flat_account_ids(
+        WORKSPACE_ID_ALLOWED,
+        WORKSPACE_ID_SECOND_ALLOWED,
+        /*last_refresh*/ None,
+    )
+    .await;
+
+    assert_eq!(
+        auth.get_chatgpt_account_id().as_deref(),
+        Some(WORKSPACE_ID_ALLOWED)
+    );
+}
+
 struct ProviderAuthScript {
     tempdir: TempDir,
     command: String,
@@ -1297,6 +1443,102 @@ fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result
     let auth_json = serde_json::to_string_pretty(&auth_json_data)?;
     std::fs::write(auth_file, auth_json)?;
     Ok(fake_jwt)
+}
+
+fn external_chatgpt_auth_for_testing(account_id: &str) -> CodexAuth {
+    CodexAuth::from_external_chatgpt_tokens(
+        &fake_access_token_for_account(account_id),
+        account_id,
+        Some("pro"),
+    )
+    .expect("external ChatGPT auth should parse")
+}
+
+async fn external_chatgpt_auth_without_account_for_testing() -> CodexAuth {
+    let access_token = fake_jwt_for_auth_file_params(&AuthFileParams {
+        openai_api_key: None,
+        chatgpt_plan_type: Some("pro".to_string()),
+        chatgpt_account_id: None,
+    })
+    .expect("fake access token should encode");
+    let auth_dot_json = AuthDotJson {
+        auth_mode: Some(AuthMode::ChatgptAuthTokens),
+        openai_api_key: None,
+        tokens: Some(TokenData {
+            id_token: IdTokenInfo {
+                raw_jwt: access_token.clone(),
+                chatgpt_plan_type: Some(InternalPlanType::Known(InternalKnownPlan::Pro)),
+                chatgpt_user_id: Some("user-12345".to_string()),
+                ..Default::default()
+            },
+            access_token,
+            refresh_token: String::new(),
+            account_id: None,
+        }),
+        last_refresh: Some(Utc::now()),
+        agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
+    };
+    let codex_home = tempdir().expect("tempdir");
+    CodexAuth::from_auth_dot_json(
+        codex_home.path(),
+        auth_dot_json,
+        AuthCredentialsStoreMode::Ephemeral,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::default(),
+        /*agent_identity_authapi_base_url*/ None,
+        /*auth_route_config*/ None,
+    )
+    .await
+    .expect("external ChatGPT auth without account should parse")
+}
+
+async fn chatgpt_auth_with_effective_and_flat_account_ids(
+    effective_account_id: &str,
+    flat_account_id: &str,
+    last_refresh: Option<chrono::DateTime<Utc>>,
+) -> CodexAuth {
+    let auth_dot_json = AuthDotJson {
+        auth_mode: Some(AuthMode::Chatgpt),
+        openai_api_key: None,
+        tokens: Some(TokenData {
+            id_token: IdTokenInfo {
+                raw_jwt: fake_access_token_for_account(effective_account_id),
+                chatgpt_account_id: Some(effective_account_id.to_string()),
+                chatgpt_user_id: Some("user-123".to_string()),
+                ..Default::default()
+            },
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            account_id: Some(flat_account_id.to_string()),
+        }),
+        last_refresh,
+        agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
+    };
+    let codex_home = tempdir().expect("tempdir");
+    CodexAuth::from_auth_dot_json(
+        codex_home.path(),
+        auth_dot_json,
+        AuthCredentialsStoreMode::Ephemeral,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::default(),
+        /*agent_identity_authapi_base_url*/ None,
+        /*auth_route_config*/ None,
+    )
+    .await
+    .expect("auth should parse")
+}
+
+fn fake_access_token_for_account(account_id: &str) -> String {
+    fake_jwt_for_auth_file_params(&AuthFileParams {
+        openai_api_key: None,
+        chatgpt_plan_type: Some("pro".to_string()),
+        chatgpt_account_id: Some(account_id.to_string()),
+    })
+    .expect("fake access token should encode")
 }
 
 fn fake_jwt_for_auth_file_params(params: &AuthFileParams) -> std::io::Result<String> {

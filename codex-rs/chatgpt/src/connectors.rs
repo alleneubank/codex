@@ -285,7 +285,7 @@ fn connector_directory_cache_context(
         config.codex_home.to_path_buf(),
         ConnectorDirectoryCacheKey::new(
             config.chatgpt_base_url.clone(),
-            auth.get_account_id(),
+            auth.get_chatgpt_account_id(),
             auth.get_chatgpt_user_id(),
             auth.is_workspace_account(),
         ),
