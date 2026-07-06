@@ -41,7 +41,7 @@ const CLOUD_CONFIG_BUNDLE_AUTH_RECOVERY_FAILED_MESSAGE: &str = concat!(
 );
 
 fn auth_identity(auth: &CodexAuth) -> (Option<String>, Option<String>) {
-    (auth.get_chatgpt_user_id(), auth.get_account_id())
+    (auth.get_chatgpt_user_id(), auth.get_chatgpt_account_id())
 }
 
 fn cloud_config_eligible_auth(auth: &CodexAuth) -> bool {
@@ -379,7 +379,7 @@ where
                 "Cloud config bundle request was unauthorized; attempting auth recovery"
             );
             match auth_recovery.next().await {
-                Ok(_) => {
+                Ok(_step_result) => {
                     let Some(refreshed_auth) = self.auth_manager.auth().await else {
                         tracing::error!(
                             "Auth recovery succeeded but no auth is available for cloud config bundle"
@@ -400,6 +400,24 @@ where
                     };
                     *auth = refreshed_auth;
                     return Ok(UnauthorizedRecoveryAction::RetrySameAttempt);
+                }
+                Err(err) if err.is_account_changed() => {
+                    tracing::warn!(
+                        "Cloud config auth recovery changed accounts; refusing to retry account-scoped fetch"
+                    );
+                    emit_fetch_final_metric(
+                        trigger,
+                        "error",
+                        "auth_recovery_account_changed",
+                        attempt,
+                        status_code,
+                        /*bundle*/ None,
+                    );
+                    return Err(CloudConfigBundleLoadError::new(
+                        CloudConfigBundleLoadErrorCode::Auth,
+                        status_code,
+                        CLOUD_CONFIG_BUNDLE_AUTH_RECOVERY_FAILED_MESSAGE,
+                    ));
                 }
                 Err(RefreshTokenError::Permanent(failed)) => {
                     tracing::warn!(

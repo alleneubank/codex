@@ -53,7 +53,7 @@ pub(super) async fn load_remote_control_auth(
         if !auth.uses_codex_backend() {
             break auth;
         }
-        if auth.get_account_id().is_none() && !reloaded {
+        if auth.get_chatgpt_account_id().is_none() && !reloaded {
             auth_manager.reload().await;
             reloaded = true;
             continue;
@@ -70,7 +70,7 @@ pub(super) async fn load_remote_control_auth(
 
     Ok(RemoteControlConnectionAuth {
         auth_provider: codex_model_provider::auth_provider_from_auth(&auth),
-        account_id: auth.get_account_id().ok_or_else(|| {
+        account_id: auth.get_chatgpt_account_id().ok_or_else(|| {
             io::Error::new(
                 ErrorKind::WouldBlock,
                 "remote control enrollment is waiting for a ChatGPT account id",
@@ -103,6 +103,13 @@ pub(super) async fn recover_remote_control_auth(
                 step_result.auth_state_changed()
             );
             true
+        }
+        Err(err) if err.is_account_changed() => {
+            mark_recovery_auth_change_seen(auth_change_rx, auth_change_revision_before_recovery);
+            warn!(
+                "remote control auth recovery changed accounts: mode={mode}, step={step}; reconnecting enrollment instead of retrying account-scoped work"
+            );
+            false
         }
         Err(err) => {
             warn!("remote control auth recovery failed: mode={mode}, step={step}: {err}");

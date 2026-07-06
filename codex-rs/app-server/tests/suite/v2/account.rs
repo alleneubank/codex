@@ -73,7 +73,6 @@ const WORKSPACE_ID_SECOND_ALLOWED: &str = "123e4567-e89b-42d3-a456-426614174001"
 const WORKSPACE_ID_DISALLOWED: &str = "123e4567-e89b-42d3-a456-426614174002";
 const WORKSPACE_ID_EMBEDDED: &str = "123e4567-e89b-42d3-a456-426614174010";
 const WORKSPACE_ID_INITIAL: &str = "123e4567-e89b-42d3-a456-426614174011";
-const WORKSPACE_ID_REFRESHED: &str = "123e4567-e89b-42d3-a456-426614174012";
 const WORKSPACE_ID_DEVICE: &str = "123e4567-e89b-42d3-a456-426614174013";
 const WORKSPACE_ID_STALE: &str = "123e4567-e89b-42d3-a456-426614174014";
 
@@ -617,7 +616,7 @@ async fn external_auth_refreshes_on_unauthorized() -> Result<()> {
         &ChatGptIdTokenClaims::new()
             .email("refreshed@example.com")
             .plan_type("pro")
-            .chatgpt_account_id(WORKSPACE_ID_REFRESHED),
+            .chatgpt_account_id(WORKSPACE_ID_INITIAL),
     )?;
 
     let mut mcp = TestAppServer::builder()
@@ -674,7 +673,7 @@ async fn external_auth_refreshes_on_unauthorized() -> Result<()> {
     respond_to_refresh_request(
         &mut mcp,
         &refreshed_access_token,
-        WORKSPACE_ID_REFRESHED,
+        WORKSPACE_ID_INITIAL,
         Some("pro"),
     )
     .await?;

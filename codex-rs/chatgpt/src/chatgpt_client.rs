@@ -34,7 +34,7 @@ pub(crate) async fn chatgpt_get_request_with_timeout<T: DeserializeOwned>(
         "ChatGPT backend requests require Codex backend auth"
     );
     anyhow::ensure!(
-        auth.get_account_id().is_some(),
+        auth.get_chatgpt_account_id().is_some(),
         "ChatGPT account ID not available, please re-run `codex login`"
     );
 

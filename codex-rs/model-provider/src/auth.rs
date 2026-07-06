@@ -291,7 +291,7 @@ pub fn auth_provider_from_auth(auth: &CodexAuth) -> SharedAuthProvider {
         | CodexAuth::ChatgptAuthTokens(_)
         | CodexAuth::PersonalAccessToken(_) => Arc::new(BearerAuthProvider {
             token: auth.get_token().ok(),
-            account_id: auth.get_account_id(),
+            account_id: auth.get_chatgpt_account_id(),
             is_fedramp_account: auth.is_fedramp_account(),
         }),
     }
@@ -390,6 +390,23 @@ mod tests {
                 "access_token": "test-access-token",
                 "refresh_token": "test-refresh-token",
                 "account_id": "account-123"
+            },
+            "last_refresh": "2099-01-01T00:00:00Z"
+        });
+        std::fs::write(
+            codex_home.join("auth.json"),
+            serde_json::to_string_pretty(&auth_json).expect("serialize auth.json"),
+        )
+        .expect("write auth.json");
+    }
+
+    fn write_chatgpt_auth_json_with_flat_account_id(codex_home: &Path, account_id: &str) {
+        let auth_json = json!({
+            "tokens": {
+                "id_token": TEST_CHATGPT_ID_TOKEN,
+                "access_token": "test-access-token",
+                "refresh_token": "test-refresh-token",
+                "account_id": account_id
             },
             "last_refresh": "2099-01-01T00:00:00Z"
         });
@@ -596,6 +613,33 @@ mod tests {
                 .get("X-OpenAI-Fedramp")
                 .and_then(|value| value.to_str().ok()),
             Some("true")
+        );
+    }
+
+    #[tokio::test]
+    async fn chatgpt_auth_provider_prefers_jwt_account_id_over_flat_metadata() {
+        let codex_home = test_codex_home();
+        write_chatgpt_auth_json_with_flat_account_id(&codex_home, "stale-flat-account");
+        let auth_manager = AuthManager::shared(
+            codex_home,
+            /*enable_codex_api_key_env*/ false,
+            AuthCredentialsStoreMode::File,
+            /*forced_chatgpt_workspace_id*/ None,
+            /*chatgpt_base_url*/ None,
+            AuthKeyringBackendKind::default(),
+            /*auth_route_config*/ None,
+        )
+        .await;
+        let auth = auth_manager.auth().await.expect("auth should load");
+        let provider = auth_provider_from_auth(&auth);
+
+        let headers = provider.to_auth_headers();
+
+        assert_eq!(
+            headers
+                .get("ChatGPT-Account-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("account-123")
         );
     }
 
