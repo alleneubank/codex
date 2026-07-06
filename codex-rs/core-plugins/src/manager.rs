@@ -234,7 +234,7 @@ fn featured_plugin_ids_cache_key(
 ) -> FeaturedPluginIdsCacheKey {
     FeaturedPluginIdsCacheKey {
         chatgpt_base_url: config.chatgpt_base_url.clone(),
-        account_id: auth.and_then(CodexAuth::get_account_id),
+        account_id: auth.and_then(CodexAuth::get_chatgpt_account_id),
         chatgpt_user_id: auth.and_then(CodexAuth::get_chatgpt_user_id),
         is_workspace_account: auth.is_some_and(CodexAuth::is_workspace_account),
     }
@@ -860,7 +860,7 @@ impl PluginsManager {
         let Some(auth) = auth.filter(|auth| auth.uses_codex_backend()) else {
             return Vec::new();
         };
-        let Some(account_id) = auth.get_account_id() else {
+        let Some(account_id) = auth.get_chatgpt_account_id() else {
             return Vec::new();
         };
         if account_id.is_empty() {

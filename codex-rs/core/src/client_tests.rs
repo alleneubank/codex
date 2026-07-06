@@ -3,7 +3,9 @@ use super::CompactConversationRequestSettings;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
 use super::Prompt;
+use super::ResponsesApiRequest;
 use super::UnauthorizedRecoveryExecution;
+use super::WebsocketSession;
 use super::X_CODEX_INSTALLATION_ID_HEADER;
 use super::X_CODEX_PARENT_THREAD_ID_HEADER;
 use super::X_CODEX_TURN_METADATA_HEADER;
@@ -748,6 +750,7 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
         PendingUnauthorizedRetry::from_recovery(UnauthorizedRecoveryExecution {
             mode: "managed",
             phase: "refresh_token",
+            auth_account_id_changed: false,
         }),
     );
 
@@ -757,6 +760,49 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+#[test]
+fn account_changed_new_session_error_clears_current_and_cached_websocket_state() {
+    fn request() -> ResponsesApiRequest {
+        ResponsesApiRequest {
+            model: "gpt-test".to_string(),
+            instructions: String::new(),
+            input: Vec::new(),
+            tools: None,
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: false,
+            reasoning: None,
+            store: false,
+            stream: true,
+            stream_options: None,
+            include: Vec::new(),
+            service_tier: None,
+            prompt_cache_key: Some("cache-key".to_string()),
+            text: None,
+            client_metadata: None,
+        }
+    }
+
+    let client = test_model_client(SessionSource::Cli);
+    let mut session = client.new_session();
+    session.websocket_session.last_request = Some(request());
+    client.store_cached_websocket_session(WebsocketSession {
+        last_request: Some(request()),
+        ..Default::default()
+    });
+
+    let err = session.account_changed_new_session_error();
+
+    assert!(super::is_account_changed_new_session_error(&err));
+    assert!(session.websocket_session.connection.is_none());
+    assert!(session.websocket_session.last_request.is_none());
+    assert!(session.websocket_session.last_response_rx.is_none());
+    drop(session);
+    let next_session = client.new_session();
+    assert!(next_session.websocket_session.connection.is_none());
+    assert!(next_session.websocket_session.last_request.is_none());
+    assert!(next_session.websocket_session.last_response_rx.is_none());
 }
 
 #[test]

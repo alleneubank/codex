@@ -43,7 +43,7 @@ pub struct CodexAppsToolsCacheKey {
 /// Builds the CodexAuth-backed Codex Apps cache key.
 pub fn codex_apps_tools_cache_key(auth: Option<&CodexAuth>) -> CodexAppsToolsCacheKey {
     CodexAppsToolsCacheKey {
-        account_id: auth.and_then(CodexAuth::get_account_id),
+        account_id: auth.and_then(CodexAuth::get_chatgpt_account_id),
         chatgpt_user_id: auth.and_then(CodexAuth::get_chatgpt_user_id),
         is_workspace_account: auth.is_some_and(CodexAuth::is_workspace_account),
     }

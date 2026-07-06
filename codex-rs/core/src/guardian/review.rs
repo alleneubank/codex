@@ -162,6 +162,39 @@ fn guardian_risk_level_str(level: GuardianRiskLevel) -> &'static str {
     }
 }
 
+fn guardian_user_authorization_str(authorization: GuardianUserAuthorization) -> &'static str {
+    match authorization {
+        GuardianUserAuthorization::Unknown => "unknown",
+        GuardianUserAuthorization::Low => "low",
+        GuardianUserAuthorization::Medium => "medium",
+        GuardianUserAuthorization::High => "high",
+    }
+}
+
+pub(super) fn guardian_review_warning_message(
+    assessment: &GuardianAssessment,
+    approved: bool,
+) -> String {
+    let verdict = if approved { "approved" } else { "denied" };
+    let risk_level = guardian_risk_level_str(assessment.risk_level);
+    let authorization = guardian_user_authorization_str(assessment.user_authorization);
+
+    if approved
+        && assessment.risk_level == GuardianRiskLevel::Low
+        && assessment.user_authorization == GuardianUserAuthorization::Unknown
+    {
+        format!(
+            "Automatic approval review {verdict} (risk: {risk_level}): {}",
+            assessment.rationale
+        )
+    } else {
+        format!(
+            "Automatic approval review {verdict} (risk: {risk_level}, authorization: {authorization}): {}",
+            assessment.rationale
+        )
+    }
+}
+
 /// Whether this turn should route allowed approval prompts through the guardian
 /// reviewer instead of surfacing them to the user. ARC may still block actions
 /// earlier in the flow.
@@ -523,18 +556,7 @@ async fn run_guardian_review(
         GuardianAssessmentOutcome::Allow => true,
         GuardianAssessmentOutcome::Deny => false,
     };
-    let verdict = if approved { "approved" } else { "denied" };
-    let user_authorization = match assessment.user_authorization {
-        GuardianUserAuthorization::Unknown => "unknown",
-        GuardianUserAuthorization::Low => "low",
-        GuardianUserAuthorization::Medium => "medium",
-        GuardianUserAuthorization::High => "high",
-    };
-    let warning = format!(
-        "Automatic approval review {verdict} (risk: {}, authorization: {user_authorization}): {}",
-        guardian_risk_level_str(assessment.risk_level),
-        assessment.rationale
-    );
+    let warning = guardian_review_warning_message(&assessment, approved);
     session
         .send_event(
             turn.as_ref(),

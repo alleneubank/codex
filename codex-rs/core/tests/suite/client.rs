@@ -9,11 +9,18 @@ use codex_core::resolve_installation_id;
 use codex_core::thread_store_from_config;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
+use codex_login::AuthDotJson;
 use codex_login::AuthKeyringBackendKind;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_login::ExternalAuth;
+use codex_login::ExternalAuthFuture;
+use codex_login::ExternalAuthRefreshContext;
+use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_login::auth::AgentIdentityAuthPolicy;
 use codex_login::default_client::originator;
+use codex_login::save_auth;
+use codex_login::token_data::TokenData;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::built_in_model_providers;
@@ -21,6 +28,7 @@ use codex_models_manager::bundled_models_response;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
+use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ModelProviderAuthInfo;
@@ -42,6 +50,7 @@ use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
@@ -78,9 +87,11 @@ use dunce::canonicalize as normalize_path;
 use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::ffi::OsString;
 use std::io::Write;
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tempfile::TempDir;
 use toml::toml;
 use uuid::Uuid;
@@ -94,9 +105,28 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 use wiremock::matchers::query_param;
 
+static AUTH_REFRESH_ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 const INSTALLATION_ID_FILENAME: &str = "installation_id";
 const TEST_WINDOW_ID: &str = "test-thread:0";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+fn rollout_account_change_fence_marker_count(rollout_path: &std::path::Path) -> usize {
+    std::fs::read_to_string(rollout_path)
+        .expect("rollout should be readable")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<RolloutLine>(line).ok())
+        .filter(|line| {
+            matches!(
+                &line.item,
+                RolloutItem::EventMsg(EventMsg::Error(error))
+                    if error.message.contains("Start a new session")
+                        && error.codex_error_info == Some(CodexErrorInfo::Unauthorized)
+            )
+        })
+        .count()
+}
 
 fn test_turn_responses_metadata(
     _client: &ModelClient,
@@ -531,22 +561,7 @@ fn write_auth_json(
     access_token: &str,
     account_id: Option<&str>,
 ) -> String {
-    use base64::Engine as _;
-
-    let header = json!({ "alg": "none", "typ": "JWT" });
-    let payload = json!({
-        "email": "user@example.com",
-        "https://api.openai.com/auth": {
-            "chatgpt_plan_type": chatgpt_plan_type,
-            "chatgpt_account_id": account_id.unwrap_or("acc-123")
-        }
-    });
-
-    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
-    let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
-    let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
-    let signature_b64 = b64(b"sig");
-    let fake_jwt = format!("{header_b64}.{payload_b64}.{signature_b64}");
+    let fake_jwt = fake_chatgpt_jwt(chatgpt_plan_type, account_id.unwrap_or("acc-123"));
 
     let mut tokens = json!({
         "id_token": fake_jwt,
@@ -571,6 +586,91 @@ fn write_auth_json(
     .unwrap();
 
     fake_jwt
+}
+
+#[expect(clippy::unwrap_used)]
+fn fake_chatgpt_jwt(chatgpt_plan_type: &str, account_id: &str) -> String {
+    use base64::Engine as _;
+
+    let header = json!({ "alg": "none", "typ": "JWT" });
+    let payload = json!({
+        "email": "user@example.com",
+        "https://api.openai.com/auth": {
+            "chatgpt_plan_type": chatgpt_plan_type,
+            "chatgpt_account_id": account_id
+        }
+    });
+
+    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
+    let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
+    let signature_b64 = b64(b"sig");
+    format!("{header_b64}.{payload_b64}.{signature_b64}")
+}
+
+struct EnvGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: String) -> Self {
+        let original = std::env::var_os(key);
+        // SAFETY: callers hold AUTH_REFRESH_ENV_LOCK while this process-wide override is set.
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers hold AUTH_REFRESH_ENV_LOCK while this process-wide override is set.
+        unsafe {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
+fn external_chatgpt_auth_dot_json(account_id: &str) -> AuthDotJson {
+    let access_token = fake_chatgpt_jwt("pro", account_id);
+    let id_token = codex_login::token_data::parse_chatgpt_jwt_claims(&access_token)
+        .expect("fake id token should parse");
+    AuthDotJson {
+        auth_mode: Some(AuthMode::ChatgptAuthTokens),
+        openai_api_key: None,
+        tokens: Some(TokenData {
+            id_token,
+            access_token,
+            refresh_token: String::new(),
+            account_id: Some(account_id.to_string()),
+        }),
+        last_refresh: Some(chrono::Utc::now()),
+        agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
+    }
+}
+
+struct StaticExternalChatgptAuth {
+    current: CodexAuth,
+    refreshed: CodexAuth,
+}
+
+impl ExternalAuth for StaticExternalChatgptAuth {
+    fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
+        let current = self.current.clone();
+        Box::pin(async move { Ok(current) })
+    }
+
+    fn refresh(&self, _context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
+        let refreshed = self.refreshed.clone();
+        Box::pin(async move { Ok(refreshed) })
+    }
 }
 
 struct ProviderAuthCommandFixture {
@@ -1505,6 +1605,466 @@ async fn chatgpt_auth_sends_correct_request() {
         request_body["include"][0].as_str().unwrap(),
         "reasoning.encrypted_content"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chatgpt_401_reload_account_change_returns_new_session_error() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/codex/responses"))
+        .and(header("authorization", "Bearer account-a-token"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = Arc::new(TempDir::new()?);
+    write_auth_json(
+        &home,
+        /*openai_api_key*/ None,
+        "pro",
+        "account-a-token",
+        Some("account-a"),
+    );
+    let auth_manager = AuthManager::shared(
+        home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::Direct,
+        /*auth_route_config*/ None,
+    )
+    .await;
+    assert_eq!(
+        auth_manager
+            .auth_cached()
+            .and_then(|auth| auth.get_account_id()),
+        Some("account-a".to_string())
+    );
+    write_auth_json(
+        &home,
+        /*openai_api_key*/ None,
+        "pro",
+        "account-b-token",
+        Some("account-b"),
+    );
+
+    let mut model_provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
+    model_provider.base_url = Some(format!("{}/api/codex", server.uri()));
+    model_provider.supports_websockets = false;
+    let resumed_model_provider = model_provider.clone();
+    let resumed_home = Arc::clone(&home);
+    let mut builder = test_codex()
+        .with_home(home)
+        .with_auth_manager(auth_manager)
+        .with_config(move |config| {
+            config.model_provider = model_provider;
+        });
+    let test = builder.build(&server).await?;
+    let rollout_path = test
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path should be configured");
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    let requests = server.received_requests().await.unwrap_or_default();
+    let response_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.url.path() == "/api/codex/responses")
+        .collect();
+    assert_eq!(
+        response_requests.len(),
+        1,
+        "account-changing recovery must not retry"
+    );
+    assert_eq!(
+        response_requests[0]
+            .headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer account-a-token")
+    );
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "next".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected fenced-session error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+
+    test.codex.submit(Op::Compact).await?;
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected fenced-compact error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let response_request_count = requests
+        .iter()
+        .filter(|request| request.method == "POST" && request.url.path() == "/api/codex/responses")
+        .count();
+    assert_eq!(response_request_count, 1);
+    assert_eq!(
+        rollout_account_change_fence_marker_count(&rollout_path),
+        1,
+        "account-changing recovery should persist exactly one durable same-session fence marker"
+    );
+
+    test.codex.submit(Op::Shutdown).await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::ShutdownComplete)).await;
+
+    builder = builder.with_config(move |config| {
+        config.model_provider = resumed_model_provider;
+    });
+    let resumed = builder
+        .resume(&server, resumed_home, rollout_path.clone())
+        .await?;
+    resumed
+        .codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    let error_event = wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected resumed-session fence error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+
+    resumed.codex.submit(Op::Compact).await?;
+    let error_event = wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected resumed-compact fence error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let response_request_count = requests
+        .iter()
+        .filter(|request| request.method == "POST" && request.url.path() == "/api/codex/responses")
+        .count();
+    assert_eq!(response_request_count, 1);
+    assert_eq!(
+        rollout_account_change_fence_marker_count(&rollout_path),
+        1,
+        "fenced follow-up operations should not persist duplicate account-change fence markers"
+    );
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "the refresh endpoint override must stay locked until the OAuth refresh request completes"
+)]
+async fn chatgpt_401_refresh_account_change_returns_new_session_error() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    let _auth_refresh_env_lock = AUTH_REFRESH_ENV_LOCK.lock().await;
+    let _refresh_url_guard = EnvGuard::set(
+        REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
+        format!("{}/oauth/token", server.uri()),
+    );
+    Mock::given(method("POST"))
+        .and(path("/api/codex/responses"))
+        .and(header("authorization", "Bearer account-a-token"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id_token": fake_chatgpt_jwt("pro", "account-b"),
+            "access_token": "account-b-token",
+            "refresh_token": "account-b-refresh-token",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = Arc::new(TempDir::new()?);
+    write_auth_json(
+        &home,
+        /*openai_api_key*/ None,
+        "pro",
+        "account-a-token",
+        Some("account-a"),
+    );
+    let auth_manager = AuthManager::shared(
+        home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::Direct,
+        /*auth_route_config*/ None,
+    )
+    .await;
+
+    let mut model_provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
+    model_provider.base_url = Some(format!("{}/api/codex", server.uri()));
+    model_provider.supports_websockets = false;
+    let test = test_codex()
+        .with_home(home)
+        .with_auth_manager(auth_manager.clone())
+        .with_config(move |config| {
+            config.model_provider = model_provider;
+        })
+        .build(&server)
+        .await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    assert_eq!(
+        auth_manager
+            .auth_cached()
+            .and_then(|auth| auth.get_chatgpt_account_id()),
+        Some("account-a".to_string()),
+        "account-changing refresh response must not update cached auth"
+    );
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let response_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.method == "POST" && request.url.path() == "/api/codex/responses")
+        .collect();
+    assert_eq!(
+        response_requests.len(),
+        2,
+        "refresh account change should stop after reload retry and refresh failure"
+    );
+    assert!(
+        response_requests.iter().all(|request| request
+            .headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            == Some("Bearer account-a-token")),
+        "request must not be retried with account-changing refresh credentials"
+    );
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chatgpt_401_external_refresh_account_change_returns_new_session_error()
+-> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    let account_a_token = fake_chatgpt_jwt("pro", "account-a");
+    let account_b_token = fake_chatgpt_jwt("pro", "account-b");
+    Mock::given(method("POST"))
+        .and(path("/api/codex/responses"))
+        .and(header("authorization", format!("Bearer {account_a_token}")))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = Arc::new(TempDir::new()?);
+    save_auth(
+        home.path(),
+        &external_chatgpt_auth_dot_json("account-a"),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::Direct,
+    )?;
+    let auth_manager = AuthManager::shared(
+        home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::Direct,
+        /*auth_route_config*/ None,
+    )
+    .await;
+    auth_manager
+        .set_external_auth(Arc::new(StaticExternalChatgptAuth {
+            current: CodexAuth::from_external_chatgpt_tokens(
+                &account_a_token,
+                "account-a",
+                Some("pro"),
+            )?,
+            refreshed: CodexAuth::from_external_chatgpt_tokens(
+                &account_b_token,
+                "account-b",
+                Some("pro"),
+            )?,
+        }))
+        .await?;
+
+    let mut model_provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
+    model_provider.base_url = Some(format!("{}/api/codex", server.uri()));
+    model_provider.supports_websockets = false;
+    let test = test_codex()
+        .with_home(Arc::clone(&home))
+        .with_auth_manager(auth_manager.clone())
+        .with_config(move |config| {
+            config.model_provider = model_provider;
+        })
+        .build(&server)
+        .await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    assert_eq!(
+        auth_manager
+            .auth_cached()
+            .and_then(|auth| auth.get_chatgpt_account_id()),
+        Some("account-b".to_string()),
+        "external refresh should cache the refreshed account for the next session"
+    );
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "next".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error_event else {
+        unreachable!();
+    };
+    assert!(
+        error.message.contains("Start a new session"),
+        "unexpected fenced-session error message: {}",
+        error.message
+    );
+    assert_eq!(error.codex_error_info, Some(CodexErrorInfo::Unauthorized));
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let response_request_count = requests
+        .iter()
+        .filter(|request| request.method == "POST" && request.url.path() == "/api/codex/responses")
+        .count();
+    assert_eq!(
+        response_request_count, 1,
+        "external account-changing recovery must not retry the failed request or allow same-session follow-up"
+    );
+    server.verify().await;
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
