@@ -73,6 +73,8 @@ use codex_login::default_client::build_default_reqwest_client_for_route;
 use codex_otel::SessionTelemetry;
 use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::auth::AuthMode;
+use codex_protocol::auth::RefreshTokenFailedError;
+use codex_protocol::auth::RefreshTokenFailedReason;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -157,6 +159,23 @@ const X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER: &str =
 const REALTIME_CALLS_ENDPOINT: &str = "/realtime/calls";
 const RESPONSES_ENDPOINT: &str = "/responses";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
+pub(crate) const ACCOUNT_CHANGED_NEW_SESSION_MESSAGE: &str = "Authentication recovered with a different account. Start a new session before retrying so the conversation is not resent across accounts.";
+
+pub(crate) fn account_changed_new_session_error() -> CodexErr {
+    CodexErr::RefreshTokenFailed(RefreshTokenFailedError::new(
+        RefreshTokenFailedReason::Other,
+        ACCOUNT_CHANGED_NEW_SESSION_MESSAGE,
+    ))
+}
+
+pub(crate) fn is_account_changed_new_session_error(err: &CodexErr) -> bool {
+    matches!(
+        err,
+        CodexErr::RefreshTokenFailed(failed)
+            if failed.reason == RefreshTokenFailedReason::Other
+                && failed.message == ACCOUNT_CHANGED_NEW_SESSION_MESSAGE
+    )
+}
 // `/responses/compact` is unary, so the timeout covers the full response rather than one idle
 // period between stream events.
 const COMPACT_REQUEST_TIMEOUT_IDLE_MULTIPLIER: u32 = 4;
@@ -1116,6 +1135,13 @@ impl ModelClientSession {
         Arc::clone(&self.turn_state)
     }
 
+    fn account_changed_new_session_error(&mut self) -> CodexErr {
+        self.websocket_session = WebsocketSession::default();
+        self.client
+            .store_cached_websocket_session(WebsocketSession::default());
+        account_changed_new_session_error()
+    }
+
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
         self.websocket_session.last_request = None;
@@ -1393,7 +1419,7 @@ impl ModelClientSession {
         )
     )]
     async fn stream_responses_api(
-        &self,
+        &mut self,
         prompt: &Prompt,
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
@@ -1479,15 +1505,17 @@ impl ModelClientSession {
                         response_debug_context.request_id.as_deref(),
                         /*output_items*/ &[],
                     );
-                    pending_retry = PendingUnauthorizedRetry::from_recovery(
-                        handle_unauthorized(
-                            unauthorized_transport,
-                            &mut auth_recovery,
-                            session_telemetry,
-                            &self.client.state.provider,
-                        )
-                        .await?,
-                    );
+                    let recovery = handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        session_telemetry,
+                        &self.client.state.provider,
+                    )
+                    .await?;
+                    if recovery.auth_account_id_changed {
+                        return Err(self.account_changed_new_session_error());
+                    }
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
                     continue;
                 }
                 Err(err) => {
@@ -1601,15 +1629,17 @@ impl ModelClientSession {
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
                 )) if status == StatusCode::UNAUTHORIZED => {
-                    pending_retry = PendingUnauthorizedRetry::from_recovery(
-                        handle_unauthorized(
-                            unauthorized_transport,
-                            &mut auth_recovery,
-                            session_telemetry,
-                            &self.client.state.provider,
-                        )
-                        .await?,
-                    );
+                    let recovery = handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        session_telemetry,
+                        &self.client.state.provider,
+                    )
+                    .await?;
+                    if recovery.auth_account_id_changed {
+                        return Err(self.account_changed_new_session_error());
+                    }
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
                     continue;
                 }
                 Err(err) => return Err(self.client.state.provider.map_api_error(err)),
@@ -2098,6 +2128,7 @@ where
 struct UnauthorizedRecoveryExecution {
     mode: &'static str,
     phase: &'static str,
+    auth_account_id_changed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2202,7 +2233,38 @@ async fn handle_unauthorized(
                     debug.auth_error.as_deref(),
                     debug.auth_error_code.as_deref(),
                 );
-                Ok(UnauthorizedRecoveryExecution { mode, phase })
+                Ok(UnauthorizedRecoveryExecution {
+                    mode,
+                    phase,
+                    auth_account_id_changed: false,
+                })
+            }
+            Err(err) if err.is_account_changed() => {
+                session_telemetry.record_auth_recovery(
+                    mode,
+                    phase,
+                    "recovery_account_changed",
+                    debug.request_id.as_deref(),
+                    debug.cf_ray.as_deref(),
+                    debug.auth_error.as_deref(),
+                    debug.auth_error_code.as_deref(),
+                    /*recovery_reason*/ None,
+                    Some(true),
+                );
+                emit_feedback_auth_recovery_tags(
+                    mode,
+                    phase,
+                    "recovery_account_changed",
+                    debug.request_id.as_deref(),
+                    debug.cf_ray.as_deref(),
+                    debug.auth_error.as_deref(),
+                    debug.auth_error_code.as_deref(),
+                );
+                Ok(UnauthorizedRecoveryExecution {
+                    mode,
+                    phase,
+                    auth_account_id_changed: true,
+                })
             }
             Err(RefreshTokenError::Permanent(failed)) => {
                 session_telemetry.record_auth_recovery(

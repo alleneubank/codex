@@ -22,7 +22,7 @@ impl RemotePluginCatalogCacheKey {
     fn global(config: &RemotePluginServiceConfig, auth: &CodexAuth) -> Self {
         Self {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
-            account_id: auth.get_account_id(),
+            account_id: auth.get_chatgpt_account_id(),
             chatgpt_user_id: auth.get_chatgpt_user_id(),
             is_workspace_account: auth.is_workspace_account(),
         }
