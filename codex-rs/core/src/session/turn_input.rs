@@ -144,6 +144,12 @@ pub(super) async fn handle(
     mode: TurnInputMode,
     submission_id: String,
 ) -> CodexResult<TurnInputSubmission> {
+    if session.is_auth_account_change_fenced() {
+        session
+            .send_auth_account_change_error_raw(submission_id)
+            .await;
+        return Err(crate::client::account_changed_new_session_error());
+    }
     match mode {
         TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
         TurnInputMode::StartIfIdle => {

@@ -877,8 +877,9 @@ mod tests {
             ToolRegistry::from_tools([cleanup_handler, queued_handler]),
             Vec::new(),
         ));
+        let step_context = step_context.with_tool_router_for_test(router);
         let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-        let runtime = ToolCallRuntime::new(router, session, step_context, tracker);
+        let runtime = ToolCallRuntime::new(session, step_context, tracker);
         let cleanup_token = CancellationToken::new();
         let queued_token = CancellationToken::new();
 
@@ -889,6 +890,7 @@ mod tests {
                 payload: ToolPayload::Function {
                     arguments: "{}".to_string(),
                 },
+                encrypted_function_args: None,
             },
             cleanup_token.clone(),
         ));
@@ -901,6 +903,7 @@ mod tests {
                 payload: ToolPayload::Function {
                     arguments: "{}".to_string(),
                 },
+                encrypted_function_args: None,
             },
             queued_token.clone(),
         ));
