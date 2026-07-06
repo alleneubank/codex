@@ -6,6 +6,7 @@ use super::step_settings::StepSettingsConstraints;
 use super::step_settings::StepSettingsUpdate;
 use super::*;
 use crate::agents_md_manager::AgentsMdManager;
+use crate::client::ACCOUNT_CHANGED_NEW_SESSION_MESSAGE;
 use crate::config::ConstraintError;
 use crate::environment_selection::ThreadEnvironments;
 use crate::environment_selection::TurnEnvironmentSnapshot;
@@ -25,7 +26,9 @@ use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::EnvironmentConfig;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -35,6 +38,7 @@ use codex_skills::SkillError;
 use codex_utils_git_discovery::GitRootDiscovery;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use tokio::sync::Semaphore;
@@ -91,6 +95,7 @@ pub(crate) struct Session {
     pub(super) fork_persistence: ForkPersistence,
     pub(super) forked_from_ordinal_exclusive: Option<u64>,
     pub(super) next_internal_sub_id: AtomicU64,
+    pub(super) auth_account_change_fenced: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -618,6 +623,14 @@ impl Session {
         self.services.agent_control.session_id()
     }
 
+    pub(crate) fn mark_auth_account_change_fenced(&self) -> bool {
+        !self.auth_account_change_fenced.swap(true, Ordering::SeqCst)
+    }
+
+    pub(crate) fn is_auth_account_change_fenced(&self) -> bool {
+        self.auth_account_change_fenced.load(Ordering::SeqCst)
+    }
+
     pub(crate) async fn active_worktree(&self) -> Option<ActiveWorktree> {
         self.active_worktree.lock().await.clone()
     }
@@ -798,6 +811,8 @@ impl Session {
         }
         let multi_agent_version = multi_agent_version.map(OnceLock::from).unwrap_or_default();
         let initial_multi_agent_version = multi_agent_version.get().copied();
+        let auth_account_change_fenced =
+            initial_history.scan_rollout_items(is_auth_account_change_fence_item);
 
         let thread_id = match (&initial_history, reserved_thread_id) {
             (
@@ -1565,6 +1580,7 @@ impl Session {
                 fork_persistence,
                 forked_from_ordinal_exclusive,
                 next_internal_sub_id: AtomicU64::new(0),
+                auth_account_change_fenced: AtomicBool::new(auth_account_change_fenced),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;
@@ -1686,4 +1702,13 @@ impl Session {
             }
         }
     }
+}
+
+fn is_auth_account_change_fence_item(item: &RolloutItem) -> bool {
+    matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::Error(error))
+            if error.message == ACCOUNT_CHANGED_NEW_SESSION_MESSAGE
+                && error.codex_error_info == Some(CodexErrorInfo::Unauthorized)
+    )
 }
