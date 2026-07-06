@@ -19,12 +19,14 @@ pub(super) fn same_owner(previous: Option<&CodexAuth>, current: Option<&CodexAut
     if previous.api_auth_mode() != current.api_auth_mode() {
         return false;
     }
-    let (Some(user), Some(workspace)) = (previous.get_chatgpt_user_id(), previous.get_account_id())
-    else {
+    let (Some(user), Some(workspace)) = (
+        previous.get_chatgpt_user_id(),
+        previous.get_chatgpt_account_id(),
+    ) else {
         return false;
     };
     !user.trim().is_empty()
         && !workspace.trim().is_empty()
         && current.get_chatgpt_user_id().as_ref() == Some(&user)
-        && current.get_account_id().as_ref() == Some(&workspace)
+        && current.get_chatgpt_account_id().as_ref() == Some(&workspace)
 }

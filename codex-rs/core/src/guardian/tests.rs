@@ -13,6 +13,7 @@ use crate::guardian::prompt::BUNDLED_GUARDIAN_POLICY;
 use crate::guardian::prompt::BUNDLED_GUARDIAN_POLICY_TEMPLATE;
 use crate::guardian::prompt::guardian_policy_prompt_with_config_and_template;
 use crate::guardian::review::guardian_review_session_config;
+use crate::guardian::review::guardian_review_warning_message;
 use crate::guardian::review::routes_approval_to_guardian_with_reviewer;
 use crate::session::session::Session;
 use crate::session::tests::update_turn_settings_for_test;
@@ -61,6 +62,8 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::GuardianAssessmentStatus;
+use codex_protocol::protocol::GuardianRiskLevel;
+use codex_protocol::protocol::GuardianUserAuthorization;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_utils_path_uri::LegacyAppPathString;
@@ -1940,6 +1943,36 @@ fn build_guardian_transcript_preserves_recent_tool_context_when_user_history_is_
     assert_eq!(
         omission,
         Some("Some conversation entries were omitted.".to_string())
+    );
+}
+
+#[test]
+fn guardian_review_warning_omits_unknown_authorization_for_low_risk_approval() {
+    let assessment = GuardianAssessment {
+        risk_level: GuardianRiskLevel::Low,
+        user_authorization: GuardianUserAuthorization::Unknown,
+        outcome: GuardianAssessmentOutcome::Allow,
+        rationale: "Auto-review returned a low-risk allow decision.".to_string(),
+    };
+
+    assert_eq!(
+        guardian_review_warning_message(&assessment, /*approved*/ true),
+        "Automatic approval review approved (risk: low): Auto-review returned a low-risk allow decision."
+    );
+}
+
+#[test]
+fn guardian_review_warning_keeps_unknown_authorization_for_denial() {
+    let assessment = GuardianAssessment {
+        risk_level: GuardianRiskLevel::High,
+        user_authorization: GuardianUserAuthorization::Unknown,
+        outcome: GuardianAssessmentOutcome::Deny,
+        rationale: "Auto-review returned a deny decision without a rationale.".to_string(),
+    };
+
+    assert_eq!(
+        guardian_review_warning_message(&assessment, /*approved*/ false),
+        "Automatic approval review denied (risk: high, authorization: unknown): Auto-review returned a deny decision without a rationale."
     );
 }
 

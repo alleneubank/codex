@@ -160,12 +160,29 @@ fn chatgpt_auth_json_with_last_refresh(
 }
 
 fn fake_chatgpt_jwt(plan_type: &str, chatgpt_user_id: Option<&str>, signature: &[u8]) -> String {
+    fake_chatgpt_jwt_with_account_id(
+        plan_type,
+        chatgpt_user_id,
+        /*account_id*/ None,
+        signature,
+    )
+}
+
+fn fake_chatgpt_jwt_with_account_id(
+    plan_type: &str,
+    chatgpt_user_id: Option<&str>,
+    account_id: Option<&str>,
+    signature: &[u8],
+) -> String {
     let header = json!({ "alg": "none", "typ": "JWT" });
-    let auth_payload = json!({
+    let mut auth_payload = json!({
         "chatgpt_plan_type": plan_type,
         "chatgpt_user_id": chatgpt_user_id,
         "user_id": chatgpt_user_id,
     });
+    if let Some(account_id) = account_id {
+        auth_payload["chatgpt_account_id"] = serde_json::Value::String(account_id.to_string());
+    }
     let payload = json!({
         "email": "user@example.com",
         "https://api.openai.com/auth": auth_payload,
@@ -174,6 +191,29 @@ fn fake_chatgpt_jwt(plan_type: &str, chatgpt_user_id: Option<&str>, signature: &
     let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload"));
     let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
     format!("{header_b64}.{payload_b64}.{signature_b64}")
+}
+
+fn chatgpt_auth_json_with_jwt_and_flat_account_id(
+    plan_type: &str,
+    chatgpt_user_id: Option<&str>,
+    jwt_account_id: Option<&str>,
+    flat_account_id: Option<&str>,
+    access_token: &str,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> serde_json::Value {
+    let fake_jwt =
+        fake_chatgpt_jwt_with_account_id(plan_type, chatgpt_user_id, jwt_account_id, b"sig");
+    json!({
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "id_token": fake_jwt,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_id": flat_account_id,
+        },
+        "last_refresh": last_refresh,
+    })
 }
 
 fn test_bundle() -> CloudConfigBundle {
@@ -742,6 +782,81 @@ async fn get_bundle_ignores_cache_for_different_auth_identity() {
     assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn get_bundle_cache_identity_prefers_jwt_account_id_over_flat_metadata() {
+    let codex_home = tempdir().expect("tempdir");
+    let auth_home = tempdir().expect("auth tempdir");
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_jwt_and_flat_account_id(
+            "business",
+            Some("user-12345"),
+            Some("jwt-account"),
+            Some("stale-flat-account-a"),
+            "test-access-token",
+            "test-refresh-token",
+            "2025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("write auth");
+    let prime_service = CloudConfigBundleService::new(
+        Arc::new(
+            AuthManager::new(
+                auth_home.path().to_path_buf(),
+                /*enable_codex_api_key_env*/ false,
+                AuthCredentialsStoreMode::File,
+                /*forced_chatgpt_workspace_id*/ None,
+                /*chatgpt_base_url*/ None,
+                AuthKeyringBackendKind::default(),
+                codex_login::test_support::transport_default_auth_route_config(),
+            )
+            .await,
+        ),
+        Arc::new(StaticBundleClient::new(test_bundle())),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+    let cached_bundle = prime_service
+        .load_startup_bundle()
+        .await
+        .expect("initial bundle should load");
+
+    write_auth_json(
+        auth_home.path(),
+        chatgpt_auth_json_with_jwt_and_flat_account_id(
+            "business",
+            Some("user-12345"),
+            Some("jwt-account"),
+            Some("stale-flat-account-b"),
+            "test-access-token",
+            "test-refresh-token",
+            "2025-01-01T00:00:00Z",
+        ),
+    )
+    .expect("rewrite auth");
+    let fetcher = Arc::new(SequenceBundleClient::new(vec![Err(request_error())]));
+    let service = CloudConfigBundleService::new(
+        Arc::new(
+            AuthManager::new(
+                auth_home.path().to_path_buf(),
+                /*enable_codex_api_key_env*/ false,
+                AuthCredentialsStoreMode::File,
+                /*forced_chatgpt_workspace_id*/ None,
+                /*chatgpt_base_url*/ None,
+                AuthKeyringBackendKind::default(),
+                codex_login::test_support::transport_default_auth_route_config(),
+            )
+            .await,
+        ),
+        fetcher.clone(),
+        codex_home.path().to_path_buf(),
+        CLOUD_CONFIG_BUNDLE_TIMEOUT,
+    );
+
+    assert_eq!(service.load_startup_bundle().await, Ok(cached_bundle));
+    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test(start_paused = true)]
 async fn get_bundle_times_out() {
     let codex_home = tempdir().expect("tempdir");
@@ -844,69 +959,99 @@ async fn get_bundle_recovers_after_unauthorized_reload() {
 }
 
 #[tokio::test]
-async fn get_bundle_recovers_after_unauthorized_reload_updates_cache_identity() {
-    let auth_home = tempdir().expect("tempdir");
-    write_auth_json(
-        auth_home.path(),
-        chatgpt_auth_json_with_last_refresh(
-            "business",
-            Some("user-12345"),
-            Some("account-12345"),
-            "stale-access-token",
-            "test-refresh-token",
-            "3025-01-01T00:00:00Z",
+async fn get_bundle_recovery_preserves_owner_and_scopes_subsequent_load_cache() {
+    for (refreshed_user_id, expected_result, expected_requests) in [
+        ("user-12345", Ok(Some(test_bundle())), 2),
+        (
+            "user-99999",
+            Err(CloudConfigBundleLoadError::new(
+                CloudConfigBundleLoadErrorCode::Auth,
+                Some(401),
+                "Your authentication session could not be refreshed automatically. Please log out and sign in again.",
+            )),
+            1,
         ),
-    )
-    .expect("write initial auth");
-    let auth_manager = Arc::new(
-        AuthManager::new(
-            auth_home.path().to_path_buf(),
-            /*enable_codex_api_key_env*/ false,
-            AuthCredentialsStoreMode::File,
-            /*forced_chatgpt_workspace_id*/ None,
-            /*chatgpt_base_url*/ None,
-            AuthKeyringBackendKind::default(),
-            codex_login::test_support::transport_default_auth_route_config(),
+    ] {
+        let auth_home = tempdir().expect("tempdir");
+        write_auth_json(
+            auth_home.path(),
+            chatgpt_auth_json_with_last_refresh(
+                "business",
+                Some("user-12345"),
+                Some("account-12345"),
+                "stale-access-token",
+                "test-refresh-token",
+                "3025-01-01T00:00:00Z",
+            ),
         )
-        .await,
-    );
+        .expect("write initial auth");
+        let auth_manager = Arc::new(
+            AuthManager::new(
+                auth_home.path().to_path_buf(),
+                /*enable_codex_api_key_env*/ false,
+                AuthCredentialsStoreMode::File,
+                /*forced_chatgpt_workspace_id*/ None,
+                /*chatgpt_base_url*/ None,
+                AuthKeyringBackendKind::default(),
+                codex_login::test_support::transport_default_auth_route_config(),
+            )
+            .await,
+        );
 
-    write_auth_json(
-        auth_home.path(),
-        chatgpt_auth_json_with_last_refresh(
-            "business",
-            Some("user-99999"),
-            Some("account-12345"),
-            "fresh-access-token",
-            "test-refresh-token",
-            "3025-01-01T00:00:00Z",
-        ),
-    )
-    .expect("write refreshed auth");
-    let fetcher = Arc::new(TokenBundleClient {
-        expected_token: "fresh-access-token".to_string(),
-        bundle: test_bundle(),
-        request_count: AtomicUsize::new(0),
-    });
-    let codex_home = tempdir().expect("tempdir");
-    let service = CloudConfigBundleService::new(
-        auth_manager,
-        fetcher.clone(),
-        codex_home.path().to_path_buf(),
-        CLOUD_CONFIG_BUNDLE_TIMEOUT,
-    );
+        write_auth_json(
+            auth_home.path(),
+            chatgpt_auth_json_with_last_refresh(
+                "business",
+                Some(refreshed_user_id),
+                Some("account-12345"),
+                "fresh-access-token",
+                "test-refresh-token",
+                "3025-01-01T00:00:00Z",
+            ),
+        )
+        .expect("write refreshed auth");
+        let fetcher = Arc::new(TokenBundleClient {
+            expected_token: "fresh-access-token".to_string(),
+            bundle: test_bundle(),
+            request_count: AtomicUsize::new(0),
+        });
+        let codex_home = tempdir().expect("tempdir");
+        let service = CloudConfigBundleService::new(
+            auth_manager,
+            fetcher.clone(),
+            codex_home.path().to_path_buf(),
+            CLOUD_CONFIG_BUNDLE_TIMEOUT,
+        );
 
-    assert_eq!(service.load_startup_bundle().await, Ok(Some(test_bundle())));
-    let cache = create_test_cache(codex_home.path());
-    assert_eq!(
-        cache
-            .load(Some("user-99999"), Some("account-12345"))
-            .await
-            .expect("load cache")
-            .bundle,
-        test_bundle()
-    );
-    assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+        assert_eq!(service.get_latest().await, expected_result);
+        assert_eq!(
+            fetcher.request_count.load(Ordering::SeqCst),
+            expected_requests
+        );
+        if expected_requests == 1 {
+            let cache = create_test_cache(codex_home.path());
+            assert!(!cache.path().exists());
+            // A distinct load starts with the new owner; the interrupted fetch must not
+            // silently switch identities or write a bundle into either owner's cache.
+            let next_service = CloudConfigBundleService::new(
+                Arc::clone(&service.auth_manager),
+                Arc::clone(&fetcher),
+                codex_home.path().to_path_buf(),
+                CLOUD_CONFIG_BUNDLE_TIMEOUT,
+            );
+            assert_eq!(next_service.get_latest().await, Ok(Some(test_bundle())));
+        }
+        let cache = create_test_cache(codex_home.path());
+        assert_eq!(
+            cache
+                .load(Some(refreshed_user_id), Some("account-12345"))
+                .await
+                .expect("load cache")
+                .bundle,
+            test_bundle()
+        );
+        assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 2);
+    }
 }
 
 #[tokio::test]
@@ -968,7 +1113,7 @@ async fn get_bundle_surfaces_auth_recovery_message() {
         CloudConfigBundleLoadError::new(
             CloudConfigBundleLoadErrorCode::Auth,
             Some(401),
-            "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+            "Your authentication session could not be refreshed automatically. Please log out and sign in again.",
         )
     );
     assert_eq!(fetcher.request_count.load(Ordering::SeqCst), 1);

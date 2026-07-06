@@ -36,8 +36,8 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 const CHATGPT_ACCOUNT_ID: &str = "workspace-one";
-const INITIAL_ACCESS_TOKEN: &str = "header.e30.initial";
-const REFRESHED_ACCESS_TOKEN: &str = "header.e30.refreshed";
+const INITIAL_ACCESS_TOKEN: &str = "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoiZml4dHVyZS11c2VyIiwidXNlcl9pZCI6ImZpeHR1cmUtdXNlciIsImNoYXRncHRfYWNjb3VudF9pZCI6IndvcmtzcGFjZS1vbmUifX0.initial";
+const REFRESHED_ACCESS_TOKEN: &str = "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoiZml4dHVyZS11c2VyIiwidXNlcl9pZCI6ImZpeHR1cmUtdXNlciIsImNoYXRncHRfYWNjb3VudF9pZCI6IndvcmtzcGFjZS1vbmUifX0.refreshed";
 
 struct ScriptedExternalAuth {
     current: Mutex<CodexAuth>,
