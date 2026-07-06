@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::client::ModelClientSession;
+use crate::client::is_account_changed_new_session_error;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::compact::InitialContextInjection;
@@ -168,6 +169,9 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<ModelClientSession>,
     cancellation_token: CancellationToken,
 ) -> CodexResult<Option<String>> {
+    if sess.is_auth_account_change_fenced() {
+        return Err(crate::client::account_changed_new_session_error());
+    }
     if crate::guardian::is_basic_session_source(&turn_context.session_source) {
         crate::guardian::check_pending_guardian_input(&sess, &turn_context).await?;
     }
@@ -199,6 +203,14 @@ pub(crate) async fn run_turn(
         .await;
         if matches!(err.details(), CodexErrorDetails::TurnAborted) {
             return Err(err);
+        }
+        if is_account_changed_new_session_error(&err) {
+            let error = err.to_codex_protocol_error();
+            sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+                .await;
+            sess.send_auth_account_change_error(turn_context.as_ref())
+                .await;
+            return Ok(None);
         }
         if matches!(err.details(), CodexErrorDetails::ToolCollision(_)) {
             return Err(err);
@@ -627,6 +639,14 @@ pub(crate) async fn run_turn(
                         if matches!(err.details(), CodexErrorDetails::TurnAborted) {
                             return Err(err);
                         }
+                        if is_account_changed_new_session_error(&err) {
+                            let error = err.to_codex_protocol_error();
+                            sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+                                .await;
+                            sess.send_auth_account_change_error(turn_context.as_ref())
+                                .await;
+                            return Ok(None);
+                        }
                         let error = err.to_codex_protocol_error();
                         sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
                             .await;
@@ -766,6 +786,9 @@ pub(crate) async fn run_turn(
                     CodexErrorDetails::MisalignmentPolicyViolation { .. }
                 ) {
                     sess.conversation.retire_handoffs_for_misalignment().await;
+                }
+                if is_account_changed_new_session_error(&e) {
+                    sess.mark_auth_account_change_fenced();
                 }
                 let error = e.to_codex_protocol_error();
                 sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())

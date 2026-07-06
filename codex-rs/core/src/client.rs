@@ -77,6 +77,8 @@ use codex_otel::SessionTelemetry;
 use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::ResponseItemId;
 use codex_protocol::auth::AuthMode;
+use codex_protocol::auth::RefreshTokenFailedError;
+use codex_protocol::auth::RefreshTokenFailedReason;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -142,6 +144,7 @@ use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result;
 use codex_response_debug_context::extract_response_debug_context;
 use codex_response_debug_context::extract_response_debug_context_from_api_error;
@@ -167,6 +170,23 @@ const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=20
 const X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER: &str =
     "x-openai-internal-codex-responses-lite";
 const REALTIME_CALLS_ENDPOINT: &str = "/realtime/calls";
+pub(crate) const ACCOUNT_CHANGED_NEW_SESSION_MESSAGE: &str = "Authentication recovered with a different account. Start a new session before retrying so the conversation is not resent across accounts.";
+
+pub(crate) fn account_changed_new_session_error() -> CodexErr {
+    CodexErr::RefreshTokenFailed(RefreshTokenFailedError::new(
+        RefreshTokenFailedReason::Other,
+        ACCOUNT_CHANGED_NEW_SESSION_MESSAGE,
+    ))
+}
+
+pub(crate) fn is_account_changed_new_session_error(err: &CodexErr) -> bool {
+    matches!(
+        err.details(),
+        CodexErrorDetails::RefreshTokenFailed(failed)
+            if failed.reason == RefreshTokenFailedReason::Other
+                && failed.message == ACCOUNT_CHANGED_NEW_SESSION_MESSAGE
+    )
+}
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
 #[cfg(test)]
 pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
@@ -193,6 +213,7 @@ fn session_telemetry_for_request(
 struct ModelClientState {
     thread_id: ThreadId,
     provider: SharedModelProvider,
+    expected_auth_owner_generation: Option<u64>,
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     originator: String,
@@ -445,6 +466,12 @@ impl ModelClient {
         http_client_factory: HttpClientFactory,
     ) -> Self {
         let model_provider = create_model_provider(provider_info, auth_manager);
+        let expected_auth_owner_generation = model_provider.auth_manager().map(|manager| {
+            manager
+                .auth_change_state_receiver()
+                .borrow()
+                .owner_generation
+        });
         let codex_api_key_env_enabled = model_provider
             .auth_manager()
             .as_ref()
@@ -456,6 +483,7 @@ impl ModelClient {
             state: Arc::new(ModelClientState {
                 thread_id,
                 provider: model_provider,
+                expected_auth_owner_generation,
                 auth_env_telemetry,
                 session_source,
                 originator,
@@ -513,7 +541,7 @@ impl ModelClient {
     /// This constructor does not perform network I/O itself; the session opens a websocket lazily
     /// when the first stream request is issued.
     pub fn new_session(&self) -> ModelClientSession {
-        let auth_owner_generation = self.auth_owner_generation();
+        let auth_owner_generation = self.state.expected_auth_owner_generation;
         let mut websocket_session = self.take_cached_websocket_session();
         if websocket_session.auth_owner_generation != auth_owner_generation {
             // Drop the old owner's cache before this turn can establish fresh routing state.
@@ -533,13 +561,25 @@ impl ModelClient {
         self.state.provider.auth_manager()
     }
 
-    fn auth_owner_generation(&self) -> Option<u64> {
+    fn current_auth_owner_generation(&self) -> Option<u64> {
         self.auth_manager().map(|manager| {
             manager
                 .auth_change_state_receiver()
                 .borrow()
                 .owner_generation
         })
+    }
+
+    pub(crate) fn is_auth_owner_current(&self) -> bool {
+        self.current_auth_owner_generation() == self.state.expected_auth_owner_generation
+    }
+
+    fn ensure_auth_owner_current(&self) -> Result<()> {
+        if self.is_auth_owner_current() {
+            Ok(())
+        } else {
+            Err(account_changed_new_session_error())
+        }
     }
 
     fn take_cached_websocket_session(&self) -> WebsocketSession {
@@ -938,9 +978,8 @@ impl ModelClient {
     /// This centralizes setup used by both prewarm and normal request paths so they stay in
     /// lockstep when auth/provider resolution changes.
     async fn current_client_setup(&self) -> Result<CurrentClientSetup> {
-        // Capture before resolving credentials so an account switch during setup cannot label
-        // an old connection with the new owner's revision.
-        let auth_owner_generation = self.auth_owner_generation();
+        self.ensure_auth_owner_current()?;
+        let auth_owner_generation = self.state.expected_auth_owner_generation;
         let auth = self.state.provider.auth().await;
         let api_provider = self.state.provider.api_provider().await?;
         let resolved_auth = self
@@ -952,6 +991,9 @@ impl ModelClient {
                 agent_identity_session_fallback: self.state.agent_identity_session_fallback.clone(),
             })
             .await?;
+        // Credential resolution may call an external provider and change the shared owner.
+        // Reject that result before the old conversation can use the new owner's credentials.
+        self.ensure_auth_owner_current()?;
         Ok(CurrentClientSetup {
             auth,
             auth_owner_generation,
@@ -1195,6 +1237,13 @@ impl Drop for ModelClientSession {
 }
 
 impl ModelClientSession {
+    fn account_changed_new_session_error(&mut self) -> CodexErr {
+        self.websocket_session = WebsocketSession::default();
+        self.client
+            .store_cached_websocket_session(WebsocketSession::default());
+        account_changed_new_session_error()
+    }
+
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
         self.websocket_session.endpoint = None;
@@ -1401,7 +1450,7 @@ impl ModelClientSession {
         };
         // Resolving an external auth provider can change ownership during client setup.
         let owner_changed = self.websocket_session.auth_owner_generation != auth_owner_generation
-            || self.client.auth_owner_generation() != auth_owner_generation;
+            || self.client.current_auth_owner_generation() != auth_owner_generation;
         if owner_changed {
             self.turn_state = Arc::new(OnceLock::new());
         }
@@ -1476,7 +1525,7 @@ impl ModelClientSession {
         )
     )]
     async fn stream_responses_api(
-        &self,
+        &mut self,
         prompt: &Prompt,
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
@@ -1601,18 +1650,20 @@ impl ModelClientSession {
                         response_debug_context.request_id.as_deref(),
                         /*output_items*/ &[],
                     );
-                    pending_retry = PendingUnauthorizedRetry::from_recovery(
-                        handle_unauthorized(
-                            unauthorized_transport,
-                            &mut auth_recovery,
-                            &mut provider_auth_recovery_attempted,
-                            session_telemetry,
-                            &self.client.state.provider,
-                            self.client.event_sender.as_ref(),
-                            responses_metadata.turn_id.as_deref(),
-                        )
-                        .await?,
-                    );
+                    let recovery = handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        &mut provider_auth_recovery_attempted,
+                        session_telemetry,
+                        &self.client.state.provider,
+                        self.client.event_sender.as_ref(),
+                        responses_metadata.turn_id.as_deref(),
+                    )
+                    .await?;
+                    if recovery.auth_account_id_changed {
+                        return Err(self.account_changed_new_session_error());
+                    }
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
                     continue;
                 }
                 Err(err) => {
@@ -1735,18 +1786,20 @@ impl ModelClientSession {
                 Err(ApiError::Transport(unauthorized_transport))
                     if provider.is_recoverable_auth_error(&unauthorized_transport) =>
                 {
-                    pending_retry = PendingUnauthorizedRetry::from_recovery(
-                        handle_unauthorized(
-                            unauthorized_transport,
-                            &mut auth_recovery,
-                            &mut provider_auth_recovery_attempted,
-                            session_telemetry,
-                            &provider,
-                            self.client.event_sender.as_ref(),
-                            responses_metadata.turn_id.as_deref(),
-                        )
-                        .await?,
-                    );
+                    let recovery = handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        &mut provider_auth_recovery_attempted,
+                        session_telemetry,
+                        &provider,
+                        self.client.event_sender.as_ref(),
+                        responses_metadata.turn_id.as_deref(),
+                    )
+                    .await?;
+                    if recovery.auth_account_id_changed {
+                        return Err(self.account_changed_new_session_error());
+                    }
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
                     continue;
                 }
                 Err(err) => return Err(provider.map_api_error(err)),
@@ -2264,6 +2317,7 @@ where
 struct UnauthorizedRecoveryExecution {
     mode: &'static str,
     phase: &'static str,
+    auth_account_id_changed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2392,6 +2446,7 @@ async fn handle_unauthorized(
                 return Ok(UnauthorizedRecoveryExecution {
                     mode: "provider",
                     phase: "provider_refresh",
+                    auth_account_id_changed: false,
                 });
             }
             Ok(ProviderUnauthorizedRecovery::NotConfigured) => {}
@@ -2438,7 +2493,38 @@ async fn handle_unauthorized(
                     debug.auth_error.as_deref(),
                     debug.auth_error_code.as_deref(),
                 );
-                Ok(UnauthorizedRecoveryExecution { mode, phase })
+                Ok(UnauthorizedRecoveryExecution {
+                    mode,
+                    phase,
+                    auth_account_id_changed: false,
+                })
+            }
+            Err(err) if err.is_account_changed() => {
+                session_telemetry.record_auth_recovery(
+                    mode,
+                    phase,
+                    "recovery_account_changed",
+                    debug.request_id.as_deref(),
+                    debug.cf_ray.as_deref(),
+                    debug.auth_error.as_deref(),
+                    debug.auth_error_code.as_deref(),
+                    /*recovery_reason*/ None,
+                    Some(true),
+                );
+                emit_feedback_auth_recovery_tags(
+                    mode,
+                    phase,
+                    "recovery_account_changed",
+                    debug.request_id.as_deref(),
+                    debug.cf_ray.as_deref(),
+                    debug.auth_error.as_deref(),
+                    debug.auth_error_code.as_deref(),
+                );
+                Ok(UnauthorizedRecoveryExecution {
+                    mode,
+                    phase,
+                    auth_account_id_changed: true,
+                })
             }
             Err(RefreshTokenError::Permanent(failed)) => {
                 session_telemetry.record_auth_recovery(

@@ -164,11 +164,30 @@ async fn git_attribution_follows_authenticated_workspace_policy() -> Result<()> 
         )
         .await?;
     let _: LoginAccountResponse = read_response(&mut app_server, request_id).await?;
-    run_turn(&mut app_server, &thread.id, "Turn after workspace switch").await?;
+    let request_id = app_server
+        .send_thread_start_request_with_auto_env(ThreadStartParams {
+            config: Some(HashMap::from([(
+                "chatgpt_base_url".to_string(),
+                json!(format!("{}/backend-api", settings_server.uri())),
+            )])),
+            history_mode: Some(ThreadHistoryMode::Legacy),
+            ..Default::default()
+        })
+        .await?;
+    let ThreadStartResponse {
+        thread: disabled_thread,
+        ..
+    } = read_response(&mut app_server, request_id).await?;
+    run_turn(
+        &mut app_server,
+        &disabled_thread.id,
+        "Turn after workspace switch",
+    )
+    .await?;
 
     let request_id = app_server
         .send_thread_rollback_request(ThreadRollbackParams {
-            thread_id: thread.id.clone(),
+            thread_id: disabled_thread.id,
             num_turns: 1,
         })
         .await?;
@@ -182,13 +201,27 @@ async fn git_attribution_follows_authenticated_workspace_policy() -> Result<()> 
         )
         .await?;
     let _: LoginAccountResponse = read_response(&mut app_server, request_id).await?;
-    run_turn(&mut app_server, &thread.id, "Turn after rollback").await?;
+    let request_id = app_server
+        .send_thread_start_request_with_auto_env(ThreadStartParams {
+            config: Some(HashMap::from([(
+                "chatgpt_base_url".to_string(),
+                json!(format!("{}/backend-api", settings_server.uri())),
+            )])),
+            history_mode: Some(ThreadHistoryMode::Legacy),
+            ..Default::default()
+        })
+        .await?;
+    let ThreadStartResponse {
+        thread: enabled_thread,
+        ..
+    } = read_response(&mut app_server, request_id).await?;
+    run_turn(&mut app_server, &enabled_thread.id, "Turn after rollback").await?;
 
     let requests = response_mock.requests();
     assert_eq!(requests.len(), 5);
     for (request, expected) in requests
         .into_iter()
-        .zip([(0, 0), (1, 0), (1, 0), (1, 1), (1, 0)])
+        .zip([(0, 0), (1, 0), (1, 0), (0, 0), (1, 0)])
     {
         let developer_text = request.message_input_texts("developer").join("\n");
         assert_eq!(

@@ -12,6 +12,7 @@ use codex_protocol::protocol::GuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization;
 use codex_protocol::protocol::ReviewDecision;
 
+use crate::GuardianAssessment;
 use crate::GuardianReviewError;
 use crate::GuardianReviewOutcome;
 
@@ -161,23 +162,7 @@ pub fn complete_review(
         }
     };
     let approved = matches!(assessment.outcome, GuardianAssessmentOutcome::Allow);
-    let verdict = if approved { "approved" } else { "denied" };
-    let authorization = match assessment.user_authorization {
-        GuardianUserAuthorization::Unknown => "unknown",
-        GuardianUserAuthorization::Low => "low",
-        GuardianUserAuthorization::Medium => "medium",
-        GuardianUserAuthorization::High => "high",
-    };
-    let risk = match assessment.risk_level {
-        GuardianRiskLevel::Low => "low",
-        GuardianRiskLevel::Medium => "medium",
-        GuardianRiskLevel::High => "high",
-        GuardianRiskLevel::Critical => "critical",
-    };
-    let warning = format!(
-        "Automatic approval review {verdict} (risk: {risk}, authorization: {authorization}): {}",
-        assessment.rationale
-    );
+    let warning = guardian_review_warning_message(&assessment, approved);
     event.status = if approved {
         GuardianAssessmentStatus::Approved
     } else {
@@ -212,3 +197,37 @@ pub fn complete_review(
         assessment_outcome: completed_assessment,
     }
 }
+
+fn guardian_review_warning_message(assessment: &GuardianAssessment, approved: bool) -> String {
+    let verdict = if approved { "approved" } else { "denied" };
+    let authorization = match assessment.user_authorization {
+        GuardianUserAuthorization::Unknown => "unknown",
+        GuardianUserAuthorization::Low => "low",
+        GuardianUserAuthorization::Medium => "medium",
+        GuardianUserAuthorization::High => "high",
+    };
+    let risk = match assessment.risk_level {
+        GuardianRiskLevel::Low => "low",
+        GuardianRiskLevel::Medium => "medium",
+        GuardianRiskLevel::High => "high",
+        GuardianRiskLevel::Critical => "critical",
+    };
+    if approved
+        && assessment.risk_level == GuardianRiskLevel::Low
+        && assessment.user_authorization == GuardianUserAuthorization::Unknown
+    {
+        format!(
+            "Automatic approval review {verdict} (risk: {risk}): {}",
+            assessment.rationale
+        )
+    } else {
+        format!(
+            "Automatic approval review {verdict} (risk: {risk}, authorization: {authorization}): {}",
+            assessment.rationale
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "completion_tests.rs"]
+mod tests;
