@@ -6,6 +6,7 @@ use crate::config::ManagedFeatures;
 use crate::config::NetworkProxySpec;
 use crate::config::test_config;
 use crate::guardian::approval_request::guardian_request_target_item_id;
+use crate::guardian::review::guardian_review_warning_message;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::test_support;
@@ -1363,6 +1364,36 @@ fn parse_guardian_assessment_treats_bare_allow_as_low_risk() {
             outcome: GuardianAssessmentOutcome::Allow,
             rationale: "Auto-review returned a low-risk allow decision.".to_string(),
         }
+    );
+}
+
+#[test]
+fn guardian_review_warning_omits_unknown_authorization_for_low_risk_approval() {
+    let assessment = GuardianAssessment {
+        risk_level: GuardianRiskLevel::Low,
+        user_authorization: GuardianUserAuthorization::Unknown,
+        outcome: GuardianAssessmentOutcome::Allow,
+        rationale: "Auto-review returned a low-risk allow decision.".to_string(),
+    };
+
+    assert_eq!(
+        guardian_review_warning_message(&assessment, /*approved*/ true),
+        "Automatic approval review approved (risk: low): Auto-review returned a low-risk allow decision."
+    );
+}
+
+#[test]
+fn guardian_review_warning_keeps_unknown_authorization_for_denial() {
+    let assessment = GuardianAssessment {
+        risk_level: GuardianRiskLevel::High,
+        user_authorization: GuardianUserAuthorization::Unknown,
+        outcome: GuardianAssessmentOutcome::Deny,
+        rationale: "Auto-review returned a deny decision without a rationale.".to_string(),
+    };
+
+    assert_eq!(
+        guardian_review_warning_message(&assessment, /*approved*/ false),
+        "Automatic approval review denied (risk: high, authorization: unknown): Auto-review returned a deny decision without a rationale."
     );
 }
 

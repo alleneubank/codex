@@ -330,6 +330,11 @@ impl Session {
     ) {
         let task: Arc<dyn AnySessionTask> = Arc::new(task);
         let task_kind = task.kind();
+        if self.is_auth_account_change_fenced() {
+            self.send_auth_account_change_error(turn_context.as_ref())
+                .await;
+            return;
+        }
         let span_name = task.span_name();
         let started_at = Instant::now();
         let turn_started_at_unix_ms = turn_context

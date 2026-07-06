@@ -2,7 +2,11 @@ use crate::protocol::EventMsg;
 use crate::protocol::RolloutItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::CodexErrorInfo;
+use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::ThreadHistoryMode;
+
+const ACCOUNT_CHANGED_NEW_SESSION_MESSAGE: &str = "Authentication recovered with a different account. Start a new session before retrying so the conversation is not resent across accounts.";
 
 /// Whether a rollout `item` should be persisted in rollout files.
 pub fn is_persisted_rollout_item(item: &RolloutItem, history_mode: ThreadHistoryMode) -> bool {
@@ -114,9 +118,10 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::ImageGenerationEnd(_)
         | EventMsg::SubAgentActivity(_) => matches!(history_mode, ThreadHistoryMode::Legacy),
 
-        // Transient, non-durable events.
-        EventMsg::Error(_)
-        | EventMsg::GuardianAssessment(_)
+        // Transient, non-durable events, except account-change fences that must
+        // survive replay so recovered auth never resends a conversation across accounts.
+        EventMsg::Error(error) => should_persist_error_event(error),
+        EventMsg::GuardianAssessment(_)
         | EventMsg::ExecCommandEnd(_)
         | EventMsg::ViewImageToolCall(_)
         | EventMsg::CollabAgentSpawnEnd(_)
@@ -173,5 +178,33 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::CollabWaitingBegin(_)
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabResumeBegin(_) => false,
+    }
+}
+
+fn should_persist_error_event(error: &ErrorEvent) -> bool {
+    error.message == ACCOUNT_CHANGED_NEW_SESSION_MESSAGE
+        && error.codex_error_info == Some(CodexErrorInfo::Unauthorized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persists_account_change_fence_error_only() {
+        assert!(should_persist_event_msg(
+            &EventMsg::Error(ErrorEvent {
+                message: ACCOUNT_CHANGED_NEW_SESSION_MESSAGE.to_string(),
+                codex_error_info: Some(CodexErrorInfo::Unauthorized),
+            }),
+            ThreadHistoryMode::Legacy
+        ));
+        assert!(!should_persist_event_msg(
+            &EventMsg::Error(ErrorEvent {
+                message: "ordinary auth failure".to_string(),
+                codex_error_info: Some(CodexErrorInfo::Unauthorized),
+            }),
+            ThreadHistoryMode::Legacy
+        ));
     }
 }

@@ -341,7 +341,7 @@ fn accessible_connectors_cache_key(
     config: &Config,
     auth: Option<&CodexAuth>,
 ) -> AccessibleConnectorsCacheKey {
-    let account_id = auth.and_then(CodexAuth::get_account_id);
+    let account_id = auth.and_then(CodexAuth::get_chatgpt_account_id);
     let chatgpt_user_id = auth.and_then(CodexAuth::get_chatgpt_user_id);
     let is_workspace_account = auth.is_some_and(CodexAuth::is_workspace_account);
     AccessibleConnectorsCacheKey {
@@ -435,7 +435,7 @@ async fn cached_directory_connectors_for_tool_suggest_with_auth(
         return Vec::new();
     };
 
-    let account_id = match auth.get_account_id() {
+    let account_id = match auth.get_chatgpt_account_id() {
         Some(account_id) if !account_id.is_empty() => account_id,
         _ => return Vec::new(),
     };
