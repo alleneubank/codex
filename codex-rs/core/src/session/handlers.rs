@@ -211,6 +211,11 @@ pub(super) async fn user_input_or_turn_inner(
     };
     updates.final_output_json_schema = Some(final_output_json_schema);
 
+    if sess.is_auth_account_change_fenced() {
+        sess.send_auth_account_change_error_raw(sub_id).await;
+        return Err(crate::client::account_changed_new_session_error());
+    }
+
     // new_turn_with_sub_id already emits an error event when settings are invalid.
     let current_context = sess.new_turn_with_sub_id(sub_id.clone(), updates).await?;
     if emit_thread_settings_applied {

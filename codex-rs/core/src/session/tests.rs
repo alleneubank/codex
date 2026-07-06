@@ -5940,6 +5940,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         next_internal_sub_id: AtomicU64::new(0),
+        auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
     };
 
     session.mark_mcp_runtime_dirty();
@@ -8201,6 +8202,7 @@ where
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         next_internal_sub_id: AtomicU64::new(0),
+        auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
     });
 
     session.mark_mcp_runtime_dirty();
