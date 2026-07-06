@@ -33,6 +33,7 @@ use codex_extension_api::UserInstructionsProvider;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
 use codex_home::CodexHomeUserInstructionsProvider;
+use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::built_in_model_providers;
@@ -325,6 +326,7 @@ pub fn turn_permission_fields(
 pub struct TestCodexBuilder {
     config_mutators: Vec<Box<ConfigMutator>>,
     auth: CodexAuth,
+    auth_manager: Option<Arc<AuthManager>>,
     pre_build_hooks: Vec<Box<PreBuildHook>>,
     workspace_setups: Vec<Box<WorkspaceSetup>>,
     home: Option<Arc<TempDir>>,
@@ -351,6 +353,12 @@ impl TestCodexBuilder {
 
     pub fn with_auth(mut self, auth: CodexAuth) -> Self {
         self.auth = auth;
+        self.auth_manager = None;
+        self
+    }
+
+    pub fn with_auth_manager(mut self, auth_manager: Arc<AuthManager>) -> Self {
+        self.auth_manager = Some(auth_manager);
         self
     }
 
@@ -668,6 +676,12 @@ impl TestCodexBuilder {
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
+        let auth_manager = self.auth_manager.clone().unwrap_or_else(|| {
+            codex_core::test_support::auth_manager_from_auth_with_home(
+                auth.clone(),
+                config.codex_home.to_path_buf(),
+            )
+        });
         let state_db = codex_core::init_state_db(&config).await;
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
@@ -677,17 +691,12 @@ impl TestCodexBuilder {
                     config.codex_home.clone(),
                 ))
             });
-        let auth_manager = codex_core::test_support::auth_manager_from_auth_with_home(
-            auth.clone(),
-            config.codex_home.to_path_buf(),
-        );
-        let models_manager = self
-            .models_manager
-            .clone()
-            .unwrap_or_else(|| codex_core::build_models_manager(&config, auth_manager.clone()));
+        let models_manager = self.models_manager.clone().unwrap_or_else(|| {
+            codex_core::build_models_manager(&config, Arc::clone(&auth_manager))
+        });
         let thread_manager = ThreadManager::new(
             &config,
-            auth_manager.clone(),
+            Arc::clone(&auth_manager),
             models_manager,
             codex_core::CodexAppsToolsCache::default(),
             SessionSource::Exec,
@@ -725,72 +734,63 @@ impl TestCodexBuilder {
             )
         };
 
-        let new_conversation = match (resume_from, user_shell_override) {
-            (Some(path), Some(user_shell_override)) => {
-                let auth_manager = codex_core::test_support::auth_manager_from_auth_with_home(
-                    auth,
-                    config.codex_home.to_path_buf(),
-                );
-                Box::pin(
+        let new_conversation =
+            match (resume_from, user_shell_override) {
+                (Some(path), Some(user_shell_override)) => Box::pin(
                     codex_core::test_support::resume_thread_from_rollout_with_user_shell_override(
                         thread_manager.as_ref(),
                         config.clone(),
                         path,
-                        auth_manager,
+                        Arc::clone(&auth_manager),
                         user_shell_override,
                         self.supports_openai_form_elicitation,
                     ),
                 )
-                .await?
-            }
-            (Some(path), None) => {
-                let auth_manager = codex_core::test_support::auth_manager_from_auth_with_home(
-                    auth,
-                    config.codex_home.to_path_buf(),
-                );
-                Box::pin(thread_manager.resume_thread_from_rollout(
-                    config.clone(),
-                    path,
-                    auth_manager,
-                    /*parent_trace*/ None,
-                    client_mcp_extensions(),
-                ))
-                .await?
-            }
-            (None, Some(user_shell_override)) => {
-                Box::pin(
-                    codex_core::test_support::start_thread_with_user_shell_override(
-                        thread_manager.as_ref(),
+                .await?,
+                (Some(path), None) => {
+                    Box::pin(thread_manager.resume_thread_from_rollout(
                         config.clone(),
-                        user_shell_override,
-                        self.supports_openai_form_elicitation,
-                    ),
-                )
-                .await?
-            }
-            (None, None) => {
-                let environments = if test_env.selection().cwd.infer_path_convention()
-                    == Some(PathConvention::Windows)
-                    && PathUri::from_abs_path(&config.cwd) != test_env.selection().cwd
-                {
-                    let cwd = executor_path_uri(&config.cwd)?;
-                    let mut selection = test_env.selection().clone();
-                    selection.cwd = cwd.clone();
-                    selection.workspace_roots = vec![cwd];
-                    test_env.selection = selection.clone();
-                    Some(vec![selection])
-                } else {
-                    None
-                };
-                Box::pin(thread_manager.start_thread(StartThreadOptions {
-                    history_mode: self.history_mode,
-                    client_mcp_extensions: client_mcp_extensions(),
-                    environments,
-                    ..StartThreadOptions::new(config.clone())
-                }))
-                .await?
-            }
-        };
+                        path,
+                        Arc::clone(&auth_manager),
+                        /*parent_trace*/ None,
+                        client_mcp_extensions(),
+                    ))
+                    .await?
+                }
+                (None, Some(user_shell_override)) => {
+                    Box::pin(
+                        codex_core::test_support::start_thread_with_user_shell_override(
+                            thread_manager.as_ref(),
+                            config.clone(),
+                            user_shell_override,
+                            self.supports_openai_form_elicitation,
+                        ),
+                    )
+                    .await?
+                }
+                (None, None) => {
+                    let environments = if test_env.selection().cwd.infer_path_convention()
+                        == Some(PathConvention::Windows)
+                        && PathUri::from_abs_path(&config.cwd) != test_env.selection().cwd
+                    {
+                        let cwd = executor_path_uri(&config.cwd)?;
+                        let mut selection = test_env.selection().clone();
+                        selection.cwd = cwd.clone();
+                        selection.workspace_roots = vec![cwd];
+                        test_env.selection = selection.clone();
+                        Some(vec![selection])
+                    } else {
+                        None
+                    };
+                    Box::pin(thread_manager.start_thread(StartThreadOptions {
+                        history_mode: self.history_mode,
+                        client_mcp_extensions: client_mcp_extensions(),
+                        environments,
+                        ..StartThreadOptions::new(config.clone())
+                    }))
+                    .await?
+                }
+            };
 
         Ok(TestCodex {
             home,
@@ -1341,6 +1341,7 @@ pub fn test_codex() -> TestCodexBuilder {
                 .expect("test config should allow ShellSnapshot override");
         })],
         auth: CodexAuth::from_api_key("dummy"),
+        auth_manager: None,
         pre_build_hooks: vec![],
         workspace_setups: vec![],
         home: None,
