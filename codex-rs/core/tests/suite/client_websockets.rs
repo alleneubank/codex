@@ -9,8 +9,14 @@ use codex_core::ResponseEvent;
 use codex_core::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
 use codex_features::Feature;
 use codex_http_client::OutboundProxyPolicy;
+use codex_login::AuthCredentialsStoreMode;
+use codex_login::AuthDotJson;
+use codex_login::AuthKeyringBackendKind;
+use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth::AgentIdentityAuthPolicy;
+use codex_login::save_auth;
+use codex_login::token_data::TokenData;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_otel::MetricsClient;
@@ -62,6 +68,11 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tracing::Instrument;
 use tracing_test::traced_test;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 const MODEL: &str = "gpt-5.4";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
@@ -262,6 +273,92 @@ async fn responses_websocket_omits_unprefixed_item_ids_without_mutating_prompt()
     );
 
     server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_401_reload_account_change_returns_new_session_error() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/codex/responses"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let codex_home = TempDir::new().expect("codex home should create");
+    save_auth(
+        codex_home.path(),
+        &chatgpt_auth_dot_json("account-a-token", "account-a"),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::Direct,
+    )
+    .expect("initial auth should save");
+    let auth_manager = AuthManager::shared(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::Direct,
+        /*auth_route_config*/ None,
+    )
+    .await;
+    save_auth(
+        codex_home.path(),
+        &chatgpt_auth_dot_json("account-b-token", "account-b"),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::Direct,
+    )
+    .expect("replacement auth should save");
+
+    let harness = websocket_harness_with_provider_auth_options(
+        wiremock_websocket_provider(&server),
+        /*runtime_metrics_enabled*/ false,
+        /*concurrent_reasoning_summaries_enabled*/ false,
+        /*enabled_features*/ &[],
+        Some(auth_manager),
+    )
+    .await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = turn_metadata(&harness, /*turn_id*/ None);
+    let result = client_session
+        .stream(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ None,
+            &responses_metadata,
+            &codex_rollout_trace::InferenceTraceContext::disabled(),
+        )
+        .await;
+    let err = match result {
+        Ok(_) => panic!("account-changing websocket recovery should fail the turn"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("Start a new session"),
+        "unexpected error: {err}"
+    );
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let websocket_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.method == "GET" && request.url.path() == "/api/codex/responses")
+        .collect();
+    assert_eq!(websocket_requests.len(), 1);
+    assert_eq!(
+        websocket_requests[0]
+            .headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer account-a-token")
+    );
+    server.verify().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2252,6 +2349,65 @@ fn prompt_with_input_and_instructions(input: Vec<ResponseItem>, instructions: &s
     prompt
 }
 
+fn chatgpt_auth_dot_json(access_token: &str, account_id: &str) -> AuthDotJson {
+    use base64::Engine as _;
+
+    let header = json!({ "alg": "none", "typ": "JWT" });
+    let payload = json!({
+        "email": "user@example.com",
+        "https://api.openai.com/auth": {
+            "chatgpt_plan_type": "pro",
+            "chatgpt_account_id": account_id,
+            "chatgpt_user_id": "user-123",
+            "user_id": "user-123"
+        }
+    });
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let id_token = format!(
+        "{}.{}.{}",
+        b64(&serde_json::to_vec(&header).expect("header should serialize")),
+        b64(&serde_json::to_vec(&payload).expect("payload should serialize")),
+        b64(b"sig")
+    );
+    AuthDotJson {
+        auth_mode: Some(codex_protocol::auth::AuthMode::Chatgpt),
+        openai_api_key: None,
+        tokens: Some(TokenData {
+            id_token: codex_login::token_data::parse_chatgpt_jwt_claims(&id_token)
+                .expect("fake id token should parse"),
+            access_token: access_token.to_string(),
+            refresh_token: "refresh-token".to_string(),
+            account_id: Some(account_id.to_string()),
+        }),
+        last_refresh: Some(chrono::Utc::now()),
+        agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
+    }
+}
+
+fn wiremock_websocket_provider(server: &MockServer) -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: "mock-ws".into(),
+        base_url: Some(format!("{}/api/codex", server.uri())),
+        env_key: None,
+        env_key_instructions: None,
+        experimental_bearer_token: None,
+        auth: None,
+        aws: None,
+        wire_api: WireApi::Responses,
+        query_params: None,
+        http_headers: None,
+        env_http_headers: None,
+        request_max_retries: Some(0),
+        stream_max_retries: Some(0),
+        stream_idle_timeout_ms: Some(5_000),
+        websocket_connect_timeout_ms: None,
+        requires_openai_auth: true,
+        supports_websockets: true,
+    }
+}
+
 fn websocket_provider(server: &WebSocketTestServer) -> ModelProviderInfo {
     websocket_provider_with_connect_timeout(server, /*websocket_connect_timeout_ms*/ None)
 }
@@ -2318,6 +2474,23 @@ async fn websocket_harness_with_provider_options(
     concurrent_reasoning_summaries_enabled: bool,
     enabled_features: &[Feature],
 ) -> WebsocketTestHarness {
+    websocket_harness_with_provider_auth_options(
+        provider,
+        runtime_metrics_enabled,
+        concurrent_reasoning_summaries_enabled,
+        enabled_features,
+        None,
+    )
+    .await
+}
+
+async fn websocket_harness_with_provider_auth_options(
+    provider: ModelProviderInfo,
+    runtime_metrics_enabled: bool,
+    concurrent_reasoning_summaries_enabled: bool,
+    enabled_features: &[Feature],
+    auth_manager: Option<Arc<AuthManager>>,
+) -> WebsocketTestHarness {
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home).await;
     config.model = Some(MODEL.to_string());
@@ -2346,8 +2519,10 @@ async fn websocket_harness_with_provider_options(
     let model_info = codex_core::test_support::construct_model_info_offline(MODEL, &config);
     let thread_id = ThreadId::new();
     let session_id = SessionId::new();
-    let auth_manager =
-        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("Test API Key"));
+    let client_auth_manager = auth_manager.clone();
+    let auth_manager = auth_manager.unwrap_or_else(|| {
+        codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("Test API Key"))
+    });
     let exporter = InMemoryMetricExporter::default();
     let metrics = MetricsClient::new(
         MetricsConfig::in_memory("test", "codex-core", env!("CARGO_PKG_VERSION"), exporter)
@@ -2370,7 +2545,7 @@ async fn websocket_harness_with_provider_options(
     let effort = None;
     let summary = ReasoningSummary::Auto;
     let client = ModelClient::new(
-        /*auth_manager*/ None,
+        client_auth_manager,
         AgentIdentityAuthPolicy::JwtOnly,
         thread_id,
         provider.clone(),

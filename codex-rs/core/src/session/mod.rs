@@ -3093,6 +3093,35 @@ impl Session {
         state.replace_history(items, reference_context_item);
     }
 
+    pub(crate) async fn send_auth_account_change_error(&self, turn_context: &TurnContext) {
+        let msg = EventMsg::Error(
+            crate::client::account_changed_new_session_error().to_error_event(None),
+        );
+        if self.mark_auth_account_change_fenced() {
+            self.send_event(turn_context, msg).await;
+        } else {
+            self.deliver_event_raw(Event {
+                id: turn_context.sub_id.clone(),
+                msg,
+            })
+            .await;
+        }
+    }
+
+    pub(crate) async fn send_auth_account_change_error_raw(&self, id: String) {
+        let event = Event {
+            id,
+            msg: EventMsg::Error(
+                crate::client::account_changed_new_session_error().to_error_event(None),
+            ),
+        };
+        if self.mark_auth_account_change_fenced() {
+            self.send_event_raw(event).await;
+        } else {
+            self.deliver_event_raw(event).await;
+        }
+    }
+
     pub(crate) async fn replace_compacted_history(
         &self,
         turn_context: &TurnContext,
