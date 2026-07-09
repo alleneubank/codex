@@ -1174,6 +1174,97 @@ async fn stop_hook_can_block_multiple_times_in_same_turn() -> Result<()> {
 }
 
 #[tokio::test]
+async fn stop_hook_caps_repeated_identical_continuations() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_assistant_message("msg-1", "draft one"),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "draft two"),
+                ev_completed("resp-2"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-3"),
+                ev_assistant_message("msg-3", "draft three"),
+                ev_completed("resp-3"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-4"),
+                ev_assistant_message("msg-4", "draft four"),
+                ev_completed("resp-4"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-5"),
+                ev_assistant_message("msg-5", "draft five"),
+                ev_completed("resp-5"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-6"),
+                ev_assistant_message("msg-6", "draft six"),
+                ev_completed("resp-6"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-7"),
+                ev_assistant_message("msg-7", "draft seven"),
+                ev_completed("resp-7"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-8"),
+                ev_assistant_message("msg-8", "draft eight"),
+                ev_completed("resp-8"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-9"),
+                ev_assistant_message("msg-9", "draft nine"),
+                ev_completed("resp-9"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-10"),
+                ev_assistant_message("msg-10", "draft ten"),
+                ev_completed("resp-10"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-11"),
+                ev_assistant_message("msg-11", "draft eleven"),
+                ev_completed("resp-11"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_stop_hook(home, &[FIRST_CONTINUATION_PROMPT; 11])
+                .expect("failed to write stop hook test fixture");
+        })
+        .with_config(trust_discovered_hooks);
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("hello from the loop").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 11);
+    assert_eq!(
+        request_hook_prompt_texts(&requests[10]),
+        vec![FIRST_CONTINUATION_PROMPT.to_string(); 10],
+        "eleventh request should include the ten allowed repeated continuations",
+    );
+
+    let hook_inputs = read_stop_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 11);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_start_hook_sees_materialized_transcript_path() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
