@@ -89,6 +89,7 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::items::HookPromptFragment;
 use codex_protocol::items::PlanItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::build_hook_prompt_message;
@@ -130,6 +131,8 @@ use tracing::instrument;
 use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
+
+const MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS: usize = 10;
 
 /// Takes initial turn input and runs a loop where, at each sampling request,
 /// the model replies with either:
@@ -231,6 +234,7 @@ pub(crate) async fn run_turn(
 
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
+    let mut stop_hook_continuation_tracker = StopHookContinuationTracker::default();
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
     let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
@@ -409,6 +413,28 @@ pub(crate) async fn run_turn(
                     )
                     .await;
                     if stop_outcome.should_block {
+                        if stop_hook_continuation_tracker
+                            .record(&stop_outcome.continuation_fragments)
+                            > MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS
+                        {
+                            let message = format!(
+                                "Stop hook requested the same continuation more than {MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS} consecutive times; aborting the turn to prevent a runaway hook loop."
+                            );
+                            sess.emit_turn_error_lifecycle(
+                                turn_context.as_ref(),
+                                CodexErrorInfo::Other,
+                            )
+                            .await;
+                            sess.send_event(
+                                &turn_context,
+                                EventMsg::Error(ErrorEvent {
+                                    message,
+                                    codex_error_info: Some(CodexErrorInfo::Other),
+                                }),
+                            )
+                            .await;
+                            break;
+                        }
                         if let Some(hook_prompt_message) =
                             build_hook_prompt_message(&stop_outcome.continuation_fragments)
                         {
@@ -490,6 +516,28 @@ pub(crate) async fn run_turn(
     }
 
     Ok(last_agent_message)
+}
+
+#[derive(Default)]
+struct StopHookContinuationTracker {
+    previous_fragments: Vec<(String, String)>,
+    consecutive_matches: usize,
+}
+
+impl StopHookContinuationTracker {
+    fn record(&mut self, fragments: &[HookPromptFragment]) -> usize {
+        let current_fragments = fragments
+            .iter()
+            .map(|fragment| (fragment.hook_run_id.clone(), fragment.text.clone()))
+            .collect::<Vec<_>>();
+        if current_fragments == self.previous_fragments {
+            self.consecutive_matches += 1;
+        } else {
+            self.previous_fragments = current_fragments;
+            self.consecutive_matches = 1;
+        }
+        self.consecutive_matches
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
