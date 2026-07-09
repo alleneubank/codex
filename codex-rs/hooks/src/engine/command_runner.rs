@@ -100,17 +100,23 @@ pub(crate) async fn run_command(
 
     let timeout_duration = Duration::from_secs(handler.timeout_sec);
     match timeout(timeout_duration, child.wait_with_output()).await {
-        Ok(Ok(output)) => finish_command_run(
-            started_at,
-            started,
-            CommandRunCompletion {
-                exit_code: output.status.code(),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                error: None,
-                outcome: "completed",
-            },
-        ),
+        Ok(Ok(output)) => {
+            let exit_code = output.status.code();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let shell_open_error = shell_script_open_error(exit_code, &stderr);
+            finish_command_run(
+                started_at,
+                started,
+                CommandRunCompletion {
+                    exit_code,
+                    stdout,
+                    stderr,
+                    error: shell_open_error,
+                    outcome: "completed",
+                },
+            )
+        }
         Ok(Err(err)) => finish_command_run(
             started_at,
             started,
@@ -194,3 +200,23 @@ fn default_shell_command() -> Command {
         command
     }
 }
+
+fn shell_script_open_error(exit_code: Option<i32>, stderr: &str) -> Option<String> {
+    if exit_code != Some(2) {
+        return None;
+    }
+
+    stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            let lower = line.to_ascii_lowercase();
+            (lower.contains(": cannot open ") || lower.contains(": can't open "))
+                && lower.contains("no such file")
+        })
+        .map(|line| format!("hook command failed to open script: {line}"))
+}
+
+#[cfg(test)]
+#[path = "command_runner_tests.rs"]
+mod tests;
