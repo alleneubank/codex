@@ -104,6 +104,7 @@ use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::items::HookPromptFragment;
 use codex_protocol::items::PlanItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::build_hook_prompt_message;
@@ -161,6 +162,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 const POST_SAMPLING_TOKEN_ESTIMATE_TARGET: &str = "codex_core::post_sampling_token_estimate";
+const MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS: usize = 10;
 
 /// Explicit MCP startup requirements retained across restarts within one user turn.
 #[derive(Default)]
@@ -551,6 +553,7 @@ pub(crate) async fn run_turn(
     );
     let mut completion_hooks = TurnCompletionHooks::default();
     let mut stop_hook_active = false;
+    let mut stop_hook_continuation_tracker = StopHookContinuationTracker::default();
     // A steer can reopen sampling within the same turn. Keep its aggregate until the turn ends.
     let turn_diff_tracker = turn_context
         .extension_data
@@ -897,6 +900,32 @@ pub(crate) async fn run_turn(
                         if let Some(hook_prompt_message) =
                             build_hook_prompt_message(&stop_outcome.continuation_fragments)
                         {
+                            if stop_hook_continuation_tracker
+                                .record(&stop_outcome.continuation_fragments)
+                                > MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS
+                            {
+                                let message = format!(
+                                    "Stop hook requested the same continuation more than {MAX_IDENTICAL_STOP_HOOK_CONTINUATIONS} consecutive times; aborting the turn to prevent a runaway hook loop."
+                                );
+                                let error_details = CodexErrorDetails::Fatal(message.clone());
+                                sess.emit_turn_error_lifecycle(
+                                    turn_context.as_ref(),
+                                    CodexErrorInfo::Other,
+                                    &error_details,
+                                )
+                                .await;
+                                sess.send_event(
+                                    &turn_context,
+                                    EventMsg::Error(ErrorEvent {
+                                        misalignment: None,
+                                        message,
+                                        codex_error_info: Some(CodexErrorInfo::Other),
+                                        rejected_audio_file_ids: Vec::new(),
+                                    }),
+                                )
+                                .await;
+                                break;
+                            }
                             sess.record_response_item_and_emit_turn_item(
                                 &turn_context,
                                 &step_context.settings.model_info,
@@ -1144,6 +1173,28 @@ impl TurnCompletionHooks {
             return Ok(None);
         }
         Ok(answer)
+    }
+}
+
+#[derive(Default)]
+struct StopHookContinuationTracker {
+    previous_fragments: Vec<(String, String)>,
+    consecutive_matches: usize,
+}
+
+impl StopHookContinuationTracker {
+    fn record(&mut self, fragments: &[HookPromptFragment]) -> usize {
+        let current_fragments = fragments
+            .iter()
+            .map(|fragment| (fragment.hook_run_id.clone(), fragment.text.clone()))
+            .collect::<Vec<_>>();
+        if current_fragments == self.previous_fragments {
+            self.consecutive_matches += 1;
+        } else {
+            self.previous_fragments = current_fragments;
+            self.consecutive_matches = 1;
+        }
+        self.consecutive_matches
     }
 }
 
