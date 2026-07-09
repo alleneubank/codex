@@ -150,6 +150,22 @@ fn write_handler(temp: &TempDir, source: &str) -> ConfiguredHandler {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn handler(command: String) -> ConfiguredHandler {
+    ConfiguredHandler {
+        event_name: HookEventName::Stop,
+        matcher: None,
+        command,
+        timeout_sec: 5,
+        status_message: None,
+        additional_context_limit: Default::default(),
+        source_path: AbsolutePathBuf::current_dir().expect("current dir"),
+        source: HookSource::Project,
+        display_order: 0,
+        env: HashMap::new(),
+    }
+}
+
 async fn schedule(runtime: &CommandHookRuntime, handler: ConfiguredHandler, cwd: &Path) {
     let engine = ClaudeHooksEngine {
         handlers: vec![handler],
@@ -349,8 +365,54 @@ print(json.dumps({{
     assert!(
         timeout(Duration::from_millis(150), results.recv())
             .await
-            .expect("shutdown should close the result channel")
-            .is_err(),
+        .expect("shutdown should close the result channel")
+        .is_err(),
         "shutdown must not deliver a late async result"
+    );
+}
+
+// Linux /bin/sh reports an unopened script with exit code 2. Darwin reports
+// 127 instead, which already follows the ordinary nonzero-exit failure path.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn missing_shell_script_is_reported_as_hook_execution_error() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let missing_script = temp.path().join("missing-hook.sh");
+    let (runtime, _result_receiver) = runtime();
+    let result = run_command(
+        &runtime,
+        &handler(format!("sh {}", missing_script.display())),
+        "{}",
+        temp.path(),
+    )
+    .await;
+
+    assert_eq!(result.exit_code, Some(2));
+    assert!(result.stderr.contains("cannot open"));
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("hook command failed to open script")),
+        "error: {:?}",
+        result.error
+    );
+}
+
+#[test]
+fn exit_two_for_missing_shell_script_is_reclassified() {
+    let stderr = "sh: 0: cannot open /tmp/missing-hook.sh: No such file";
+
+    assert_eq!(
+        super::shell_script_open_error(Some(2), stderr),
+        Some(format!("hook command failed to open script: {stderr}")),
+    );
+}
+
+#[test]
+fn exit_two_with_regular_feedback_is_not_reclassified() {
+    assert_eq!(
+        super::shell_script_open_error(Some(2), "retry with tests"),
+        None
     );
 }
