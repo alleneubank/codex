@@ -109,6 +109,26 @@ async fn accepted_model_turn_restores_stash_on_live_idle_completion() {
 }
 
 #[tokio::test]
+async fn live_idle_completion_preserves_new_draft_and_keeps_stash_recoverable() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    set_composer_text(&mut chat, "original draft");
+    press_stash(&mut chat);
+    set_composer_text(&mut chat, "short question");
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let _ = next_submit_op(&mut op_rx);
+    handle_turn_started(&mut chat, "turn-1");
+    set_composer_text(&mut chat, "new draft");
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
+
+    assert_eq!(chat.bottom_pane.composer_text(), "new draft");
+    set_composer_text(&mut chat, "");
+    press_stash(&mut chat);
+    assert_eq!(chat.bottom_pane.composer_text(), "original draft");
+}
+
+#[tokio::test]
 async fn unrelated_running_turn_does_not_restore_new_stash() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
