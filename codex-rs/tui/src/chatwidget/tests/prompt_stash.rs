@@ -182,3 +182,28 @@ async fn stash_restoration_is_bound_to_an_accepted_live_turn_and_idle_state() {
     chat.handle_key_event(stash_key());
     assert_eq!(chat.bottom_pane.composer_text(), "thread draft");
 }
+
+#[tokio::test]
+async fn live_steers_keep_stash_bound_to_the_running_turn() {
+    let (mut bound, mut op_rx) = armed_stash().await;
+    set_text(&mut bound, "steer after stash was bound");
+    bound.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let _ = next_submit_op(&mut op_rx);
+    handle_turn_completed(&mut bound, "turn-1", /*duration_ms*/ None);
+    assert_eq!(bound.bottom_pane.composer_text(), DRAFT);
+
+    let (mut created_during_turn, _rx, mut op_rx) =
+        make_chatwidget_manual(/*model_override*/ None).await;
+    created_during_turn.thread_id = Some(ThreadId::new());
+    handle_turn_started(&mut created_during_turn, "turn-1");
+    stash(&mut created_during_turn);
+    set_text(&mut created_during_turn, "steer after stash was created");
+    created_during_turn.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let _ = next_submit_op(&mut op_rx);
+    handle_turn_completed(
+        &mut created_during_turn,
+        "turn-1",
+        /*duration_ms*/ None,
+    );
+    assert_eq!(created_during_turn.bottom_pane.composer_text(), DRAFT);
+}
