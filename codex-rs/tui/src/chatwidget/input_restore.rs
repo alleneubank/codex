@@ -43,14 +43,13 @@ impl ChatWidget {
 
     pub(super) fn restore_prompt_stash_on_idle_completion(&mut self, turn_id: &str) {
         if !self.bottom_pane.composer_is_empty()
-            || !self
-                .prompt_stash
-                .as_ref()
-                .is_some_and(|stash| matches!(
+            || !self.prompt_stash.as_ref().is_some_and(|stash| {
+                matches!(
                     &stash.restore,
                     PromptStashRestore::OnIdleCompletion { turn_id: armed_turn_id }
                         if armed_turn_id == turn_id
-                ))
+                )
+            })
         {
             return;
         }

@@ -623,8 +623,7 @@ async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
         .activate_thread_for_replay(thread_id)
         .await
         .expect("thread snapshot");
-    let (chat_widget, _app_event_tx, _rx, _new_op_rx) =
-        make_chatwidget_manual_with_sender().await;
+    let (chat_widget, _app_event_tx, _rx, _new_op_rx) = make_chatwidget_manual_with_sender().await;
     app.chat_widget = chat_widget;
     app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ true);
 

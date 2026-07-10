@@ -225,7 +225,10 @@ async fn stash_flushes_paste_burst_for_all_key_routes() {
             KeyEvent::new(KeyCode::Char('\u{0013}'), KeyModifiers::NONE),
             None,
         ),
-        (KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), Some('z')),
+        (
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            Some('z'),
+        ),
     ] {
         let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
         if let Some(key) = remap {
