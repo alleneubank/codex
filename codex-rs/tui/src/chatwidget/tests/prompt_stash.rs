@@ -1,4 +1,5 @@
 use super::*;
+use crate::bottom_pane::HistoryEntry;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use pretty_assertions::assert_eq;
@@ -257,17 +258,23 @@ async fn rejected_model_submission_does_not_arm_prompt_stash() {
 #[tokio::test]
 async fn history_search_keeps_ctrl_s_forward_navigation() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    set_composer_text(&mut chat, "search draft");
+    chat.bottom_pane
+        .record_replayed_user_message_history(HistoryEntry::new("search older".to_string()));
+    chat.bottom_pane
+        .record_replayed_user_message_history(HistoryEntry::new("search newer".to_string()));
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-    assert!(chat.bottom_pane.composer_history_search_active());
-    press_stash(&mut chat);
-    assert!(chat.bottom_pane.composer_history_search_active());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    for ch in "search".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert_eq!(chat.bottom_pane.composer_text(), "search newer");
 
-    set_composer_text(&mut chat, "");
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    assert_eq!(chat.bottom_pane.composer_text(), "search older");
+
     press_stash(&mut chat);
-    assert!(chat.bottom_pane.composer_is_empty());
+    assert!(chat.bottom_pane.composer_history_search_active());
+    assert_eq!(chat.bottom_pane.composer_text(), "search newer");
 }
 
 #[tokio::test]
