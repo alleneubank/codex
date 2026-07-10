@@ -2910,7 +2910,8 @@ mod tests {
 
     #[test]
     fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
-        let cases: [(fn(&mut TuiKeymap), fn(&RuntimeKeymap) -> &[KeyBinding]); 2] = [
+        type BindingCase = (fn(&mut TuiKeymap), fn(&RuntimeKeymap) -> &[KeyBinding]);
+        let cases: [BindingCase; 2] = [
             (
                 |keymap| keymap.editor.move_left = Some(one("ctrl-s")),
                 |runtime| &runtime.editor.move_left,

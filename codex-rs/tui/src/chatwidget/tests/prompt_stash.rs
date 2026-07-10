@@ -16,6 +16,10 @@ fn set_composer_text(chat: &mut ChatWidget, text: &str) {
         .set_composer_text(text.to_string(), Vec::new(), Vec::new());
 }
 
+fn assert_composer_text(chat: &ChatWidget, expected: &str) {
+    assert_eq!(chat.bottom_pane.composer_text(), expected);
+}
+
 fn stash_draft(chat: &mut ChatWidget) {
     set_composer_text(chat, STASHED_DRAFT);
     press_stash(chat);
@@ -23,12 +27,16 @@ fn stash_draft(chat: &mut ChatWidget) {
 }
 
 fn complete_task(chat: &mut ChatWidget, from_replay: bool) {
-    chat.on_task_complete(/*last_agent_message*/ None, /*duration_ms*/ None, from_replay);
+    chat.on_task_complete(
+        /*last_agent_message*/ None,
+        /*duration_ms*/ None,
+        from_replay,
+    );
 }
 
-fn assert_manual_restore(chat: &mut ChatWidget, context: &str) {
+fn assert_manual_restore(chat: &mut ChatWidget) {
     press_stash(chat);
-    assert_eq!(chat.bottom_pane.composer_text(), STASHED_DRAFT, "{context}");
+    assert_composer_text(chat, STASHED_DRAFT);
 }
 
 async fn armed_stash() -> (ChatWidget, tokio::sync::mpsc::UnboundedReceiver<Op>) {
@@ -48,9 +56,9 @@ async fn manual_stash_restore_is_non_overwriting_and_empty_stash_is_a_no_op() {
     stash_draft(&mut chat);
     set_composer_text(&mut chat, "new draft");
     press_stash(&mut chat);
-    assert_eq!(chat.bottom_pane.composer_text(), "new draft");
+    assert_composer_text(&chat, "new draft");
     set_composer_text(&mut chat, "");
-    assert_manual_restore(&mut chat, "manual recovery");
+    assert_manual_restore(&mut chat);
     set_composer_text(&mut chat, "");
     press_stash(&mut chat);
     assert!(chat.bottom_pane.composer_is_empty());
@@ -98,13 +106,13 @@ async fn stash_round_trip_preserves_rich_draft_and_cursor() {
 async fn live_completion_restores_only_when_the_composer_is_empty() {
     let (mut idle, _op_rx) = armed_stash().await;
     handle_turn_completed(&mut idle, "turn-1", /*duration_ms*/ None);
-    assert_eq!(idle.bottom_pane.composer_text(), STASHED_DRAFT, "idle completion");
+    assert_composer_text(&idle, STASHED_DRAFT);
     let (mut busy, _op_rx) = armed_stash().await;
     set_composer_text(&mut busy, "new draft");
     handle_turn_completed(&mut busy, "turn-1", /*duration_ms*/ None);
-    assert_eq!(busy.bottom_pane.composer_text(), "new draft", "non-overwrite");
+    assert_composer_text(&busy, "new draft");
     set_composer_text(&mut busy, "");
-    assert_manual_restore(&mut busy, "recovery after guarded completion");
+    assert_manual_restore(&mut busy);
 }
 
 #[tokio::test]
@@ -113,12 +121,12 @@ async fn unrelated_and_replayed_completions_do_not_restore_the_stash() {
     unrelated.on_task_started();
     stash_draft(&mut unrelated);
     complete_task(&mut unrelated, /*from_replay*/ false);
-    assert_manual_restore(&mut unrelated, "unrelated running turn");
+    assert_manual_restore(&mut unrelated);
     let (mut replayed, _op_rx) = armed_stash().await;
     complete_task(&mut replayed, /*from_replay*/ true);
-    assert!(replayed.bottom_pane.composer_is_empty(), "replayed completion");
+    assert!(replayed.bottom_pane.composer_is_empty());
     complete_task(&mut replayed, /*from_replay*/ false);
-    assert_eq!(replayed.bottom_pane.composer_text(), STASHED_DRAFT, "later live completion");
+    assert_composer_text(&replayed, STASHED_DRAFT);
 }
 
 #[tokio::test]
@@ -130,7 +138,7 @@ async fn automatic_restore_waits_for_follow_up_queue_and_active_goal() {
     assert!(queued.bottom_pane.composer_is_empty(), "queued follow-up");
     handle_turn_started(&mut queued, "turn-2");
     handle_turn_completed(&mut queued, "turn-2", /*duration_ms*/ None);
-    assert_eq!(queued.bottom_pane.composer_text(), STASHED_DRAFT, "queue drained");
+    assert_composer_text(&queued, STASHED_DRAFT);
     let (mut goal, _op_rx) = armed_stash().await;
     let thread_id = goal.thread_id.expect("thread id");
     goal.current_goal_status = Some(GoalStatusState::new(
@@ -150,7 +158,7 @@ async fn automatic_restore_waits_for_follow_up_queue_and_active_goal() {
     assert!(goal.bottom_pane.composer_is_empty(), "active goal");
     goal.current_goal_status = None;
     complete_task(&mut goal, /*from_replay*/ false);
-    assert_eq!(goal.bottom_pane.composer_text(), STASHED_DRAFT, "goal stopped");
+    assert_composer_text(&goal, STASHED_DRAFT);
 }
 
 #[tokio::test]
@@ -168,7 +176,7 @@ async fn shell_and_rejected_submissions_do_not_arm_the_stash() {
         chat.submit_user_message(UserMessage::from(message));
         complete_task(&mut chat, /*from_replay*/ false);
         assert!(chat.bottom_pane.composer_is_empty(), "{context}");
-        assert_manual_restore(&mut chat, context);
+        assert_manual_restore(&mut chat);
     }
 }
 
@@ -183,12 +191,12 @@ async fn history_search_keeps_ctrl_s_forward_navigation() {
     for ch in "search".chars() {
         chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
     }
-    assert_eq!(chat.bottom_pane.composer_text(), "search newer");
+    assert_composer_text(&chat, "search newer");
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-    assert_eq!(chat.bottom_pane.composer_text(), "search older");
+    assert_composer_text(&chat, "search older");
     press_stash(&mut chat);
     assert!(chat.bottom_pane.composer_history_search_active());
-    assert_eq!(chat.bottom_pane.composer_text(), "search newer");
+    assert_composer_text(&chat, "search newer");
 }
 
 #[tokio::test]
@@ -202,23 +210,18 @@ async fn stash_flushes_paste_burst_for_both_ctrl_s_encodings() {
         for ch in "buffered suffix".chars() {
             chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
         }
-        assert_eq!(
-            (chat.bottom_pane.is_in_paste_burst(), chat.bottom_pane.composer_text()),
-            (true, "visible prefix ".to_string()),
-            "{stash_key:?}",
-        );
+        assert!(chat.bottom_pane.is_in_paste_burst());
+        assert_composer_text(&chat, "visible prefix ");
         chat.handle_key_event(stash_key);
-        assert_eq!(
-            (
-                chat.bottom_pane.is_in_paste_burst(),
-                chat.bottom_pane.composer_text(),
-                chat.prompt_stash.as_ref().map(|stash| stash.composer.text.as_str()),
-            ),
-            (false, String::new(), Some("visible prefix buffered suffix")),
-            "{stash_key:?}",
-        );
+        assert!(!chat.bottom_pane.is_in_paste_burst());
+        assert!(chat.bottom_pane.composer_is_empty());
+        let stash = chat
+            .prompt_stash
+            .as_ref()
+            .expect("prompt should be stashed");
+        assert_eq!(stash.composer.text, "visible prefix buffered suffix");
         chat.handle_key_event(stash_key);
-        assert_eq!(chat.bottom_pane.composer_text(), "visible prefix buffered suffix");
+        assert_composer_text(&chat, "visible prefix buffered suffix");
     }
 }
 
@@ -227,11 +230,13 @@ async fn prompt_stash_follows_thread_input_state_and_none_clears_it() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     set_composer_text(&mut chat, "thread draft");
     press_stash(&mut chat);
-    let input_state = chat.capture_thread_input_state().expect("thread input state");
+    let input_state = chat
+        .capture_thread_input_state()
+        .expect("thread input state");
     chat.restore_thread_input_state(/*input_state*/ None);
     press_stash(&mut chat);
     assert!(chat.bottom_pane.composer_is_empty());
     chat.restore_thread_input_state(Some(input_state));
     press_stash(&mut chat);
-    assert_eq!(chat.bottom_pane.composer_text(), "thread draft");
+    assert_composer_text(&chat, "thread draft");
 }
