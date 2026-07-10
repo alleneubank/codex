@@ -109,19 +109,14 @@ impl ChatWidget {
             && self.chat_keymap.stash_prompt.is_pressed(key_event)
             && !self.bottom_pane.composer_history_search_active()
         {
-            // The stash shortcut bypasses normal composer routing, so explicitly
-            // route it while a non-bracketed paste is active. Normalize first so
-            // raw C0 control reports flush as modified input too, keeping the
-            // snapshot and paste-burst state atomic.
+            // The stash shortcut bypasses normal composer routing, so route a
+            // no-op non-character event while a non-bracketed paste is active.
+            // This flushes buffered text without inserting the configured stash
+            // key, including when that binding is an unmodified character.
             if self.bottom_pane.is_in_paste_burst() {
-                let (code, modifiers) =
-                    key_hint::normalize_key_parts(key_event.code, key_event.modifiers);
-                let normalized_key_event = KeyEvent {
-                    code,
-                    modifiers,
-                    ..key_event
-                };
-                let _ = self.bottom_pane.handle_key_event(normalized_key_event);
+                let _ = self
+                    .bottom_pane
+                    .handle_key_event(KeyEvent::new(KeyCode::Null, KeyModifiers::NONE));
             }
             self.toggle_prompt_stash();
             return;
@@ -526,4 +521,40 @@ impl ChatWidget {
             status: AppThreadGoalStatus::Paused,
         });
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn plain_character_stash_remap_flushes_active_paste_burst_before_snapshot() {
+    use super::tests::make_chatwidget_manual_with_sender;
+    use pretty_assertions::assert_eq;
+
+    let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
+    chat.chat_keymap.stash_prompt = vec![key_hint::plain(KeyCode::Char('z'))];
+    chat.bottom_pane
+        .set_composer_text("visible prefix ".to_string(), Vec::new(), Vec::new());
+    for ch in "buffered suffix".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(chat.bottom_pane.is_in_paste_burst());
+    assert_eq!(chat.bottom_pane.composer_text(), "visible prefix ");
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+
+    assert!(!chat.bottom_pane.is_in_paste_burst());
+    assert!(chat.bottom_pane.composer_is_empty());
+    assert_eq!(
+        chat.prompt_stash
+            .as_ref()
+            .expect("prompt should be stashed")
+            .composer
+            .text,
+        "visible prefix buffered suffix"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+    assert_eq!(
+        chat.bottom_pane.composer_text(),
+        "visible prefix buffered suffix"
+    );
 }
