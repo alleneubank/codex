@@ -179,6 +179,33 @@ async fn stash_restoration_is_bound_to_an_accepted_live_turn_and_idle_state() {
 }
 
 #[tokio::test]
+async fn in_progress_thread_snapshot_binds_awaiting_stash_to_replayed_turn() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    stash(&mut chat);
+    chat.arm_prompt_stash_for_turn();
+
+    chat.replay_thread_turns(
+        vec![AppServerTurn {
+            id: "snapshot-turn".to_string(),
+            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items: Vec::new(),
+            status: AppServerTurnStatus::InProgress,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }],
+        ReplayKind::ThreadSnapshot,
+    );
+    assert!(chat.bottom_pane.composer_is_empty());
+
+    handle_turn_completed(&mut chat, "snapshot-turn", /*duration_ms*/ None);
+
+    assert_eq!(chat.bottom_pane.composer_text(), DRAFT);
+    assert!(chat.prompt_stash.is_none());
+}
+
+#[tokio::test]
 async fn live_steers_keep_stash_bound_to_the_running_turn() {
     for created in [false, true] {
         let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
