@@ -586,7 +586,7 @@ async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
     let channel = ThreadEventChannel::new_with_session(
         THREAD_EVENT_CHANNEL_CAPACITY,
         session.clone(),
-        vec![test_turn("turn-armed", TurnStatus::InProgress, Vec::new())],
+        Vec::new(),
     );
     app.thread_event_channels.insert(thread_id, channel);
     app.activate_thread_channel(thread_id).await;
@@ -601,6 +601,24 @@ async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
 
     app.store_active_thread_receiver().await;
     app.clear_active_thread().await;
+    app.enqueue_thread_notification(
+        thread_id,
+        turn_started_notification(thread_id, "turn-armed"),
+    )
+    .await
+    .expect("buffer turn start");
+    {
+        let channel = app
+            .thread_event_channels
+            .get(&thread_id)
+            .expect("thread channel should exist");
+        let mut store = channel.store.lock().await;
+        store.rebase_buffer_after_session_refresh();
+        assert!(
+            store.buffer.is_empty(),
+            "refresh removes buffered turn start"
+        );
+    }
     app.enqueue_thread_notification(
         thread_id,
         turn_completed_notification(thread_id, "turn-armed", TurnStatus::Completed),
