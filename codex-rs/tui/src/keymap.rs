@@ -90,7 +90,6 @@ pub(crate) struct ChatKeymap {
     pub(crate) increase_reasoning_effort: Vec<KeyBinding>,
     /// Edit the most recently queued message.
     pub(crate) edit_queued_message: Vec<KeyBinding>,
-    /// Temporarily stash or restore the current composer draft.
     pub(crate) stash_prompt: Vec<KeyBinding>,
 }
 
@@ -1194,7 +1193,7 @@ impl RuntimeKeymap {
     /// 2. Contexts with hard-coded sequence behavior, such as edit-previous
     ///    backtracking, intentionally stay outside this configurable keymap.
     fn validate_conflicts(&self) -> Result<(), String> {
-        validate_unique_with_allowed_overlaps(
+        validate_unique(
             "app",
             [
                 ("open_transcript", self.app.open_transcript.as_slice()),
@@ -1240,7 +1239,6 @@ impl RuntimeKeymap {
                     self.composer.history_search_next.as_slice(),
                 ),
             ],
-            [("chat.stash_prompt", "composer.history_search_next")],
         )?;
 
         validate_no_reserved(
@@ -1748,23 +1746,16 @@ fn validate_unique<const N: usize>(
     context: &str,
     pairs: [(&'static str, &[KeyBinding]); N],
 ) -> Result<(), String> {
-    validate_unique_with_allowed_overlaps(context, pairs, [])
-}
-
-fn validate_unique_with_allowed_overlaps<const N: usize, const A: usize>(
-    context: &str,
-    pairs: [(&'static str, &[KeyBinding]); N],
-    allowed_overlaps: [(&'static str, &'static str); A],
-) -> Result<(), String> {
     let mut seen: HashMap<(KeyCode, KeyModifiers), &'static str> = HashMap::new();
     for (action, bindings) in pairs {
         for binding in bindings {
             let key = binding.parts();
             if let Some(previous) = seen.insert(key, action) {
-                if allowed_overlaps.iter().any(|(first, second)| {
-                    (*first == previous && *second == action)
-                        || (*first == action && *second == previous)
-                }) {
+                if matches!(
+                    (previous, action),
+                    ("chat.stash_prompt", "composer.history_search_next")
+                        | ("composer.history_search_next", "chat.stash_prompt")
+                ) {
                     continue;
                 }
                 return Err(format!(
@@ -2305,7 +2296,7 @@ mod tests {
         );
         assert_eq!(
             runtime.chat.stash_prompt,
-            vec![key_hint::ctrl(KeyCode::Char('s'))]
+            runtime.composer.history_search_next
         );
         assert_eq!(
             runtime.composer.history_search_previous,
@@ -2892,15 +2883,13 @@ mod tests {
     #[test]
     fn stash_prompt_supports_remap_unbind_and_contextual_overlap() {
         let mut keymap = TuiKeymap::default();
+        let f12 = vec![key_hint::plain(KeyCode::F(12))];
         keymap.chat.stash_prompt = Some(one("f12"));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-        let f12 = vec![key_hint::plain(KeyCode::F(12))];
         assert_eq!(runtime.chat.stash_prompt, f12);
-
         keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.chat.stash_prompt.is_empty());
-
         keymap.chat.stash_prompt = Some(one("f12"));
         keymap.composer.history_search_next = Some(one("f12"));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
@@ -2910,23 +2899,21 @@ mod tests {
 
     #[test]
     fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
-        type BindingCase = (fn(&mut TuiKeymap), fn(&RuntimeKeymap) -> &[KeyBinding]);
-        let cases: [BindingCase; 2] = [
-            (
-                |keymap| keymap.editor.move_left = Some(one("ctrl-s")),
-                |runtime| &runtime.editor.move_left,
-            ),
-            (
-                |keymap| keymap.vim_normal.move_left = Some(one("ctrl-s")),
-                |runtime| &runtime.vim_normal.move_left,
-            ),
-        ];
         let expected = vec![key_hint::ctrl(KeyCode::Char('s'))];
-        for (configure, resolved_binding) in cases {
+        for vim in [false, true] {
             let mut keymap = TuiKeymap::default();
-            configure(&mut keymap);
+            if vim {
+                keymap.vim_normal.move_left = Some(one("ctrl-s"));
+            } else {
+                keymap.editor.move_left = Some(one("ctrl-s"));
+            }
             let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-            assert_eq!(resolved_binding(&runtime), expected);
+            let configured = if vim {
+                &runtime.vim_normal.move_left
+            } else {
+                &runtime.editor.move_left
+            };
+            assert_eq!(configured, &expected);
             assert!(runtime.chat.stash_prompt.is_empty());
         }
     }

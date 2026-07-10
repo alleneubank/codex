@@ -583,35 +583,24 @@ async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let thread_id = ThreadId::new();
     let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
-    app.thread_event_channels.insert(
-        thread_id,
-        ThreadEventChannel::new_with_session(
-            THREAD_EVENT_CHANNEL_CAPACITY,
-            session.clone(),
-            Vec::new(),
-        ),
+    let channel = ThreadEventChannel::new_with_session(
+        THREAD_EVENT_CHANNEL_CAPACITY,
+        session.clone(),
+        vec![test_turn("turn-armed", TurnStatus::InProgress, Vec::new())],
     );
+    app.thread_event_channels.insert(thread_id, channel);
     app.activate_thread_channel(thread_id).await;
     app.chat_widget.handle_thread_session(session);
 
-    app.chat_widget
-        .apply_external_edit("original draft".to_string());
-    app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    app.chat_widget
-        .apply_external_edit("intervening question".to_string());
-    app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let chat = &mut app.chat_widget;
+    chat.apply_external_edit("original draft".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    chat.apply_external_edit("intervening question".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_matches!(next_user_turn_op(&mut op_rx), Op::UserTurn { .. });
 
     app.store_active_thread_receiver().await;
     app.clear_active_thread().await;
-    app.enqueue_thread_notification(
-        thread_id,
-        turn_started_notification(thread_id, "turn-armed"),
-    )
-    .await
-    .expect("buffer turn start");
     app.enqueue_thread_notification(
         thread_id,
         turn_completed_notification(thread_id, "turn-armed", TurnStatus::Completed),
@@ -627,10 +616,8 @@ async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
     app.chat_widget = chat_widget;
     app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ true);
 
-    assert_eq!(
-        app.chat_widget.composer_text_with_pending(),
-        "original draft"
-    );
+    let restored = app.chat_widget.composer_text_with_pending();
+    assert_eq!(restored, "original draft");
 }
 
 #[tokio::test]

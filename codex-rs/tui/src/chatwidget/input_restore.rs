@@ -7,26 +7,22 @@ use super::*;
 
 impl ChatWidget {
     pub(super) fn toggle_prompt_stash(&mut self) {
-        if self.prompt_stash.is_some() {
-            if !self.bottom_pane.composer_is_empty() {
-                return;
+        match self.prompt_stash.take() {
+            Some(stash) if self.bottom_pane.composer_is_empty() => {
+                self.restore_composer_state(stash.composer)
             }
-            let Some(stash) = self.prompt_stash.take() else {
-                return;
-            };
-            self.restore_composer_state(stash.composer);
-            return;
+            Some(stash) => self.prompt_stash = Some(stash),
+            None => {
+                let composer = self.current_composer_state();
+                if composer.has_content() {
+                    self.prompt_stash = Some(PromptStash {
+                        composer,
+                        restore: PromptStashRestore::ManualOnly,
+                    });
+                    self.restore_composer_state(ThreadComposerState::default());
+                }
+            }
         }
-
-        let composer = self.current_composer_state();
-        if !composer.has_content() {
-            return;
-        }
-        self.prompt_stash = Some(PromptStash {
-            composer,
-            restore: PromptStashRestore::ManualOnly,
-        });
-        self.restore_composer_state(ThreadComposerState::default());
     }
 
     pub(super) fn arm_prompt_stash_for_turn(&mut self) {
@@ -42,18 +38,15 @@ impl ChatWidget {
     }
 
     pub(super) fn restore_prompt_stash_on_idle_completion(&mut self, turn_id: &str) {
-        if !self.bottom_pane.composer_is_empty()
-            || !self.prompt_stash.as_ref().is_some_and(|stash| {
-                matches!(
+        let composer_is_empty = self.bottom_pane.composer_is_empty();
+        let Some(stash) = self.prompt_stash.take_if(|stash| {
+            composer_is_empty
+                && matches!(
                     &stash.restore,
-                    PromptStashRestore::OnIdleCompletion { turn_id: armed_turn_id }
-                        if armed_turn_id == turn_id
+                    PromptStashRestore::OnIdleCompletion { turn_id: armed }
+                        if armed == turn_id
                 )
-            })
-        {
-            return;
-        }
-        let Some(stash) = self.prompt_stash.take() else {
+        }) else {
             return;
         };
         self.restore_composer_state(stash.composer);
