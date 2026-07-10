@@ -84,6 +84,31 @@ async fn stash_shortcut_does_not_shadow_active_composer_popup_input() {
 }
 
 #[tokio::test]
+async fn unmodified_character_stash_remap_flushes_paste_burst_losslessly() {
+    let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
+    chat.chat_keymap.stash_prompt = vec![crate::key_hint::plain(KeyCode::Char('z'))];
+    chat.apply_external_edit("visible prefix ".to_string());
+    for ch in "buffered suffix".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(chat.bottom_pane.is_in_paste_burst());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+
+    assert!(chat.bottom_pane.composer_is_empty());
+    let stash = chat.prompt_stash.as_ref().expect("stashed prompt");
+    assert_eq!(stash.composer.text, "visible prefix buffered suffix");
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+
+    assert_eq!(
+        chat.bottom_pane.composer_text(),
+        "visible prefix buffered suffix"
+    );
+    assert!(chat.prompt_stash.is_none());
+}
+
+#[tokio::test]
 async fn stash_restoration_is_bound_to_an_accepted_live_turn_and_idle_state() {
     let (mut idle, _op_rx) = armed_stash().await;
     handle_turn_completed(&mut idle, "turn-0", /*duration_ms*/ None);
