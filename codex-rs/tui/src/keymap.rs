@@ -2890,64 +2890,44 @@ mod tests {
     }
 
     #[test]
-    fn stash_prompt_can_be_remapped() {
+    fn stash_prompt_supports_remap_unbind_and_contextual_overlap() {
         let mut keymap = TuiKeymap::default();
         keymap.chat.stash_prompt = Some(one("f12"));
-
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        let f12 = vec![key_hint::plain(KeyCode::F(12))];
+        assert_eq!(runtime.chat.stash_prompt, f12);
 
-        assert_eq!(
-            runtime.chat.stash_prompt,
-            vec![key_hint::plain(KeyCode::F(12))]
-        );
-    }
-
-    #[test]
-    fn stash_prompt_can_be_unbound() {
-        let mut keymap = TuiKeymap::default();
         keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
-
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-
         assert!(runtime.chat.stash_prompt.is_empty());
+
+        keymap.chat.stash_prompt = Some(one("f12"));
+        keymap.composer.history_search_next = Some(one("f12"));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        assert_eq!(runtime.chat.stash_prompt, f12);
+        assert_eq!(runtime.composer.history_search_next, f12);
     }
 
     #[test]
     fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
-        let mut keymap = TuiKeymap::default();
-        keymap.editor.move_left = Some(one("ctrl-s"));
-
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("editor binding should parse");
-
-        assert_eq!(
-            runtime.editor.move_left,
-            vec![key_hint::ctrl(KeyCode::Char('s'))]
-        );
-        assert!(runtime.chat.stash_prompt.is_empty());
-
-        let mut keymap = TuiKeymap::default();
-        keymap.vim_normal.move_left = Some(one("ctrl-s"));
-
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("vim binding should parse");
-
-        assert_eq!(
-            runtime.vim_normal.move_left,
-            vec![key_hint::ctrl(KeyCode::Char('s'))]
-        );
-        assert!(runtime.chat.stash_prompt.is_empty());
-    }
-
-    #[test]
-    fn stash_prompt_may_share_a_contextual_history_search_binding() {
-        let mut keymap = TuiKeymap::default();
-        keymap.chat.stash_prompt = Some(one("f12"));
-        keymap.composer.history_search_next = Some(one("f12"));
-
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-        let expected = vec![key_hint::plain(KeyCode::F(12))];
-
-        assert_eq!(runtime.chat.stash_prompt, expected);
-        assert_eq!(runtime.composer.history_search_next, expected);
+        let cases: [(fn(&mut TuiKeymap), fn(&RuntimeKeymap) -> &[KeyBinding]); 2] = [
+            (
+                |keymap| keymap.editor.move_left = Some(one("ctrl-s")),
+                |runtime| &runtime.editor.move_left,
+            ),
+            (
+                |keymap| keymap.vim_normal.move_left = Some(one("ctrl-s")),
+                |runtime| &runtime.vim_normal.move_left,
+            ),
+        ];
+        let expected = vec![key_hint::ctrl(KeyCode::Char('s'))];
+        for (configure, resolved_binding) in cases {
+            let mut keymap = TuiKeymap::default();
+            configure(&mut keymap);
+            let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+            assert_eq!(resolved_binding(&runtime), expected);
+            assert!(runtime.chat.stash_prompt.is_empty());
+        }
     }
 
     #[test]
