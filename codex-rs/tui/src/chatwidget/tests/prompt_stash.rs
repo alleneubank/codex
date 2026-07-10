@@ -251,6 +251,51 @@ async fn history_search_keeps_ctrl_s_forward_navigation() {
 }
 
 #[tokio::test]
+async fn stash_shortcut_flushes_active_paste_burst_for_each_ctrl_s_encoding() {
+    let stash_keys = [
+        (
+            "control-modified",
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        ),
+        (
+            "raw-c0",
+            KeyEvent::new(KeyCode::Char('\u{0013}'), KeyModifiers::NONE),
+        ),
+    ];
+
+    for (encoding, stash_key) in stash_keys {
+        let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
+        set_composer_text(&mut chat, "visible prefix ");
+        for ch in "buffered suffix".chars() {
+            chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert!(chat.bottom_pane.is_in_paste_burst(), "{encoding}");
+        assert_eq!(chat.bottom_pane.composer_text(), "visible prefix ");
+
+        chat.handle_key_event(stash_key);
+
+        assert!(!chat.bottom_pane.is_in_paste_burst(), "{encoding}");
+        assert!(chat.bottom_pane.composer_is_empty(), "{encoding}");
+        assert_eq!(
+            chat.prompt_stash
+                .as_ref()
+                .expect("prompt should be stashed")
+                .composer
+                .text,
+            "visible prefix buffered suffix",
+            "{encoding}",
+        );
+
+        chat.handle_key_event(stash_key);
+        assert_eq!(
+            chat.bottom_pane.composer_text(),
+            "visible prefix buffered suffix",
+            "{encoding}",
+        );
+    }
+}
+
+#[tokio::test]
 async fn prompt_stash_follows_thread_input_state_and_none_clears_it() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     set_composer_text(&mut chat, "thread draft");
