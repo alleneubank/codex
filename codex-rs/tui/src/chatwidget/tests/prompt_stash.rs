@@ -66,6 +66,24 @@ async fn manual_stash_is_lossless_non_overwriting_and_empty_stash_is_a_no_op() {
 }
 
 #[tokio::test]
+async fn stash_shortcut_does_not_shadow_active_composer_popup_input() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    stash(&mut chat);
+    chat.chat_keymap.stash_prompt = vec![crate::key_hint::plain(KeyCode::Char('y'))];
+    for ch in "/he".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    chat.handle_key_event(KeyEvent::new(KeyCode::Null, KeyModifiers::NONE));
+    assert!(!chat.bottom_pane.no_modal_or_popup_active());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Null, KeyModifiers::NONE));
+
+    assert_eq!(chat.bottom_pane.composer_text(), "/hey");
+    assert!(chat.prompt_stash.is_some());
+}
+
+#[tokio::test]
 async fn stash_restoration_is_bound_to_an_accepted_live_turn_and_idle_state() {
     let (mut idle, _op_rx) = armed_stash().await;
     handle_turn_completed(&mut idle, "turn-0", /*duration_ms*/ None);

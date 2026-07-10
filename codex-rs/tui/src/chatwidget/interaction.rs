@@ -108,6 +108,7 @@ impl ChatWidget {
         if key_event.kind == KeyEventKind::Press
             && self.chat_keymap.stash_prompt.is_pressed(key_event)
             && !self.bottom_pane.composer_history_search_active()
+            && self.bottom_pane.no_modal_or_popup_active()
         {
             // The stash shortcut bypasses normal composer routing, so route a
             // no-op non-character event while a non-bracketed paste is active.
