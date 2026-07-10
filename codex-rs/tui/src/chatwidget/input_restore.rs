@@ -43,8 +43,7 @@ impl ChatWidget {
             composer_is_empty
                 && matches!(
                     &stash.restore,
-                    PromptStashRestore::OnIdleCompletion { turn_id: armed }
-                        if armed == turn_id
+                    PromptStashRestore::OnIdleCompletion(armed) if armed == turn_id
                 )
         }) else {
             return;

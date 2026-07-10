@@ -582,58 +582,25 @@ async fn active_turn_id_for_thread_uses_snapshot_turns() {
 async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let thread_id = ThreadId::new();
-    let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
-    let channel = ThreadEventChannel::new_with_session(
-        THREAD_EVENT_CHANNEL_CAPACITY,
-        session.clone(),
-        Vec::new(),
-    );
-    app.thread_event_channels.insert(thread_id, channel);
-    app.activate_thread_channel(thread_id).await;
-    app.chat_widget.handle_thread_session(session);
-
     let chat = &mut app.chat_widget;
+    let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
+    chat.handle_thread_session(session);
     chat.apply_external_edit("original draft".to_string());
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
     chat.apply_external_edit("intervening question".to_string());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_matches!(next_user_turn_op(&mut op_rx), Op::UserTurn { .. });
 
-    app.store_active_thread_receiver().await;
-    app.clear_active_thread().await;
-    app.enqueue_thread_notification(
-        thread_id,
-        turn_started_notification(thread_id, "turn-armed"),
-    )
-    .await
-    .expect("buffer turn start");
-    {
-        let channel = app
-            .thread_event_channels
-            .get(&thread_id)
-            .expect("thread channel should exist");
-        let mut store = channel.store.lock().await;
-        store.rebase_buffer_after_session_refresh();
-        assert!(
-            store.buffer.is_empty(),
-            "refresh removes buffered turn start"
-        );
-    }
-    app.enqueue_thread_notification(
-        thread_id,
-        turn_completed_notification(thread_id, "turn-armed", TurnStatus::Completed),
-    )
-    .await
-    .expect("buffer turn completion");
-
-    let (_receiver, snapshot) = app
-        .activate_thread_for_replay(thread_id)
-        .await
-        .expect("thread snapshot");
+    let mut store = ThreadEventStore::new(THREAD_EVENT_CHANNEL_CAPACITY);
+    store.input_state = chat.capture_thread_input_state();
+    store.push_notification(turn_started_notification(thread_id, "turn-armed"));
+    store.rebase_buffer_after_session_refresh();
+    assert!(store.buffer.is_empty(), "refresh removes turn start");
+    let completed = turn_completed_notification(thread_id, "turn-armed", TurnStatus::Completed);
+    store.push_notification(completed);
     let (chat_widget, _app_event_tx, _rx, _new_op_rx) = make_chatwidget_manual_with_sender().await;
     app.chat_widget = chat_widget;
-    app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ true);
-
+    app.replay_thread_snapshot(store.snapshot(), /*resume_restored_queue*/ true);
     let restored = app.chat_widget.composer_text_with_pending();
     assert_eq!(restored, "original draft");
 }

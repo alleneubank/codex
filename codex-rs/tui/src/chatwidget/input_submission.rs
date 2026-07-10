@@ -357,9 +357,7 @@ impl ChatWidget {
         if render_in_history {
             self.arm_prompt_stash_for_turn();
         } else if let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() {
-            // A steer joins the running turn and does not emit another TurnStarted. Associate a
-            // newly created stash with that turn immediately, while keeping an existing stash on
-            // the same completion boundary.
+            // Steers emit no TurnStarted, so bind a new stash to the running turn directly.
             self.arm_prompt_stash_for_turn();
             self.bind_prompt_stash_to_started_turn(&turn_id);
         }

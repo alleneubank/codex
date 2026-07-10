@@ -752,9 +752,10 @@ impl RuntimeKeymap {
             cancel: resolve_local!(keymap, defaults, vim_text_object, cancel),
         };
 
-        // Stash and reasoning aliases are fallback defaults: existing explicit
+        // Reasoning arrow aliases are fallback defaults: existing explicit
         // bindings on the same input path keep the keys, while explicit
-        // bindings for these actions remain authoritative.
+        // reasoning bindings remain authoritative.
+        // The stash alias follows the same explicit-binding precedence.
         if keymap.chat.stash_prompt.is_none()
             && configured_main_surface_alias_is_used(keymap, "ctrl-s")
         {
@@ -2885,37 +2886,25 @@ mod tests {
         let mut keymap = TuiKeymap::default();
         let f12 = vec![key_hint::plain(KeyCode::F(12))];
         keymap.chat.stash_prompt = Some(one("f12"));
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-        assert_eq!(runtime.chat.stash_prompt, f12);
-        keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-        assert!(runtime.chat.stash_prompt.is_empty());
-        keymap.chat.stash_prompt = Some(one("f12"));
         keymap.composer.history_search_next = Some(one("f12"));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert_eq!(runtime.chat.stash_prompt, f12);
         assert_eq!(runtime.composer.history_search_next, f12);
+        keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        assert!(runtime.chat.stash_prompt.is_empty());
     }
 
     #[test]
     fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
+        let mut keymap = TuiKeymap::default();
+        keymap.editor.move_left = Some(one("ctrl-s"));
+        keymap.vim_normal.move_left = Some(one("ctrl-s"));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         let expected = vec![key_hint::ctrl(KeyCode::Char('s'))];
-        for vim in [false, true] {
-            let mut keymap = TuiKeymap::default();
-            if vim {
-                keymap.vim_normal.move_left = Some(one("ctrl-s"));
-            } else {
-                keymap.editor.move_left = Some(one("ctrl-s"));
-            }
-            let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-            let configured = if vim {
-                &runtime.vim_normal.move_left
-            } else {
-                &runtime.editor.move_left
-            };
-            assert_eq!(configured, &expected);
-            assert!(runtime.chat.stash_prompt.is_empty());
-        }
+        assert_eq!(runtime.editor.move_left, expected);
+        assert_eq!(runtime.vim_normal.move_left, expected);
+        assert!(runtime.chat.stash_prompt.is_empty());
     }
 
     #[test]

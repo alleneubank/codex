@@ -209,9 +209,7 @@ impl ChatWidget {
             .as_ref()
             .is_some_and(GoalStatusState::is_active);
         if active_goal_continuing {
-            // Goal runtime starts another turn automatically. Rearm the stash so that turn's
-            // TurnStarted notification advances the completion correlation instead of leaving it
-            // bound to the turn that just finished.
+            // Rearm so the goal runtime's next TurnStarted advances completion correlation.
             self.arm_prompt_stash_for_turn();
         }
         if !follow_up_started

@@ -123,7 +123,7 @@ impl ThreadComposerState {
 pub(super) enum PromptStashRestore {
     ManualOnly,
     AwaitingTurnStart,
-    OnIdleCompletion { turn_id: String },
+    OnIdleCompletion(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,9 +135,7 @@ pub(super) struct PromptStash {
 impl PromptStash {
     pub(crate) fn bind_to_started_turn(&mut self, turn_id: &str) {
         if self.restore == PromptStashRestore::AwaitingTurnStart {
-            self.restore = PromptStashRestore::OnIdleCompletion {
-                turn_id: turn_id.to_string(),
-            };
+            self.restore = PromptStashRestore::OnIdleCompletion(turn_id.to_string());
         }
     }
 }
