@@ -110,10 +110,11 @@ async fn stash_restoration_is_bound_to_an_accepted_live_turn_and_idle_state() {
         status_and_layout::test_thread_goal(ThreadGoalStatus::Active, None, 0),
         Instant::now(),
     ));
-    complete_task(&mut goal, /*from_replay*/ false);
+    handle_turn_completed(&mut goal, "turn-1", /*duration_ms*/ None);
     assert!(goal.bottom_pane.composer_is_empty(), "active goal");
+    handle_turn_started(&mut goal, "turn-2");
     goal.current_goal_status = None;
-    complete_task(&mut goal, /*from_replay*/ false);
+    handle_turn_completed(&mut goal, "turn-2", /*duration_ms*/ None);
     assert_eq!(goal.bottom_pane.composer_text(), DRAFT);
     let (mut replayed, _op_rx) = armed_stash().await;
     replayed.turn_lifecycle.last_turn_id = Some("turn-0".to_string());

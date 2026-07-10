@@ -208,6 +208,12 @@ impl ChatWidget {
             .current_goal_status
             .as_ref()
             .is_some_and(GoalStatusState::is_active);
+        if active_goal_continuing {
+            // Goal runtime starts another turn automatically. Rearm the stash so that turn's
+            // TurnStarted notification advances the completion correlation instead of leaving it
+            // bound to the turn that just finished.
+            self.arm_prompt_stash_for_turn();
+        }
         if !follow_up_started
             && !active_goal_continuing
             && let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone()
