@@ -90,6 +90,8 @@ pub(crate) struct ChatKeymap {
     pub(crate) increase_reasoning_effort: Vec<KeyBinding>,
     /// Edit the most recently queued message.
     pub(crate) edit_queued_message: Vec<KeyBinding>,
+    /// Temporarily stash or restore the current composer draft.
+    pub(crate) stash_prompt: Vec<KeyBinding>,
 }
 
 /// Composer-level keybindings validated in the second app-scope conflict pass.
@@ -451,6 +453,11 @@ impl RuntimeKeymap {
                 keymap.chat.edit_queued_message.as_ref(),
                 &defaults.chat.edit_queued_message,
                 "tui.keymap.chat.edit_queued_message",
+            )?,
+            stash_prompt: resolve_bindings(
+                keymap.chat.stash_prompt.as_ref(),
+                &defaults.chat.stash_prompt,
+                "tui.keymap.chat.stash_prompt",
             )?,
         };
 
@@ -946,6 +953,7 @@ impl RuntimeKeymap {
                     shift(KeyCode::Up)
                 ],
                 edit_queued_message: default_bindings![alt(KeyCode::Up), shift(KeyCode::Left)],
+                stash_prompt: default_bindings![ctrl(KeyCode::Char('s'))],
             },
             composer: ComposerKeymap {
                 submit: default_bindings![plain(KeyCode::Enter)],
@@ -1180,7 +1188,7 @@ impl RuntimeKeymap {
     /// 2. Contexts with hard-coded sequence behavior, such as edit-previous
     ///    backtracking, intentionally stay outside this configurable keymap.
     fn validate_conflicts(&self) -> Result<(), String> {
-        validate_unique(
+        validate_unique_with_allowed_overlaps(
             "app",
             [
                 ("open_transcript", self.app.open_transcript.as_slice()),
@@ -1210,6 +1218,7 @@ impl RuntimeKeymap {
                     "chat.edit_queued_message",
                     self.chat.edit_queued_message.as_slice(),
                 ),
+                ("chat.stash_prompt", self.chat.stash_prompt.as_slice()),
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("composer.queue", self.composer.queue.as_slice()),
                 (
@@ -1225,6 +1234,7 @@ impl RuntimeKeymap {
                     self.composer.history_search_next.as_slice(),
                 ),
             ],
+            [("chat.stash_prompt", "composer.history_search_next")],
         )?;
 
         validate_no_reserved(
@@ -1257,6 +1267,7 @@ impl RuntimeKeymap {
                     "chat.edit_queued_message",
                     self.chat.edit_queued_message.as_slice(),
                 ),
+                ("chat.stash_prompt", self.chat.stash_prompt.as_slice()),
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("composer.queue", self.composer.queue.as_slice()),
                 (
@@ -1367,6 +1378,7 @@ impl RuntimeKeymap {
                     "chat.increase_reasoning_effort",
                     self.chat.increase_reasoning_effort.as_slice(),
                 ),
+                ("chat.stash_prompt", self.chat.stash_prompt.as_slice()),
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
@@ -1730,11 +1742,25 @@ fn validate_unique<const N: usize>(
     context: &str,
     pairs: [(&'static str, &[KeyBinding]); N],
 ) -> Result<(), String> {
+    validate_unique_with_allowed_overlaps(context, pairs, [])
+}
+
+fn validate_unique_with_allowed_overlaps<const N: usize, const A: usize>(
+    context: &str,
+    pairs: [(&'static str, &[KeyBinding]); N],
+    allowed_overlaps: [(&'static str, &'static str); A],
+) -> Result<(), String> {
     let mut seen: HashMap<(KeyCode, KeyModifiers), &'static str> = HashMap::new();
     for (action, bindings) in pairs {
         for binding in bindings {
             let key = binding.parts();
             if let Some(previous) = seen.insert(key, action) {
+                if allowed_overlaps.iter().any(|(first, second)| {
+                    (*first == previous && *second == action)
+                        || (*first == action && *second == previous)
+                }) {
+                    continue;
+                }
                 return Err(format!(
                     "Ambiguous `tui.keymap.{context}` bindings: `{previous}` and `{action}` use the same key. \
 Set unique keys in `~/.codex/config.toml` and retry. \
@@ -2270,6 +2296,10 @@ mod tests {
         assert_eq!(
             runtime.chat.edit_queued_message,
             vec![key_hint::alt(KeyCode::Up), key_hint::shift(KeyCode::Left)]
+        );
+        assert_eq!(
+            runtime.chat.stash_prompt,
+            vec![key_hint::ctrl(KeyCode::Char('s'))]
         );
         assert_eq!(
             runtime.composer.history_search_previous,
@@ -2851,6 +2881,42 @@ mod tests {
         keymap.composer.toggle_shortcuts = Some(KeybindingsSpec::Many(vec![]));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.composer.toggle_shortcuts.is_empty());
+    }
+
+    #[test]
+    fn stash_prompt_can_be_remapped() {
+        let mut keymap = TuiKeymap::default();
+        keymap.chat.stash_prompt = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert_eq!(
+            runtime.chat.stash_prompt,
+            vec![key_hint::plain(KeyCode::F(12))]
+        );
+    }
+
+    #[test]
+    fn stash_prompt_can_be_unbound() {
+        let mut keymap = TuiKeymap::default();
+        keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert!(runtime.chat.stash_prompt.is_empty());
+    }
+
+    #[test]
+    fn stash_prompt_may_share_a_contextual_history_search_binding() {
+        let mut keymap = TuiKeymap::default();
+        keymap.chat.stash_prompt = Some(one("f12"));
+        keymap.composer.history_search_next = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        let expected = vec![key_hint::plain(KeyCode::F(12))];
+
+        assert_eq!(runtime.chat.stash_prompt, expected);
+        assert_eq!(runtime.composer.history_search_next, expected);
     }
 
     #[test]

@@ -6,6 +6,49 @@ use super::user_messages::remap_colliding_paste_placeholders;
 use super::*;
 
 impl ChatWidget {
+    pub(super) fn toggle_prompt_stash(&mut self) {
+        if self.prompt_stash.is_some() {
+            if !self.bottom_pane.composer_is_empty() {
+                return;
+            }
+            let Some(stash) = self.prompt_stash.take() else {
+                return;
+            };
+            self.restore_composer_state(stash.composer);
+            return;
+        }
+
+        let composer = self.current_composer_state();
+        if !composer.has_content() {
+            return;
+        }
+        self.prompt_stash = Some(PromptStash {
+            composer,
+            restore: PromptStashRestore::ManualOnly,
+        });
+        self.restore_composer_state(ThreadComposerState::default());
+    }
+
+    pub(super) fn arm_prompt_stash_for_live_completion(&mut self) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.restore = PromptStashRestore::OnIdleLiveCompletion;
+        }
+    }
+
+    pub(super) fn restore_prompt_stash_on_idle_live_completion(&mut self) {
+        if !self.bottom_pane.composer_is_empty()
+            || !self.prompt_stash.as_ref().is_some_and(|stash| {
+                stash.restore == PromptStashRestore::OnIdleLiveCompletion
+            })
+        {
+            return;
+        }
+        let Some(stash) = self.prompt_stash.take() else {
+            return;
+        };
+        self.restore_composer_state(stash.composer);
+    }
+
     pub(super) fn record_cancel_edit_candidate(&mut self, prompt: UserMessage) {
         self.cancel_edit.prompt = Some(prompt);
         self.cancel_edit.eligible = true;
@@ -306,6 +349,7 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
             pending_pastes,
+            cursor,
         } = composer;
         let local_image_paths = local_images.into_iter().map(|img| img.path).collect();
         self.set_remote_image_urls(remote_image_urls);
@@ -316,6 +360,7 @@ impl ChatWidget {
             mention_bindings,
         );
         self.bottom_pane.set_composer_pending_pastes(pending_pastes);
+        self.bottom_pane.set_composer_cursor(cursor);
     }
 
     fn composer_state_from_user_message(
@@ -329,6 +374,7 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
         } = user_message;
+        let cursor = text.len();
         ThreadComposerState {
             text,
             local_images,
@@ -336,21 +382,28 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
             pending_pastes,
+            cursor,
         }
     }
 
-    pub(crate) fn capture_thread_input_state(&self) -> Option<ThreadInputState> {
+    fn current_composer_state(&self) -> ThreadComposerState {
         let draft = self.bottom_pane.composer_draft_snapshot();
-        let composer = ThreadComposerState {
+        ThreadComposerState {
             text: draft.text,
             text_elements: draft.text_elements,
             local_images: draft.local_images,
             remote_image_urls: draft.remote_image_urls,
             mention_bindings: draft.mention_bindings,
             pending_pastes: draft.pending_pastes,
-        };
+            cursor: draft.cursor,
+        }
+    }
+
+    pub(crate) fn capture_thread_input_state(&self) -> Option<ThreadInputState> {
+        let composer = self.current_composer_state();
         Some(ThreadInputState {
             composer: composer.has_content().then_some(composer),
+            prompt_stash: self.prompt_stash.clone(),
             pending_steers: self
                 .input_queue
                 .pending_steers
@@ -387,6 +440,7 @@ impl ChatWidget {
     pub(crate) fn restore_thread_input_state(&mut self, input_state: Option<ThreadInputState>) {
         let restored_task_running = input_state.as_ref().is_some_and(|state| state.task_running);
         if let Some(input_state) = input_state {
+            self.prompt_stash = input_state.prompt_stash;
             self.current_collaboration_mode = input_state.current_collaboration_mode;
             self.active_collaboration_mask = input_state.active_collaboration_mask;
             self.turn_lifecycle
@@ -432,6 +486,7 @@ impl ChatWidget {
                 UserMessageHistoryRecord::UserMessageText,
             );
         } else {
+            self.prompt_stash = None;
             self.turn_lifecycle
                 .restore_running(/*running*/ false, Instant::now());
             self.input_queue.clear();

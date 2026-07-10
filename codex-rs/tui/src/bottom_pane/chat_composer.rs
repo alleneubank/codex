@@ -422,7 +422,7 @@ struct ComposerDraft {
     cursor: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComposerDraftSnapshot {
     pub(crate) text: String,
     pub(crate) text_elements: Vec<TextElement>,
@@ -430,6 +430,7 @@ pub(crate) struct ComposerDraftSnapshot {
     pub(crate) remote_image_urls: Vec<String>,
     pub(crate) mention_bindings: Vec<MentionBinding>,
     pub(crate) pending_pastes: Vec<(String, String)>,
+    pub(crate) cursor: usize,
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
@@ -1471,7 +1472,13 @@ impl ChatComposer {
             remote_image_urls: self.remote_image_urls(),
             mention_bindings: self.mention_bindings(),
             pending_pastes: self.pending_pastes(),
+            cursor: self.current_cursor(),
         }
+    }
+
+    pub(crate) fn set_cursor(&mut self, cursor: usize) {
+        self.set_current_cursor(cursor);
+        self.sync_popups();
     }
 
     #[cfg(test)]

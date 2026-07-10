@@ -106,6 +106,14 @@ impl ChatWidget {
         }
 
         if key_event.kind == KeyEventKind::Press
+            && self.chat_keymap.stash_prompt.is_pressed(key_event)
+            && !self.bottom_pane.composer_history_search_active()
+        {
+            self.toggle_prompt_stash();
+            return;
+        }
+
+        if key_event.kind == KeyEventKind::Press
             && self.chat_keymap.edit_queued_message.is_pressed(key_event)
             && self.has_queued_follow_up_messages()
             && self.bottom_pane.no_modal_or_popup_active()

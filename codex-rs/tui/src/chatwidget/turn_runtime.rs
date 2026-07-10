@@ -208,6 +208,9 @@ impl ChatWidget {
             .current_goal_status
             .as_ref()
             .is_some_and(GoalStatusState::is_active);
+        if !from_replay && !follow_up_started && !active_goal_continuing {
+            self.restore_prompt_stash_on_idle_live_completion();
+        }
         // Emit a notification when the agent is truly waiting for the user.
         // Queued follow-up input and active goal continuation both start the
         // next turn immediately, so notifying at that boundary would feel like

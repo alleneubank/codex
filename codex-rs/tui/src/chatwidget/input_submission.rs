@@ -354,6 +354,7 @@ impl ChatWidget {
         if !self.submit_op(op.clone()) {
             return (false, None);
         }
+        self.arm_prompt_stash_for_live_completion();
         if render_in_history {
             self.input_queue.user_turn_pending_start = true;
         }

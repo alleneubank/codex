@@ -1053,6 +1053,7 @@ async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
 
     chat.restore_thread_input_state(Some(ThreadInputState {
         composer: None,
+        prompt_stash: None,
         pending_steers: VecDeque::new(),
         pending_steer_history_records: VecDeque::new(),
         pending_steer_compare_keys: VecDeque::new(),
