@@ -56,8 +56,7 @@ async fn prompt_stash_round_trip_preserves_rich_draft_and_cursor() {
         vec![local_image],
         mention_bindings,
     );
-    chat.bottom_pane
-        .set_composer_pending_pastes(pending_pastes);
+    chat.bottom_pane.set_composer_pending_pastes(pending_pastes);
     chat.bottom_pane.set_composer_cursor(/*cursor*/ 3);
     let expected = chat.bottom_pane.composer_draft_snapshot();
 
@@ -117,9 +116,7 @@ async fn unrelated_running_turn_does_not_restore_new_stash() {
     press_stash(&mut chat);
 
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert!(chat.bottom_pane.composer_is_empty());
 
@@ -137,16 +134,12 @@ async fn replayed_completion_does_not_restore_armed_stash() {
     let _ = next_submit_op(&mut op_rx);
 
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ true,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ true,
     );
     assert!(chat.bottom_pane.composer_is_empty());
 
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert_eq!(chat.bottom_pane.composer_text(), "original draft");
 }
@@ -195,17 +188,13 @@ async fn active_goal_defers_automatic_stash_restore() {
     ));
 
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert!(chat.bottom_pane.composer_is_empty());
 
     chat.current_goal_status = None;
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert_eq!(chat.bottom_pane.composer_text(), "original draft");
 }
@@ -219,9 +208,7 @@ async fn local_shell_submission_does_not_arm_prompt_stash() {
 
     chat.submit_user_message(UserMessage::from("!pwd"));
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert!(chat.bottom_pane.composer_is_empty());
 
@@ -239,9 +226,7 @@ async fn rejected_model_submission_does_not_arm_prompt_stash() {
 
     chat.submit_user_message(UserMessage::from("rejected question"));
     chat.on_task_complete(
-        /*last_agent_message*/ None,
-        /*duration_ms*/ None,
-        /*from_replay*/ false,
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
     assert!(chat.bottom_pane.composer_is_empty());
 

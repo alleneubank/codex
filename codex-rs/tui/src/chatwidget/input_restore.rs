@@ -37,9 +37,10 @@ impl ChatWidget {
 
     pub(super) fn restore_prompt_stash_on_idle_live_completion(&mut self) {
         if !self.bottom_pane.composer_is_empty()
-            || !self.prompt_stash.as_ref().is_some_and(|stash| {
-                stash.restore == PromptStashRestore::OnIdleLiveCompletion
-            })
+            || !self
+                .prompt_stash
+                .as_ref()
+                .is_some_and(|stash| stash.restore == PromptStashRestore::OnIdleLiveCompletion)
         {
             return;
         }
