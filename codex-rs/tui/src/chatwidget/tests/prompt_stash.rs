@@ -206,6 +206,19 @@ async fn in_progress_thread_snapshot_binds_awaiting_stash_to_replayed_turn() {
 }
 
 #[tokio::test]
+async fn restoring_missing_thread_input_clears_previous_thread_stash() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    stash(&mut chat);
+
+    chat.restore_thread_input_state(/*input_state*/ None);
+
+    assert!(chat.prompt_stash.is_none());
+    assert!(chat.bottom_pane.composer_is_empty());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert!(chat.bottom_pane.composer_is_empty());
+}
+
+#[tokio::test]
 async fn live_steers_keep_stash_bound_to_the_running_turn() {
     for created in [false, true] {
         let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
