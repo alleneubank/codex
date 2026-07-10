@@ -522,39 +522,3 @@ impl ChatWidget {
         });
     }
 }
-
-#[cfg(test)]
-#[tokio::test]
-async fn plain_character_stash_remap_flushes_active_paste_burst_before_snapshot() {
-    use super::tests::make_chatwidget_manual_with_sender;
-    use pretty_assertions::assert_eq;
-
-    let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
-    chat.chat_keymap.stash_prompt = vec![key_hint::plain(KeyCode::Char('z'))];
-    chat.bottom_pane
-        .set_composer_text("visible prefix ".to_string(), Vec::new(), Vec::new());
-    for ch in "buffered suffix".chars() {
-        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-    }
-    assert!(chat.bottom_pane.is_in_paste_burst());
-    assert_eq!(chat.bottom_pane.composer_text(), "visible prefix ");
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
-
-    assert!(!chat.bottom_pane.is_in_paste_burst());
-    assert!(chat.bottom_pane.composer_is_empty());
-    assert_eq!(
-        chat.prompt_stash
-            .as_ref()
-            .expect("prompt should be stashed")
-            .composer
-            .text,
-        "visible prefix buffered suffix"
-    );
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
-    assert_eq!(
-        chat.bottom_pane.composer_text(),
-        "visible prefix buffered suffix"
-    );
-}

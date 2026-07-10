@@ -1,5 +1,6 @@
 use super::*;
 use crate::bottom_pane::HistoryEntry;
+use crate::key_hint;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use pretty_assertions::assert_eq;
@@ -31,6 +32,21 @@ fn complete_task(chat: &mut ChatWidget, from_replay: bool) {
         /*last_agent_message*/ None,
         /*duration_ms*/ None,
         from_replay,
+    );
+}
+
+fn replay_completed_turn(chat: &mut ChatWidget, turn_id: &str) {
+    chat.handle_server_notification(
+        ServerNotification::TurnCompleted(TurnCompletedNotification {
+            thread_id: chat.thread_id.map(|id| id.to_string()).unwrap_or_default(),
+            turn: app_server_turn(
+                turn_id,
+                AppServerTurnStatus::Completed,
+                /*duration_ms*/ None,
+                /*error*/ None,
+            ),
+        }),
+        Some(ReplayKind::ThreadSnapshot),
     );
 }
 
@@ -123,10 +139,9 @@ async fn unrelated_and_replayed_completions_do_not_restore_the_stash() {
     complete_task(&mut unrelated, /*from_replay*/ false);
     assert_manual_restore(&mut unrelated);
     let (mut replayed, _op_rx) = armed_stash().await;
-    complete_task(&mut replayed, /*from_replay*/ true);
+    replay_completed_turn(&mut replayed, "turn-0");
     assert!(replayed.bottom_pane.composer_is_empty());
-    complete_task(&mut replayed, /*from_replay*/ false);
-    assert_composer_text(&replayed, STASHED_DRAFT);
+    assert_manual_restore(&mut replayed);
 }
 
 #[tokio::test]
@@ -200,12 +215,22 @@ async fn history_search_keeps_ctrl_s_forward_navigation() {
 }
 
 #[tokio::test]
-async fn stash_flushes_paste_burst_for_both_ctrl_s_encodings() {
-    for stash_key in [
-        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
-        KeyEvent::new(KeyCode::Char('\u{0013}'), KeyModifiers::NONE),
+async fn stash_flushes_paste_burst_for_all_key_routes() {
+    for (stash_key, remap) in [
+        (
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            None,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('\u{0013}'), KeyModifiers::NONE),
+            None,
+        ),
+        (KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), Some('z')),
     ] {
         let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
+        if let Some(key) = remap {
+            chat.chat_keymap.stash_prompt = vec![key_hint::plain(KeyCode::Char(key))];
+        }
         set_composer_text(&mut chat, "visible prefix ");
         for ch in "buffered suffix".chars() {
             chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));

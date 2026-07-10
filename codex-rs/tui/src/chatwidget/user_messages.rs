@@ -119,16 +119,27 @@ impl ThreadComposerState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PromptStashRestore {
     ManualOnly,
-    OnIdleLiveCompletion,
+    AwaitingTurnStart,
+    OnIdleCompletion { turn_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PromptStash {
     pub(super) composer: ThreadComposerState,
     pub(super) restore: PromptStashRestore,
+}
+
+impl PromptStash {
+    pub(crate) fn bind_to_started_turn(&mut self, turn_id: &str) {
+        if self.restore == PromptStashRestore::AwaitingTurnStart {
+            self.restore = PromptStashRestore::OnIdleCompletion {
+                turn_id: turn_id.to_string(),
+            };
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +158,14 @@ pub(crate) struct ThreadInputState {
     pub(super) active_collaboration_mask: Option<CollaborationModeMask>,
     pub(super) task_running: bool,
     pub(super) agent_turn_running: bool,
+}
+
+impl ThreadInputState {
+    pub(crate) fn bind_prompt_stash_to_started_turn(&mut self, turn_id: &str) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.bind_to_started_turn(turn_id);
+        }
+    }
 }
 
 impl From<String> for UserMessage {

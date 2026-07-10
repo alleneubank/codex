@@ -29,18 +29,28 @@ impl ChatWidget {
         self.restore_composer_state(ThreadComposerState::default());
     }
 
-    pub(super) fn arm_prompt_stash_for_live_completion(&mut self) {
+    pub(super) fn arm_prompt_stash_for_turn(&mut self) {
         if let Some(stash) = self.prompt_stash.as_mut() {
-            stash.restore = PromptStashRestore::OnIdleLiveCompletion;
+            stash.restore = PromptStashRestore::AwaitingTurnStart;
         }
     }
 
-    pub(super) fn restore_prompt_stash_on_idle_live_completion(&mut self) {
+    pub(super) fn bind_prompt_stash_to_started_turn(&mut self, turn_id: &str) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.bind_to_started_turn(turn_id);
+        }
+    }
+
+    pub(super) fn restore_prompt_stash_on_idle_completion(&mut self, turn_id: &str) {
         if !self.bottom_pane.composer_is_empty()
             || !self
                 .prompt_stash
                 .as_ref()
-                .is_some_and(|stash| stash.restore == PromptStashRestore::OnIdleLiveCompletion)
+                .is_some_and(|stash| matches!(
+                    &stash.restore,
+                    PromptStashRestore::OnIdleCompletion { turn_id: armed_turn_id }
+                        if armed_turn_id == turn_id
+                ))
         {
             return;
         }
