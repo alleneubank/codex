@@ -207,3 +207,23 @@ async fn live_steers_keep_stash_bound_to_the_running_turn() {
     );
     assert_eq!(created_during_turn.bottom_pane.composer_text(), DRAFT);
 }
+
+#[tokio::test]
+async fn buffered_input_prevents_automatic_stash_restoration() {
+    let (mut chat, _op_rx) = armed_stash().await;
+    for ch in "new draft".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(chat.bottom_pane.is_in_paste_burst());
+
+    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
+    assert!(
+        chat.prompt_stash.is_some(),
+        "stash remains available manually"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(chat.bottom_pane.composer_text(), "new draft");
+    set_text(&mut chat, "");
+    restore(&mut chat, "buffered draft non-overwrite");
+}

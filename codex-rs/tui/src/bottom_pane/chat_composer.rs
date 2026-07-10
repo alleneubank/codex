@@ -825,7 +825,10 @@ impl ChatComposer {
     }
     /// Returns true if the composer currently contains no user-entered input.
     pub(crate) fn is_empty(&self) -> bool {
-        self.draft.textarea.is_empty() && !self.draft.is_bash_mode && self.attachments.is_empty()
+        self.draft.textarea.is_empty()
+            && !self.draft.is_bash_mode
+            && self.attachments.is_empty()
+            && !self.draft.paste_burst.is_active()
     }
 
     /// Record local persistent-history metadata so the composer can navigate
