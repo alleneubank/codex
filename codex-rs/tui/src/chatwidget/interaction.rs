@@ -109,6 +109,13 @@ impl ChatWidget {
             && self.chat_keymap.stash_prompt.is_pressed(key_event)
             && !self.bottom_pane.composer_history_search_active()
         {
+            // The stash shortcut bypasses normal composer routing, so explicitly
+            // route it while a non-bracketed paste is active. The composer flushes
+            // buffered text before handling a modified key, keeping the snapshot
+            // and paste-burst state atomic.
+            if self.bottom_pane.is_in_paste_burst() {
+                let _ = self.bottom_pane.handle_key_event(key_event);
+            }
             self.toggle_prompt_stash();
             return;
         }
@@ -512,4 +519,39 @@ impl ChatWidget {
             status: AppThreadGoalStatus::Paused,
         });
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn stash_shortcut_flushes_active_paste_burst_before_snapshot() {
+    use super::tests::make_chatwidget_manual_with_sender;
+    use pretty_assertions::assert_eq;
+
+    let (mut chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
+    chat.bottom_pane
+        .set_composer_text("visible prefix ".to_string(), Vec::new(), Vec::new());
+    for ch in "buffered suffix".chars() {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(chat.bottom_pane.is_in_paste_burst());
+    assert_eq!(chat.bottom_pane.composer_text(), "visible prefix ");
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+    assert!(!chat.bottom_pane.is_in_paste_burst());
+    assert!(chat.bottom_pane.composer_is_empty());
+    assert_eq!(
+        chat.prompt_stash
+            .as_ref()
+            .expect("prompt should be stashed")
+            .composer
+            .text,
+        "visible prefix buffered suffix"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(
+        chat.bottom_pane.composer_text(),
+        "visible prefix buffered suffix"
+    );
 }
