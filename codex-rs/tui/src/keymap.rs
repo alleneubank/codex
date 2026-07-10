@@ -753,9 +753,15 @@ impl RuntimeKeymap {
             cancel: resolve_local!(keymap, defaults, vim_text_object, cancel),
         };
 
-        // Reasoning arrow aliases are fallback defaults: existing explicit
+        // Stash and reasoning aliases are fallback defaults: existing explicit
         // bindings on the same input path keep the keys, while explicit
-        // reasoning bindings remain authoritative.
+        // bindings for these actions remain authoritative.
+        if keymap.chat.stash_prompt.is_none()
+            && configured_main_surface_alias_is_used(keymap, "ctrl-s")
+        {
+            chat.stash_prompt
+                .retain(|binding| *binding != key_hint::ctrl(KeyCode::Char('s')));
+        }
         if keymap.chat.decrease_reasoning_effort.is_none()
             && configured_main_surface_alias_is_used(keymap, "shift-down")
         {
@@ -2903,6 +2909,31 @@ mod tests {
 
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
 
+        assert!(runtime.chat.stash_prompt.is_empty());
+    }
+
+    #[test]
+    fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
+        let mut keymap = TuiKeymap::default();
+        keymap.editor.move_left = Some(one("ctrl-s"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("editor binding should parse");
+
+        assert_eq!(
+            runtime.editor.move_left,
+            vec![key_hint::ctrl(KeyCode::Char('s'))]
+        );
+        assert!(runtime.chat.stash_prompt.is_empty());
+
+        let mut keymap = TuiKeymap::default();
+        keymap.vim_normal.move_left = Some(one("ctrl-s"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("vim binding should parse");
+
+        assert_eq!(
+            runtime.vim_normal.move_left,
+            vec![key_hint::ctrl(KeyCode::Char('s'))]
+        );
         assert!(runtime.chat.stash_prompt.is_empty());
     }
 
