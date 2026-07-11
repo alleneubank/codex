@@ -2,11 +2,11 @@
 source: tui/src/keymap_setup.rs
 expression: snapshot
 ---
-tab: All (109 selectable)
-tab: Common (21 selectable)
+tab: All (110 selectable)
+tab: Common (22 selectable)
 tab: Customized (0) (0 selectable)
 tab: Unbound (2) (2 selectable)
-tab: App (11 selectable)
+tab: App (12 selectable)
 tab: Composer (5 selectable)
 tab: Editor (17 selectable)
 tab: Vim (48 selectable)
@@ -24,4 +24,4 @@ Interrupt Turn | esc | Chat interrupt_turn Interrupt Turn Interrupt the active t
 Decrease Reasoning Effort | alt-,, shift-down | Chat decrease_reasoning_effort Decrease Reasoning Effort Decrease reasoning effort. alt-,, shift-down Default
 Increase Reasoning Effort | alt-., shift-up | Chat increase_reasoning_effort Increase Reasoning Effort Increase reasoning effort. alt-., shift-up Default
 Edit Queued Message | alt-up, shift-left | Chat edit_queued_message Edit Queued Message Edit the most recently queued message. alt-up, shift-left Default
-Submit | enter | Composer submit Submit Submit the current composer draft. enter Default
+Stash Prompt | ctrl-s | Chat stash_prompt Stash Prompt Temporarily stash or restore the current draft. ctrl-s Default
