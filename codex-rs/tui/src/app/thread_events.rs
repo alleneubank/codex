@@ -139,6 +139,9 @@ impl ThreadEventStore {
         match notification.as_ref() {
             ServerNotification::TurnStarted(turn) => {
                 self.set_active_turn_id(turn.turn.id.clone());
+                if let Some(input_state) = self.input_state.as_mut() {
+                    input_state.bind_prompt_stash_to_started_turn(&turn.turn.id);
+                }
             }
             ServerNotification::TurnCompleted(turn) => {
                 if self.active_turn_id.is_none() {

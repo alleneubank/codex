@@ -52,6 +52,9 @@ impl ChatWidget {
             } = turn;
             if matches!(status, TurnStatus::InProgress) {
                 self.warning_display_state.startup_complete = true;
+                if replay_kind == ReplayKind::ThreadSnapshot {
+                    self.bind_prompt_stash_to_started_turn(&turn_id);
+                }
                 self.turn_lifecycle.last_turn_id = Some(turn_id.clone());
                 self.last_non_retry_error = None;
                 self.on_task_started();

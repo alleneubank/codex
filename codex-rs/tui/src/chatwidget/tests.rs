@@ -263,6 +263,7 @@ mod popups_and_settings;
 mod rate_limit_recovery_tests;
 #[path = "tests/replay_render_tests.rs"]
 mod replay_render_tests;
+mod prompt_stash;
 mod review_mode;
 mod side;
 mod slash_commands;

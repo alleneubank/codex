@@ -1761,6 +1761,7 @@ async fn restore_thread_input_state_applies_running_state_policy() {
             ..Default::default()
         }),
         safety_buffering_prompt: Some(UserMessage::from("buffered prompt")),
+        prompt_stash: None,
         pending_steers: VecDeque::from([PendingSteer {
             history_record: pending_history.clone(),
             ..pending_steer("submitted to the interrupted turn")
