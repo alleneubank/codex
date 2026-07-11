@@ -41,6 +41,14 @@ mod model_info_overrides_tests;
 const DEFAULT_HTTP_CLIENT_FACTORY: HttpClientFactory =
     HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault);
 
+#[test]
+fn model_catalog_uses_pinned_product_version() {
+    assert_eq!(
+        crate::client_version_to_whole(),
+        include_str!("../../fork-version.txt").trim()
+    );
+}
+
 fn remote_model(slug: &str, display: &str, priority: i32) -> ModelInfo {
     remote_model_with_visibility(slug, display, priority, "list")
 }

@@ -150,10 +150,16 @@ pub fn is_first_party_chat_originator(originator_value: &str) -> bool {
 }
 
 pub fn get_codex_user_agent() -> String {
-    // OS discovery can spawn subprocesses on Linux. Reuse it across requests,
-    // while continuing to read the mutable originator and suffix below.
+    get_codex_user_agent_with_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// Builds the Codex user agent with a caller-supplied product version.
+///
+/// Most callers should use [`get_codex_user_agent`]. Process hosts that intentionally keep Cargo's
+/// source-build sentinel can supply their separately embedded product SemVer here.
+pub fn get_codex_user_agent_with_version(build_version: &str) -> String {
+    // OS discovery may spawn subprocesses; share it while reading originator per request.
     static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
-    let build_version = env!("CARGO_PKG_VERSION");
     let os_info = &*OS_INFO;
     let originator = originator();
     let prefix = format!(
