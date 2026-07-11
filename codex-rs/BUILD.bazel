@@ -3,6 +3,7 @@ load("//bazel/rules:runtime_package.bzl", "runtime_archive")
 
 exports_files([
     "clippy.toml",
+    "fork-version.txt",
 ])
 
 filegroup(
