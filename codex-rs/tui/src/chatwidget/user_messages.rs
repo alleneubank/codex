@@ -107,6 +107,7 @@ pub(super) struct ThreadComposerState {
     pub(super) text_elements: Vec<TextElement>,
     pub(super) mention_bindings: Vec<MentionBinding>,
     pub(super) pending_pastes: Vec<(String, String)>,
+    pub(super) cursor: usize,
 }
 
 impl ThreadComposerState {
@@ -120,10 +121,32 @@ impl ThreadComposerState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PromptStashRestore {
+    ManualOnly,
+    AwaitingTurnStart,
+    OnIdleCompletion(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PromptStash {
+    pub(super) composer: ThreadComposerState,
+    pub(super) restore: PromptStashRestore,
+}
+
+impl PromptStash {
+    pub(crate) fn bind_to_started_turn(&mut self, turn_id: &str) {
+        if self.restore == PromptStashRestore::AwaitingTurnStart {
+            self.restore = PromptStashRestore::OnIdleCompletion(turn_id.to_string());
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadInputState {
     pub(super) composer: Option<ThreadComposerState>,
     pub(super) safety_buffering_prompt: Option<UserMessage>,
+    pub(super) prompt_stash: Option<PromptStash>,
     pub(super) pending_steers: VecDeque<UserMessage>,
     pub(super) pending_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     pub(super) pending_steer_compare_keys: VecDeque<PendingSteerCompareKey>,
@@ -142,6 +165,14 @@ pub(crate) struct ThreadInputState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ThreadInputStateRestoreMode {
     pub(crate) preserve_in_flight_turn: bool,
+}
+
+impl ThreadInputState {
+    pub(crate) fn bind_prompt_stash_to_started_turn(&mut self, turn_id: &str) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.bind_to_started_turn(turn_id);
+        }
+    }
 }
 
 impl From<String> for UserMessage {
