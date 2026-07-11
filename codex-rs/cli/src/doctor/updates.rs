@@ -11,8 +11,10 @@ use std::path::Path;
 use codex_core::config::Config;
 use codex_install_context::InstallContext;
 use codex_install_context::InstallMethod;
+use semver::Version;
 use serde::Deserialize;
 
+use super::CODEX_VERSION;
 use super::CheckStatus;
 use super::DoctorCheck;
 use super::NpmRootCheck;
@@ -88,7 +90,7 @@ pub(super) fn updates_check(config: &Config) -> DoctorCheck {
     match fetch_latest_version(&install_context) {
         Ok(latest_version) => {
             details.push(format!("latest version: {latest_version}"));
-            if is_newer(&latest_version, env!("CARGO_PKG_VERSION")) == Some(true) {
+            if is_newer(&latest_version, CODEX_VERSION) == Some(true) {
                 details.push("latest version status: newer version is available".to_string());
             } else {
                 details.push("latest version status: current version is not older".to_string());
@@ -183,17 +185,13 @@ where
 
 fn is_newer(latest: &str, current: &str) -> Option<bool> {
     match (parse_version(latest), parse_version(current)) {
-        (Some(latest), Some(current)) => Some(latest > current),
+        (Some(latest), Some(current)) => Some(latest.cmp_precedence(&current).is_gt()),
         (Some(_), None) | (None, Some(_)) | (None, None) => None,
     }
 }
 
-fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = value.trim().split('.');
-    let major = parts.next()?.parse::<u64>().ok()?;
-    let minor = parts.next()?.parse::<u64>().ok()?;
-    let patch = parts.next()?.parse::<u64>().ok()?;
-    Some((major, minor, patch))
+fn parse_version(value: &str) -> Option<Version> {
+    Version::parse(value.trim()).ok()
 }
 
 #[derive(Deserialize)]
@@ -213,7 +211,12 @@ mod tests {
     fn is_newer_compares_plain_semver() {
         assert_eq!(is_newer("1.2.4", "1.2.3"), Some(true));
         assert_eq!(is_newer("1.2.3", "1.2.4"), Some(false));
-        assert_eq!(is_newer("1.2.3-beta.1", "1.2.2"), None);
+        assert_eq!(is_newer("1.2.3-beta.1", "1.2.2"), Some(true));
+        assert_eq!(
+            is_newer("0.144.0", "0.144.0+fork.abcdef123456"),
+            Some(false)
+        );
+        assert_eq!(is_newer("0.144.1", "0.144.0+fork.abcdef123456"), Some(true));
     }
 
     #[test]
