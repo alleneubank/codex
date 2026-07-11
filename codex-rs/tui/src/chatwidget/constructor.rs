@@ -272,6 +272,7 @@ impl ChatWidget {
             thread_stream_disconnected: false,
             safety_buffering_prompt: None,
             safety_buffering_source: UserMessageSource::Prompt,
+            prompt_stash: None,
             chat_keymap,
             permission_shortcut_pending: false,
             show_welcome_banner: is_first_run,
