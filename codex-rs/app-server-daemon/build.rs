@@ -1,6 +1,3 @@
-#[path = "src/build_version.rs"]
-mod build_version;
-
 fn main() {
     let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
         Some(manifest_dir) => manifest_dir,
@@ -24,19 +21,16 @@ fn main() {
         version_path.display()
     );
 
-    // Keep the comparable upstream version separate from fork provenance. Source archives without
-    // Git metadata honestly fall back to the pinned SemVer instead of inventing a revision.
     let revision = git_output(&["rev-parse", "--short=12", "HEAD"]);
-    let version = build_version::format_cli_version(&semver.to_string(), revision.as_deref());
+    let version = revision.map_or_else(
+        || semver.to_string(),
+        |revision| format!("{semver}+fork.{revision}"),
+    );
     println!("cargo:rustc-env=CODEX_CLI_VERSION={version}");
     println!("cargo:rerun-if-changed=build.rs");
     track_git_path("HEAD");
     if let Some(head_ref) = git_output(&["symbolic-ref", "-q", "HEAD"]) {
         track_git_path(&head_ref);
-    }
-
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        println!("cargo:rustc-link-arg=-ObjC");
     }
 }
 
