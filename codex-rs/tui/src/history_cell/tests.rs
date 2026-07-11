@@ -9,6 +9,7 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::line_truncation::line_width;
 use crate::render::highlight::MAX_HIGHLIGHT_LINE_BYTES;
 use crate::session_state::ThreadSessionState;
+use crate::test_support::normalize_snapshot_version;
 use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::McpAuthStatus;
@@ -694,7 +695,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
         /*show_fast_status*/ false,
     );
 
-    let rendered = render_transcript(&cell).join("\n");
+    let rendered = normalize_snapshot_version(render_transcript(&cell).join("\n"));
     insta::assert_snapshot!(rendered);
 }
 
@@ -1193,7 +1194,8 @@ fn web_search_history_cell_snapshot() {
 fn standalone_unix_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneUnix));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered =
+        normalize_snapshot_version(render_lines(&cell.display_lines(/*width*/ 110)).join("\n"));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1202,7 +1204,8 @@ fn standalone_unix_update_available_history_cell_snapshot() {
 fn standalone_windows_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneWindows));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered =
+        normalize_snapshot_version(render_lines(&cell.display_lines(/*width*/ 110)).join("\n"));
 
     insta::assert_snapshot!(rendered);
 }
@@ -1211,7 +1214,8 @@ fn standalone_windows_update_available_history_cell_snapshot() {
 fn pnpm_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::PnpmGlobalLatest));
-    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+    let rendered =
+        normalize_snapshot_version(render_lines(&cell.display_lines(/*width*/ 110)).join("\n"));
 
     insta::assert_snapshot!(rendered);
 }
