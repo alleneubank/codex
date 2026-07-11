@@ -75,8 +75,7 @@ enum HistorySearchStatus {
 }
 
 impl ChatComposer {
-    #[cfg(test)]
-    pub(super) fn history_search_active(&self) -> bool {
+    pub(crate) fn history_search_active(&self) -> bool {
         self.history_search.is_some()
     }
 
