@@ -195,6 +195,10 @@ impl ChatWidget {
 
         let had_pending_steers = !self.input_queue.pending_steers.is_empty();
         self.refresh_pending_input_preview();
+        let active_goal_continuing = self
+            .current_goal_status
+            .as_ref()
+            .is_some_and(GoalStatusState::is_active);
 
         if !from_replay && !self.has_queued_follow_up_messages() && !had_pending_steers {
             self.maybe_prompt_plan_implementation();
@@ -207,10 +211,15 @@ impl ChatWidget {
         if !from_replay {
             // Emit a notification only when the live agent is waiting for the user.
             let follow_up_started = self.maybe_send_next_queued_input();
-            let active_goal_continuing = self
-                .current_goal_status
-                .as_ref()
-                .is_some_and(GoalStatusState::is_active);
+            if active_goal_continuing {
+                self.arm_prompt_stash_for_turn(); // The goal runtime's next TurnStarted rebinds it.
+            }
+            if !follow_up_started
+                && !active_goal_continuing
+                && let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone()
+            {
+                self.restore_prompt_stash_on_idle_completion(&turn_id);
+            }
             if !follow_up_started
                 && !active_goal_continuing
                 && !self
@@ -224,6 +233,14 @@ impl ChatWidget {
                 });
             }
             self.maybe_show_pending_rate_limit_prompt();
+        }
+        if from_replay
+            && !active_goal_continuing
+            && !had_pending_steers
+            && !self.has_queued_follow_up_messages()
+            && let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone()
+        {
+            self.restore_prompt_stash_on_idle_completion(&turn_id);
         }
     }
 

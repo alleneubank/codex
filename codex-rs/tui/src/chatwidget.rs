@@ -408,6 +408,8 @@ mod working_directory;
 use self::user_messages::PendingSteer;
 #[cfg(test)]
 use self::user_messages::PendingSteerCompareKey;
+use self::user_messages::PromptStash;
+use self::user_messages::PromptStashRestore;
 use self::user_messages::QueueDrain;
 use self::user_messages::QueuedUserMessage;
 use self::user_messages::ShellEscapePolicy;
@@ -687,6 +689,8 @@ pub(crate) struct ChatWidget {
     input_queue: InputQueueState,
     safety_buffering_prompt: Option<UserMessage>,
     safety_buffering_source: UserMessageSource,
+    /// One rich draft kept aside for an intervening model turn.
+    prompt_stash: Option<PromptStash>,
     /// Main chat-surface bindings resolved from `tui.keymap.chat`.
     chat_keymap: ChatKeymap,
     permission_shortcut_pending: bool,
