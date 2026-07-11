@@ -43,6 +43,10 @@ approvals_reviewer = "auto_review"
 async fn exec_preserves_on_request_for_auto_review_config() -> anyhow::Result<()> {
     let stderr = run_exec_with_auto_review_config(&[]).await?;
     assert!(
+        stderr.contains(concat!("OpenAI Codex v", env!("CODEX_CLI_VERSION"))),
+        "stderr missing release version in banner: {stderr}"
+    );
+    assert!(
         stderr.contains("approval: on-request"),
         "stderr missing preserved auto-review approval mode: {stderr}"
     );
