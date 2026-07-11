@@ -91,6 +91,16 @@ test *args:
 test-github-scripts:
     {{ python }} -m unittest discover -s {{ justfile_directory() }}/.github/scripts -p 'test_*.py'
 
+# Resolve and commit the latest stable upstream SemVer before a fork release.
+[no-cd]
+update-fork-version:
+    bash {{ justfile_directory() }}/.github/scripts/fork-version.sh update
+
+# Fail closed when the committed fork SemVer is not the latest stable upstream release.
+[no-cd]
+check-fork-version:
+    bash {{ justfile_directory() }}/.github/scripts/fork-version.sh check
+
 # Run explicit workspace benchmark targets.
 bench *args:
     cargo bench --workspace --bench '*' {args}
