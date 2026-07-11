@@ -46,6 +46,11 @@ use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
+#[cfg(test)]
+mod build_version;
+#[cfg(test)]
+#[path = "build_version_tests.rs"]
+mod build_version_tests;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;
@@ -93,8 +98,9 @@ use codex_terminal_detection::TerminalName;
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
 #[derive(Debug, Parser)]
 #[clap(
+    name = "codex-cli",
     author,
-    version,
+    version = env!("CODEX_CLI_VERSION"),
     // If a sub‑command is given, ignore requirements of the default args.
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like

@@ -13,6 +13,7 @@ use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::updates;
+use crate::version::CODEX_CLI_VERSION;
 use color_eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -45,8 +46,12 @@ pub(crate) async fn run_update_prompt_if_needed(
         return Ok(UpdatePromptOutcome::Continue);
     };
 
-    let mut screen =
-        UpdatePromptScreen::new(tui.frame_requester(), latest_version.clone(), update_action);
+    let mut screen = UpdatePromptScreen::new(
+        tui.frame_requester(),
+        CODEX_CLI_VERSION.to_string(),
+        latest_version.clone(),
+        update_action,
+    );
     tui.draw(u16::MAX, |frame| {
         frame.render_widget_ref(&screen, frame.area());
     })?;
@@ -104,13 +109,14 @@ struct UpdatePromptScreen {
 impl UpdatePromptScreen {
     fn new(
         request_frame: FrameRequester,
+        current_version: String,
         latest_version: String,
         update_action: UpdateAction,
     ) -> Self {
         Self {
             request_frame,
             latest_version,
-            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            current_version,
             update_action,
             highlighted: UpdateSelection::UpdateNow,
             selection: None,
@@ -253,6 +259,7 @@ mod tests {
     fn new_prompt() -> UpdatePromptScreen {
         UpdatePromptScreen::new(
             FrameRequester::test_dummy(),
+            "0.0.0".into(),
             "9.9.9".into(),
             UpdateAction::NpmGlobalLatest,
         )

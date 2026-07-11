@@ -437,6 +437,33 @@ target_app = "vsce"
     }
 
     #[test]
+    fn announcement_tip_toml_does_not_match_source_build_version_for_fork() {
+        let toml = r#"
+[[announcements]]
+content = "source build announcement"
+version_regex = '^0\.0\.0$'
+target_app = "cli"
+        "#;
+
+        assert_eq!(None, parse_announcement_tip_toml(toml, /*plan*/ None));
+    }
+
+    #[test]
+    fn announcement_tip_toml_matches_metadata_free_fork_semver() {
+        let toml = r#"
+[[announcements]]
+content = "stable version announcement"
+version_regex = '^\d+\.\d+\.\d+$'
+target_app = "cli"
+        "#;
+
+        assert_eq!(
+            Some("stable version announcement".to_string()),
+            parse_announcement_tip_toml(toml, /*plan*/ None)
+        );
+    }
+
+    #[test]
     fn announcement_tip_toml_bad_deserialization() {
         let toml = r#"
 [[announcements]]
@@ -453,7 +480,7 @@ from_date = "2000-01-01"
 # Example announcement tips for Codex TUI.
 # Each [[announcements]] entry is evaluated in order; the last matching one is shown.
 # Dates are UTC, formatted as YYYY-MM-DD. The from_date is inclusive and the to_date is exclusive.
-# version_regex matches against the CLI version (env!("CARGO_PKG_VERSION")); omit to apply to all versions.
+# version_regex matches the embedded CLI SemVer; omit it to apply to all versions.
 # target_app specify which app should display the announcement (cli, vsce, ...).
 # target_plan_types optionally restricts the announcement to plan types like ["plus", "pro"].
 # target_oses optionally restricts the announcement to operating systems like ["macos", "windows"].
