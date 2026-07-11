@@ -6,6 +6,16 @@ use std::num::NonZeroU64;
 use tempfile::tempdir;
 
 #[test]
+fn openai_provider_advertises_pinned_product_version() {
+    let provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None)
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("OpenAI provider should resolve");
+    let pinned_version = include_str!("../../fork-version.txt").trim();
+
+    assert_eq!(provider.headers["version"], pinned_version);
+}
+
+#[test]
 fn runtime_internal_metadata_opt_in_is_not_serialized_or_configurable() {
     let trusted = ModelProviderInfo {
         include_internal_metadata: true,

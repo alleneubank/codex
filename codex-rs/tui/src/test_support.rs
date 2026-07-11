@@ -24,6 +24,22 @@ pub(crate) fn test_path_display(path: &str) -> String {
     test_path_buf(path).display().to_string()
 }
 
+pub(crate) fn normalize_snapshot_version(snapshot: impl AsRef<str>) -> String {
+    let placeholder = crate::version::CODEX_CLI_VERSION
+        .chars()
+        .map(|character| {
+            if character.is_ascii_digit() {
+                'X'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    snapshot
+        .as_ref()
+        .replace(crate::version::CODEX_CLI_VERSION, &placeholder)
+}
+
 pub(crate) fn session_source_cli<T>() -> T
 where
     T: DeserializeOwned,
@@ -70,3 +86,7 @@ macro_rules! boxed_future {
     };
 }
 pub(crate) use boxed_future;
+
+#[cfg(test)]
+#[path = "test_support_tests.rs"]
+mod tests;

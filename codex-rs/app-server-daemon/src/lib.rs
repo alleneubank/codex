@@ -48,6 +48,8 @@ use settings::DaemonSettings;
 use settings::MAX_SHUTDOWN_GRACE_SECONDS;
 use tokio::time::sleep;
 
+const CODEX_CLI_VERSION: &str = env!("CODEX_CLI_VERSION");
+
 const START_POLL_INTERVAL: Duration = Duration::from_millis(50);
 // An older updater can pass background policy to a replacement daemon, so retain
 // the longer readiness allowance during upgrades on macOS. On Linux, a cold
@@ -951,7 +953,7 @@ impl Daemon {
             managed_codex_path: managed.managed_codex_bin,
             managed_codex_version,
             socket_path: self.socket_path.clone(),
-            cli_version: env!("CARGO_PKG_VERSION").to_string(),
+            cli_version: CODEX_CLI_VERSION.to_string(),
             app_server_version: info.app_server_version,
         })
     }
@@ -1180,7 +1182,7 @@ impl Daemon {
             managed_codex_path: self.managed_codex_bin.clone(),
             managed_codex_version,
             socket_path: self.socket_path.clone(),
-            cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            cli_version: Some(CODEX_CLI_VERSION.to_string()),
             app_server_version,
         }
     }
@@ -1197,7 +1199,7 @@ impl Daemon {
             backend,
             remote_control_enabled,
             socket_path: self.socket_path.clone(),
-            cli_version: env!("CARGO_PKG_VERSION").to_string(),
+            cli_version: CODEX_CLI_VERSION.to_string(),
             app_server_version,
         }
     }
@@ -1229,12 +1231,20 @@ fn restart_decision(
         }
         (RestartMode::IfVersionChanged, None, _) => RestartDecision::NotReady,
         (RestartMode::IfVersionChanged, Some(info), Some(managed_version))
-            if info.app_server_version == managed_version =>
+            if version_without_build_metadata(&info.app_server_version)
+                == version_without_build_metadata(managed_version) =>
         {
             RestartDecision::AlreadyCurrent
         }
         _ => RestartDecision::Restart,
     }
+}
+
+#[cfg(any(unix, windows))]
+fn version_without_build_metadata(version: &str) -> &str {
+    version
+        .split_once('+')
+        .map_or(version, |(precedence, _build_metadata)| precedence)
 }
 
 #[cfg(unix)]
@@ -1301,6 +1311,16 @@ mod tests {
                 ),
                 restart_decision(
                     RestartMode::IfVersionChanged,
+                    Some(&current_info),
+                    Some("0.1.0+fork.abcdef123456"),
+                ),
+                restart_decision(
+                    RestartMode::IfVersionChanged,
+                    Some(&current_info),
+                    Some("0.2.0+fork.abcdef123456"),
+                ),
+                restart_decision(
+                    RestartMode::IfVersionChanged,
                     /*info*/ None,
                     /*managed_version*/ None,
                 ),
@@ -1313,6 +1333,8 @@ mod tests {
             ],
             [
                 RestartDecision::AlreadyCurrent,
+                RestartDecision::AlreadyCurrent,
+                RestartDecision::Restart,
                 RestartDecision::NotReady,
                 RestartDecision::Restart,
                 RestartDecision::Restart,

@@ -115,6 +115,7 @@ const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=20
 const WEBSOCKET_IMMEDIATE_CLOSE_GRACE: Duration = Duration::from_millis(250);
 const SLOW_CHECK_PROGRESS_THRESHOLD: Duration = Duration::from_secs(2);
 const SLOW_CHECK_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+const CODEX_VERSION: &str = env!("CODEX_CLI_VERSION");
 const PROXY_ENV_VARS: &[&str] = &[
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -588,7 +589,7 @@ fn report_from_checks(checks: Vec<DoctorCheck>) -> DoctorReport {
         schema_version: 1,
         generated_at: generated_at(),
         overall_status,
-        codex_version: env!("CARGO_PKG_VERSION").to_string(),
+        codex_version: CODEX_VERSION.to_string(),
         checks,
     }
 }
