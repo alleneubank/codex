@@ -1,0 +1,9 @@
+---
+source: tui/src/chatwidget/tests/prompt_stash.rs
+expression: compact
+---
+"            "
+"    stashed "
+"› Ask Codex "
+"            "
+"  custom sta"

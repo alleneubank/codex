@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/prompt_stash.rs
+expression: wide
+---
+"                                                                                "
+"                                                                  draft stashed "
+"› replacement draft that should retain its existing textarea wrapping while     "
+"  stashed                                                                       "
+"                                                                                "
+"  custom status                                                                 "

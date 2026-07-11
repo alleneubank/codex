@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/prompt_stash.rs
+expression: "render_bottom_popup(&prompt, 80)"
+---
+• Working (0s • esc to interrupt)
+
+
+› original draft
+
+  tab to queue message                                       100% context left

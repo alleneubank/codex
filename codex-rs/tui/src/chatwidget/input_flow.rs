@@ -12,7 +12,7 @@ impl ChatWidget {
         input_result: InputResult,
         had_modal_or_popup: bool,
     ) {
-        match input_result {
+        let accepted = match input_result {
             InputResult::Submitted {
                 text,
                 text_elements,
@@ -31,17 +31,17 @@ impl ChatWidget {
                     if self.only_user_shell_commands_running()
                         && !user_message.text.starts_with('!')
                     {
-                        self.queue_user_message(user_message);
-                        return;
+                        self.queue_user_message(user_message)
+                    } else {
+                        // Submitted is emitted when user submits.
+                        // Reset any reasoning header only when we are actually submitting a turn.
+                        self.reasoning_buffer.clear();
+                        self.reasoning_summary_parts.clear();
+                        self.set_status_header(String::from("Working"));
+                        self.submit_user_message(user_message)
                     }
-                    // Submitted is emitted when user submits.
-                    // Reset any reasoning header only when we are actually submitting a turn.
-                    self.reasoning_buffer.clear();
-                    self.reasoning_summary_parts.clear();
-                    self.set_status_header(String::from("Working"));
-                    self.submit_user_message(user_message);
                 } else {
-                    self.queue_user_message(user_message);
+                    self.queue_user_message(user_message)
                 }
             }
             InputResult::Queued {
@@ -51,18 +51,24 @@ impl ChatWidget {
                 pending_pastes,
             } => {
                 let user_message = self.user_message_from_submission(text, text_elements);
-                self.queue_user_message_with_options(user_message, action, pending_pastes);
+                self.queue_user_message_with_options(user_message, action, pending_pastes)
             }
             InputResult::Command(cmd) => {
                 self.handle_slash_command_dispatch(cmd);
+                true
             }
             InputResult::ServiceTierCommand(command) => {
                 self.handle_service_tier_command_dispatch(command);
+                true
             }
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
                 self.handle_slash_command_with_args_dispatch(cmd, args, text_elements);
+                true
             }
-            InputResult::None => {}
+            InputResult::None => false,
+        };
+        if accepted {
+            self.restore_prompt_stash_after_submission();
         }
         if had_modal_or_popup && self.bottom_pane.no_modal_or_popup_active() {
             self.maybe_send_next_queued_input();
@@ -84,8 +90,8 @@ impl ChatWidget {
         }
     }
 
-    pub(super) fn queue_user_message(&mut self, user_message: UserMessage) {
-        self.queue_user_message_with_options(user_message, QueuedInputAction::Plain, Vec::new());
+    pub(super) fn queue_user_message(&mut self, user_message: UserMessage) -> bool {
+        self.queue_user_message_with_options(user_message, QueuedInputAction::Plain, Vec::new())
     }
 
     pub(crate) fn set_queue_submissions_until_session_configured(&mut self, queue: bool) {
@@ -98,7 +104,7 @@ impl ChatWidget {
         user_message: UserMessage,
         action: QueuedInputAction,
         pending_pastes: Vec<(String, String)>,
-    ) {
+    ) -> bool {
         if !self.is_session_configured()
             || self.is_user_turn_pending_or_running()
             || self.input_queue.suppress_queue_autosend
@@ -114,8 +120,9 @@ impl ChatWidget {
                 .queued_user_message_history_records
                 .push_back(UserMessageHistoryRecord::UserMessageText);
             self.refresh_pending_input_preview();
+            true
         } else {
-            self.submit_user_message(user_message);
+            self.submit_user_message(user_message)
         }
     }
 

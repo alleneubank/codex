@@ -836,6 +836,11 @@ impl BottomPane {
         self.composer.draft_snapshot()
     }
 
+    pub(crate) fn set_composer_cursor(&mut self, cursor: usize) {
+        self.composer.set_cursor(cursor);
+        self.request_redraw();
+    }
+
     #[cfg(test)]
     pub(crate) fn composer_text_elements(&self) -> Vec<TextElement> {
         self.composer.text_elements()
@@ -1282,6 +1287,10 @@ impl BottomPane {
 
     pub(crate) fn composer_is_empty(&self) -> bool {
         self.composer.is_empty()
+    }
+
+    pub(crate) fn composer_history_search_active(&self) -> bool {
+        self.composer.history_search_active()
     }
 
     #[cfg(test)]
@@ -1786,6 +1795,12 @@ impl BottomPane {
         padding: u16,
     ) {
         if self.composer.set_custom_status_line(status_line, padding) {
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn set_has_stashed_draft(&mut self, has_stashed_draft: bool) {
+        if self.composer.set_has_stashed_draft(has_stashed_draft) {
             self.request_redraw();
         }
     }

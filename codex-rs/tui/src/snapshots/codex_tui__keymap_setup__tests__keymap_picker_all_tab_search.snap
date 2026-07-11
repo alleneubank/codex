@@ -13,4 +13,4 @@ Interrupt Turn | esc | Chat interrupt_turn Interrupt Turn Interrupt the active t
 Decrease Reasoning Effort | alt-,, shift-down | Chat decrease_reasoning_effort Decrease Reasoning Effort Decrease reasoning effort. alt-,, shift-down Default
 Increase Reasoning Effort | alt-., shift-up | Chat increase_reasoning_effort Increase Reasoning Effort Increase reasoning effort. alt-., shift-up Default
 Edit Queued Message | alt-up, shift-left | Chat edit_queued_message Edit Queued Message Edit the most recently queued message. alt-up, shift-left Default
-Submit | enter | Composer submit Submit Submit the current composer draft. enter Default
+Stash Prompt | ctrl-s | Chat stash_prompt Stash Prompt Temporarily stash or restore the current draft. ctrl-s Default
