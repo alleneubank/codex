@@ -134,6 +134,7 @@ define_keymap_actions! {
         next_permission_mode => "Switch to the next available permission mode.",
         edit_queued_message => "Move forward through questions, then edit the last queued message.",
         prompt_stack_back => "Move back through questions toward the composer.",
+        stash_prompt => "Temporarily stash or restore the current draft.",
         skip_question => "Skip the focused question.",
         toggle_voice => "Start or stop a voice conversation.",
         open_presets => "Run or save reusable inputs.",
