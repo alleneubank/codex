@@ -377,6 +377,7 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         Some(ThreadInputState {
             composer: None,
             safety_buffering_prompt: None,
+            prompt_stash: None,
             pending_steers,
             pending_steer_history_records: VecDeque::new(),
             pending_steer_compare_keys,
