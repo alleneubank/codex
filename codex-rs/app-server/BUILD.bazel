@@ -2,6 +2,10 @@ load("//:defs.bzl", "codex_rust_crate")
 
 codex_rust_crate(
     name = "app-server",
+    build_script_data = ["//codex-rs:fork-version.txt"],
+    build_script_env = {
+        "CODEX_FORK_VERSION_PATH": "$(execpath //codex-rs:fork-version.txt)",
+    },
     crate_name = "codex_app_server",
     extra_binaries = [
         "//codex-rs/bwrap:bwrap",
