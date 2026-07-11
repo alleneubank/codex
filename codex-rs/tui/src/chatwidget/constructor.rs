@@ -227,6 +227,7 @@ impl ChatWidget {
             input_queue: InputQueueState::default(),
             safety_buffering_prompt: None,
             safety_buffering_source: UserMessageSource::Prompt,
+            prompt_stash: None,
             chat_keymap,
             permission_shortcut_pending: false,
             queued_message_edit_hint_binding,

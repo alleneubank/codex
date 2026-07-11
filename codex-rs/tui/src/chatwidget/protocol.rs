@@ -65,18 +65,22 @@ impl ChatWidget {
                 self.on_thread_settings_updated(notification);
             }
             ServerNotification::TurnStarted(notification) => {
+                let turn_id = notification.turn.id;
                 if from_replay {
-                    self.restore_realtime_transcripts_before_turn(&notification.turn.id);
+                    self.restore_realtime_transcripts_before_turn(&turn_id);
                 } else {
-                    self.anchor_realtime_transcripts_before_turn(&notification.turn.id);
+                    self.anchor_realtime_transcripts_before_turn(&turn_id);
                 }
                 if replay_kind.is_none() {
                     self.clear_misalignment_for_new_turn(
-                        &notification.turn.id,
+                        &turn_id,
                         MisalignmentTurnSource::ServerNotification,
                     );
                 }
-                self.turn_lifecycle.last_turn_id = Some(notification.turn.id);
+                if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) {
+                    self.bind_prompt_stash_to_started_turn(&turn_id);
+                }
+                self.turn_lifecycle.last_turn_id = Some(turn_id);
                 self.last_non_retry_error = None;
                 if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) {
                     self.warning_display_state.startup_complete = true;
@@ -386,6 +390,7 @@ impl ChatWidget {
         notification: TurnCompletedNotification,
         replay_kind: Option<ReplayKind>,
     ) {
+        self.turn_lifecycle.last_turn_id = Some(notification.turn.id.clone());
         // User-message dedupe only suppresses the app-server echo of a prompt
         // this TUI already rendered locally. Once that turn ends, another
         // client can submit the same text and it still needs its own user cell.
