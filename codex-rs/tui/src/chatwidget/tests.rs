@@ -256,6 +256,7 @@ mod plugin_catalog;
 mod popups_and_settings;
 #[path = "tests/rate_limit_recovery_tests.rs"]
 mod rate_limit_recovery_tests;
+mod prompt_stash;
 mod review_mode;
 mod side;
 mod slash_commands;
