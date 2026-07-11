@@ -851,7 +851,8 @@ fn restart_decision(
     match (mode, info, managed_version) {
         (RestartMode::IfVersionChanged, None, _) => RestartDecision::NotReady,
         (RestartMode::IfVersionChanged, Some(info), Some(managed_version))
-            if info.app_server_version == managed_version =>
+            if version_without_build_metadata(&info.app_server_version)
+                == version_without_build_metadata(managed_version) =>
         {
             RestartDecision::AlreadyCurrent
         }
@@ -860,6 +861,12 @@ fn restart_decision(
 }
 
 #[cfg(any(unix, windows))]
+fn version_without_build_metadata(version: &str) -> &str {
+    version
+        .split_once('+')
+        .map_or(version, |(precedence, _build_metadata)| precedence)
+}
+
 fn should_reexec_updater(
     updater_refresh_mode: UpdaterRefreshMode,
     outcome: RestartIfRunningOutcome,
@@ -965,6 +972,16 @@ mod tests {
                 ),
                 restart_decision(
                     RestartMode::IfVersionChanged,
+                    Some(&current_info),
+                    Some("0.1.0+fork.abcdef123456"),
+                ),
+                restart_decision(
+                    RestartMode::IfVersionChanged,
+                    Some(&current_info),
+                    Some("0.2.0+fork.abcdef123456"),
+                ),
+                restart_decision(
+                    RestartMode::IfVersionChanged,
                     /*info*/ None,
                     /*managed_version*/ None,
                 ),
@@ -977,6 +994,8 @@ mod tests {
             ],
             [
                 RestartDecision::AlreadyCurrent,
+                RestartDecision::AlreadyCurrent,
+                RestartDecision::Restart,
                 RestartDecision::NotReady,
                 RestartDecision::Restart,
                 RestartDecision::Restart,
