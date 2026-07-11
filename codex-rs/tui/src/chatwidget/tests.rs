@@ -277,6 +277,7 @@ mod plugin_catalog;
 mod popups_and_settings;
 #[path = "tests/program_status.rs"]
 mod program_status;
+mod prompt_stash;
 #[path = "tests/rate_limit_recovery_tests.rs"]
 mod rate_limit_recovery_tests;
 #[path = "tests/reasoning_status_tests.rs"]
