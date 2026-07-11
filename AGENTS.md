@@ -1,3 +1,35 @@
+## Fork release policy
+
+This section exists only in the replaceable fork release commit. Upstreamable
+feature and fix commits stay below it so they remain suitable for upstream PRs.
+
+- Keep exactly one top commit named `ci(release): [fork] build prerelease bundle`.
+  When the dogfood stack changes, move this commit above those changes and amend
+  or replace it; do not accumulate fork release commits.
+- Build and publish only from an authorized Apple Silicon macOS host. The local
+  publisher builds macOS arm64 natively and Linux x64 with OrbStack Docker.
+- Use `bash .github/scripts/fork-release.sh roll` first. It is a dry run and
+  prints the candidate tag and source without mutating anything.
+- After every upstream sync, run `just update-fork-version` to commit the latest
+  stable upstream SemVer. `just check-fork-version` and every release command
+  fail closed when the pin is stale or upstream tags cannot be queried.
+- Use `bash .github/scripts/fork-release.sh roll --run` to build and verify both
+  bundles and create the annotated tag locally.
+- After that build passes and publication is authorized, use
+  `bash .github/scripts/fork-release.sh publish --publish` to verify the existing
+  bundles again and publish without rebuilding. It publishes `origin/fork` with
+  force-with-lease, pushes the tag, and creates the GitHub prerelease. Preserve
+  the `--date` and `--output-dir` values printed by the prepared roll so the
+  publication identity cannot drift across UTC midnight or a custom output path.
+- `bash .github/scripts/fork-release.sh roll --run --publish` remains the
+  one-step path only when publication is authorized before the build starts;
+  do not run it after a successful `roll --run` because that rebuilds both
+  bundles unnecessarily.
+- GitHub Actions verifies the publisher contract and the published bundles. It
+  does not build release artifacts.
+- Never move a published tag or replace its assets. Advance downstream dotfiles
+  pins only after the release verification workflow passes.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
