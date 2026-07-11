@@ -93,7 +93,7 @@ async fn initialize_probe_does_not_override_originator() -> Result<()> {
     };
     let InitializeResponse { user_agent, .. } = to_response::<InitializeResponse>(response)?;
 
-    assert!(user_agent.starts_with("codex_cli_rs/"));
+    assert!(user_agent.starts_with(concat!("codex_cli_rs/", env!("CODEX_SEMVER_VERSION"))));
     Ok(())
 }
 
