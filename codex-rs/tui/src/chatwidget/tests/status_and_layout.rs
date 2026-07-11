@@ -3170,7 +3170,7 @@ fn goal_status_indicator_line_formats_goal_text() {
     }
 }
 
-fn test_thread_goal(
+pub(super) fn test_thread_goal(
     status: codex_app_server_protocol::ThreadGoalStatus,
     token_budget: Option<i64>,
     tokens_used: i64,

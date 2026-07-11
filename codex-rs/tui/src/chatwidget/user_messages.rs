@@ -105,6 +105,7 @@ pub(super) struct ThreadComposerState {
     pub(super) text_elements: Vec<TextElement>,
     pub(super) mention_bindings: Vec<MentionBinding>,
     pub(super) pending_pastes: Vec<(String, String)>,
+    pub(super) cursor: usize,
 }
 
 impl ThreadComposerState {
@@ -119,8 +120,14 @@ impl ThreadComposerState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(super) struct PromptStash {
+    pub(super) composer: ThreadComposerState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadInputState {
     pub(super) composer: Option<ThreadComposerState>,
+    pub(super) prompt_stash: Option<PromptStash>,
     pub(super) pending_steers: VecDeque<UserMessage>,
     pub(super) pending_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     pub(super) pending_steer_compare_keys: VecDeque<PendingSteerCompareKey>,

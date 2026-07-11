@@ -1010,6 +1010,7 @@ mod tests {
             actions,
             vec![
                 "Composer.submit",
+                "Chat.stash_prompt",
                 "Chat.interrupt_turn",
                 "Editor.insert_newline",
                 "Composer.queue",
