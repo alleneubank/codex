@@ -319,9 +319,11 @@ def codex_rust_crate(
     if build_script_enabled and native.glob(["build.rs"], allow_empty = True):
         cargo_build_script(
             name = name + "-build-script",
-            srcs = ["build.rs"],
+            crate_root = "build.rs",
+            srcs = ["build.rs"] + build_script_srcs,
             deps = all_crate_deps(build = True),
             data = build_script_data,
+            build_script_env = build_script_env,
             version = crate_version,
         )
 

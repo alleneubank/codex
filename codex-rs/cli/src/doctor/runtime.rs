@@ -10,6 +10,7 @@ use std::env;
 use codex_install_context::InstallContext;
 use codex_install_context::InstallMethod;
 
+use super::CODEX_VERSION;
 use super::CheckStatus;
 use super::DoctorCheck;
 use super::describe_install_context;
@@ -28,7 +29,7 @@ pub(super) fn runtime_check() -> DoctorCheck {
     let platform = format!("{os}-{arch}");
     let install_method = install_method_name(&install_context);
     let mut details = vec![
-        format!("version: {}", env!("CARGO_PKG_VERSION")),
+        format!("version: {CODEX_VERSION}"),
         format!("platform: {platform}"),
         format!(
             "install method: {}",
@@ -143,3 +144,7 @@ fn build_commit() -> &'static str {
         .or(option_env!("GIT_COMMIT"))
         .unwrap_or("unknown")
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;
