@@ -204,6 +204,9 @@ impl ThreadEventStore {
                 {
                     self.active_reasoning_item = None;
                 }
+                if let Some(input_state) = self.input_state.as_mut() {
+                    input_state.bind_prompt_stash_to_started_turn(&turn.turn.id);
+                }
             }
             ServerNotification::TurnCompleted(turn) => {
                 if self

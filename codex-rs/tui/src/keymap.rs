@@ -148,6 +148,7 @@ pub(crate) struct ChatKeymap {
     pub(crate) prompt_stack_back: Vec<KeyBinding>,
     /// Skip the focused question.
     pub(crate) skip_question: Vec<KeyBinding>,
+    pub(crate) stash_prompt: Vec<KeyBinding>,
 }
 
 impl ChatKeymap {
@@ -800,6 +801,11 @@ impl RuntimeKeymap {
             )?,
             prompt_stack_back: resolve_local!(keymap, defaults, chat, prompt_stack_back),
             skip_question: resolve_local!(keymap, defaults, chat, skip_question),
+            stash_prompt: resolve_bindings(
+                keymap.chat.stash_prompt.as_ref(),
+                &defaults.chat.stash_prompt,
+                "tui.keymap.chat.stash_prompt",
+            )?,
         };
 
         let composer = ComposerKeymap {
@@ -1320,6 +1326,12 @@ impl RuntimeKeymap {
         // Reasoning arrow aliases are fallback defaults: existing explicit
         // bindings on the same input path keep the keys, while explicit
         // reasoning bindings remain authoritative.
+        if keymap.chat.stash_prompt.is_none()
+            && configured_main_surface_alias_is_used(keymap, "ctrl-s")
+        {
+            chat.stash_prompt
+                .retain(|binding| *binding != key_hint::ctrl(KeyCode::Char('s')));
+        }
         if keymap.chat.decrease_reasoning_effort.is_none()
             && configured_main_surface_alias_is_used(keymap, "shift-down")
         {
@@ -1675,6 +1687,7 @@ impl RuntimeKeymap {
                 edit_queued_message: default_bindings![shift(KeyCode::Left), alt(KeyCode::Up)],
                 prompt_stack_back: default_bindings![shift(KeyCode::Right), alt(KeyCode::Down)],
                 skip_question: default_bindings![ctrl(KeyCode::Char(']'))],
+                stash_prompt: default_bindings![ctrl(KeyCode::Char('s'))],
             },
             composer: ComposerKeymap {
                 submit: default_bindings![plain(KeyCode::Enter)],
@@ -2049,6 +2062,7 @@ impl RuntimeKeymap {
                 self.chat.prompt_stack_back.as_slice(),
             ),
             ("chat.skip_question", self.chat.skip_question.as_slice()),
+            ("chat.stash_prompt", self.chat.stash_prompt.as_slice()),
             ("composer.submit", self.composer.submit.as_slice()),
             ("composer.queue", self.composer.queue.as_slice()),
             (
@@ -2206,6 +2220,7 @@ impl RuntimeKeymap {
                     self.chat.prompt_stack_back.as_slice(),
                 ),
                 ("chat.skip_question", self.chat.skip_question.as_slice()),
+                ("chat.stash_prompt", self.chat.stash_prompt.as_slice()),
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
@@ -2376,6 +2391,13 @@ fn validate_unique<'a>(
         for binding in bindings {
             let key = binding.normalized_parts();
             if let Some(previous) = seen.insert(key, action) {
+                if matches!(
+                    (previous, action),
+                    ("chat.stash_prompt", "composer.history_search_next")
+                        | ("composer.history_search_next", "chat.stash_prompt")
+                ) {
+                    continue;
+                }
                 return Err(format!(
                     "Ambiguous `tui.keymap.{context}` bindings: `{previous}` and `{action}` use the same key. \
 Set unique keys in `~/.codex/config.toml` and retry. \
@@ -2945,6 +2967,10 @@ mod tests {
         assert_eq!(
             runtime.chat.edit_queued_message,
             vec![key_hint::shift(KeyCode::Left), key_hint::alt(KeyCode::Up)]
+        );
+        assert_eq!(
+            runtime.chat.stash_prompt,
+            runtime.composer.history_search_next
         );
         assert_eq!(
             runtime.composer.history_search_previous,
@@ -3943,6 +3969,32 @@ mod tests {
         keymap.composer.toggle_shortcuts = Some(KeybindingsSpec::Many(vec![]));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.composer.toggle_shortcuts.is_empty());
+    }
+
+    #[test]
+    fn stash_prompt_supports_remap_unbind_and_contextual_overlap() {
+        let mut keymap = TuiKeymap::default();
+        let f12 = vec![key_hint::plain(KeyCode::F(12))];
+        keymap.chat.stash_prompt = Some(one("f12"));
+        keymap.composer.history_search_next = Some(one("f12"));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        assert_eq!(runtime.chat.stash_prompt, f12);
+        assert_eq!(runtime.composer.history_search_next, f12);
+        keymap.chat.stash_prompt = Some(KeybindingsSpec::Many(Vec::new()));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        assert!(runtime.chat.stash_prompt.is_empty());
+    }
+
+    #[test]
+    fn configured_main_surface_bindings_prune_stash_prompt_fallback_alias() {
+        let mut keymap = TuiKeymap::default();
+        keymap.editor.move_left = Some(one("ctrl-s"));
+        keymap.vim_normal.move_left = Some(one("ctrl-s"));
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+        let expected = vec![key_hint::ctrl(KeyCode::Char('s'))];
+        assert_eq!(runtime.editor.move_left, expected);
+        assert_eq!(runtime.vim_normal.move_left, expected);
+        assert!(runtime.chat.stash_prompt.is_empty());
     }
 
     #[test]
