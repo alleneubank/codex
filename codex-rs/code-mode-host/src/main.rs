@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
+use clap::ArgAction;
 use clap::Parser;
 use codex_otel::OtelExporter;
 use codex_otel::OtelHttpProtocol;
@@ -17,6 +18,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 const OTEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
 
 #[derive(Debug, Parser)]
+#[command(disable_version_flag = true)]
 struct Cli {
     #[arg(
         long,
@@ -41,6 +43,10 @@ struct Cli {
     /// `otel.trace_exporter` in app-server configuration.
     #[arg(long, value_name = "URL", conflicts_with = "otel_trace_listen")]
     otel_trace_exporter: Option<String>,
+
+    /// Print version information and exit.
+    #[arg(short = 'V', long = "version", action = ArgAction::SetTrue)]
+    version: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -96,6 +102,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.version {
+        println!("{}", env!("CODEX_CLI_VERSION"));
+        return Ok(());
+    }
     if cli.codex_ui_plugin_process {
         return codex_code_mode_runtime::run_ui_sandbox().map_err(Into::into);
     }

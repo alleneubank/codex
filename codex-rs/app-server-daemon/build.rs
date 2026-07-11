@@ -1,0 +1,52 @@
+fn main() {
+    let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
+        Some(manifest_dir) => manifest_dir,
+        None => panic!("CARGO_MANIFEST_DIR must be set for build scripts"),
+    };
+    let version_path = std::env::var_os("CODEX_FORK_VERSION_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(manifest_dir).join("../fork-version.txt"));
+    println!("cargo:rerun-if-changed={}", version_path.display());
+    let semver = std::fs::read_to_string(&version_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", version_path.display()));
+    let semver = semver::Version::parse(semver.trim()).unwrap_or_else(|err| {
+        panic!(
+            "{} must contain valid SemVer: {err}",
+            version_path.display()
+        )
+    });
+    assert!(
+        semver != semver::Version::new(0, 0, 0),
+        "{} must contain a non-zero SemVer",
+        version_path.display()
+    );
+
+    let revision = git_output(&["rev-parse", "--short=12", "HEAD"]);
+    let version = revision.map_or_else(
+        || semver.to_string(),
+        |revision| format!("{semver}+fork.{revision}"),
+    );
+    println!("cargo:rustc-env=CODEX_CLI_VERSION={version}");
+    println!("cargo:rerun-if-changed=build.rs");
+    track_git_path("HEAD");
+    if let Some(head_ref) = git_output(&["symbolic-ref", "-q", "HEAD"]) {
+        track_git_path(&head_ref);
+    }
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn track_git_path(path: &str) {
+    if let Some(git_path) = git_output(&["rev-parse", "--git-path", path]) {
+        println!("cargo:rerun-if-changed={git_path}");
+    }
+}
