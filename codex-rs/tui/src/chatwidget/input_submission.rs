@@ -374,6 +374,12 @@ impl ChatWidget {
             return (false, None);
         }
         if render_in_history {
+            self.arm_prompt_stash_for_turn();
+        } else if let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() {
+            self.arm_prompt_stash_for_turn();
+            self.bind_prompt_stash_to_started_turn(&turn_id); // Steers emit no TurnStarted.
+        }
+        if render_in_history {
             self.input_queue.user_turn_pending_start = true;
         }
 

@@ -3177,7 +3177,8 @@
               "decrease_reasoning_effort": null,
               "edit_queued_message": null,
               "increase_reasoning_effort": null,
-              "interrupt_turn": null
+              "interrupt_turn": null,
+              "stash_prompt": null
             },
             "composer": {
               "history_search_next": null,
@@ -3524,6 +3525,14 @@
             }
           ],
           "description": "Interrupt the active turn."
+        },
+        "stash_prompt": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Temporarily stash or restore the current composer draft."
         }
       },
       "type": "object"
@@ -3844,7 +3853,8 @@
             "decrease_reasoning_effort": null,
             "edit_queued_message": null,
             "increase_reasoning_effort": null,
-            "interrupt_turn": null
+            "interrupt_turn": null,
+            "stash_prompt": null
           }
         },
         "composer": {
