@@ -10,6 +10,7 @@ mod event_processor;
 mod event_processor_with_human_output;
 pub(crate) mod event_processor_with_jsonl_output;
 pub(crate) mod exec_events;
+mod version;
 mod worktree;
 
 pub use cli::Cli;
@@ -635,7 +636,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         codex_core::otel_init::build_provider(
             &config,
-            env!("CARGO_PKG_VERSION"),
+            version::CODEX_CLI_VERSION,
             /*service_name_override*/ None,
             DEFAULT_ANALYTICS_ENABLED,
         )
@@ -712,7 +713,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         session_source: SessionSource::Exec,
         enable_codex_api_key_env: true,
         client_name: "codex_exec".to_string(),
-        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_version: version::CODEX_CLI_VERSION.to_string(),
         experimental_api: true,
         mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
