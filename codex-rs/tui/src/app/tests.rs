@@ -33,6 +33,7 @@ use crate::app_event::HistoryBatchEntryResponse;
 use codex_utils_absolute_path::test_support::PathExt;
 
 use crate::chatwidget::ChatWidgetInit;
+use crate::chatwidget::ThreadInputStateRestoreMode;
 use crate::chatwidget::create_initial_user_message;
 use crate::chatwidget::tests::helpers::render_bottom_popup;
 use crate::chatwidget::tests::helpers::set_active_cell;
@@ -368,7 +369,8 @@ async fn external_editor_writable_directory_rejected_snapshot() -> Result<()> {
 }
 
 #[tokio::test]
-async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach() -> Result<()> {
+async fn enqueue_primary_thread_session_routes_stash_collision_to_buffered_approvals() -> Result<()>
+{
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let thread_id = ThreadId::new();
     let approval_request =
@@ -408,6 +410,14 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
         Vec::new(),
     )
     .await?;
+    let stash = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    app.chat_widget
+        .apply_external_edit("stashed draft".to_string());
+    app.chat_widget.handle_key_event(stash);
+    let mut keymap = crate::keymap::RuntimeKeymap::defaults();
+    keymap.chat.stash_prompt = vec![crate::key_hint::plain(KeyCode::Char('y'))];
+    app.chat_widget
+        .apply_keymap_update(app.chat_widget.config_ref().tui_keymap.clone(), &keymap);
 
     let rx = app
         .active_thread_rx
@@ -443,10 +453,11 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
     app.enqueue_thread_request(background_thread_id, background_request)
         .await?;
 
+    let approve = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     for expected_thread_id in [thread_id, background_thread_id] {
         assert!(app.chat_widget.has_active_view());
-        app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        app.chat_widget.handle_key_event(approve);
+        assert_eq!(app.chat_widget.composer_text_with_pending(), "");
         let (actual_thread_id, op) = std::iter::from_fn(|| app_event_rx.try_recv().ok())
             .find_map(|event| match event {
                 AppEvent::SubmitThreadOp { thread_id, op } => Some((thread_id, op)),
@@ -458,6 +469,11 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
             .await?;
     }
     assert!(!app.chat_widget.has_active_view());
+    app.chat_widget.handle_key_event(approve);
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "stashed draft"
+    );
 
     app_server.shutdown().await?;
     proxy.await??;
@@ -983,7 +999,7 @@ async fn replay_thread_snapshot_renders_only_retained_agent_message_deltas() {
 }
 
 #[tokio::test]
-async fn replay_thread_snapshot_restores_draft_and_queued_input() {
+async fn replay_thread_snapshot_clears_stale_stash_and_restores_draft_and_queue() {
     let mut app = make_test_app().await;
     let thread_id = ThreadId::new();
     let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
@@ -1051,6 +1067,17 @@ async fn replay_thread_snapshot_restores_draft_and_queued_input() {
     );
     app.chat_widget
         .set_queue_autosend_suppressed(/*suppressed*/ false);
+    let chat = &mut app.chat_widget;
+    chat.apply_external_edit("old thread draft".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    chat.restore_thread_input_state(
+        /*input_state*/ None,
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: false,
+        },
+    );
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(chat.composer_text_with_pending(), "");
 
     app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ true);
 
@@ -1137,6 +1164,37 @@ async fn active_turn_id_for_thread_uses_snapshot_turns() {
         app.active_turn_id_for_thread(thread_id).await,
         Some("turn-1".to_string())
     );
+}
+
+#[tokio::test]
+async fn thread_snapshot_replays_armed_turn_completion_and_restores_stash() {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let thread_id = ThreadId::new();
+    let chat = &mut app.chat_widget;
+    let session = test_thread_session(thread_id, test_path_buf("/tmp/project"));
+    chat.handle_thread_session(session);
+    chat.apply_external_edit("original draft".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    chat.apply_external_edit("intervening question".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_matches!(next_user_turn_op(&mut op_rx), Op::UserTurn { .. });
+
+    let mut store = ThreadEventStore::new(THREAD_EVENT_CHANNEL_CAPACITY);
+    let awaiting = chat.capture_thread_input_state();
+    store.input_state = awaiting.clone();
+    store.push_notification(turn_started_notification(thread_id, "turn-armed"));
+    assert_ne!(store.input_state, awaiting, "inactive start binds stash");
+    store.rebase_buffer_after_session_refresh();
+    assert!(store.buffer.is_empty(), "refresh removes turn start");
+    store.input_state = awaiting;
+    store.turns = vec![test_turn("turn-armed", TurnStatus::InProgress, Vec::new())];
+    let completed = turn_completed_notification(thread_id, "turn-armed", TurnStatus::Completed);
+    store.push_notification(completed);
+    let (chat_widget, _app_event_tx, _rx, _new_op_rx) = make_chatwidget_manual_with_sender().await;
+    app.chat_widget = chat_widget;
+    app.replay_thread_snapshot(store.snapshot(), /*resume_restored_queue*/ true);
+    let restored = app.chat_widget.composer_text_with_pending();
+    assert_eq!(restored, "original draft");
 }
 
 #[tokio::test]

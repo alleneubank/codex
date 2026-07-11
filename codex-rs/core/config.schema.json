@@ -3779,6 +3779,7 @@
               "interrupt_turn": null,
               "next_permission_mode": null,
               "previous_permission_mode": null,
+              "stash_prompt": null,
               "toggle_voice_mute": null
             },
             "composer": {
@@ -4192,6 +4193,14 @@
           ],
           "description": "Switch to the previous available permission mode."
         },
+        "stash_prompt": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Temporarily stash or restore the current composer draft."
+        },
         "toggle_voice_mute": {
           "allOf": [
             {
@@ -4544,6 +4553,7 @@
             "interrupt_turn": null,
             "next_permission_mode": null,
             "previous_permission_mode": null,
+            "stash_prompt": null,
             "toggle_voice_mute": null
           }
         },

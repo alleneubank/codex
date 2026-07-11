@@ -896,6 +896,14 @@ impl BottomPane {
         self.composer.cursor()
     }
 
+    pub(crate) fn composer_draft_snapshot(&self) -> chat_composer::ComposerDraftSnapshot {
+        self.composer.draft_snapshot()
+    }
+
+    pub(crate) fn set_composer_cursor(&mut self, cursor: usize) {
+        self.composer.set_cursor(cursor);
+        self.request_redraw();
+    }
     #[cfg(test)]
     pub(crate) fn composer_text_elements(&self) -> Vec<TextElement> {
         self.composer.text_elements()
@@ -1378,6 +1386,10 @@ impl BottomPane {
 
     pub(crate) fn composer_is_empty(&self) -> bool {
         self.composer.is_empty()
+    }
+
+    pub(crate) fn composer_history_search_active(&self) -> bool {
+        self.composer.history_search_active()
     }
 
     pub(crate) fn composer_is_vim_enabled(&self) -> bool {

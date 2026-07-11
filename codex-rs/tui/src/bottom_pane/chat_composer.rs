@@ -1758,6 +1758,11 @@ impl ChatComposer {
         }
     }
 
+    pub(crate) fn set_cursor(&mut self, cursor: usize) {
+        self.set_current_cursor(cursor);
+        self.sync_popups();
+    }
+
     #[cfg(test)]
     pub(crate) fn local_image_paths(&self) -> Vec<PathBuf> {
         self.attachments.local_image_paths()

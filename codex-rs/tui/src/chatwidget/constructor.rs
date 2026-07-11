@@ -210,6 +210,7 @@ impl ChatWidget {
             interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
             input_queue: InputQueueState::default(),
             safety_buffering_prompt: None,
+            prompt_stash: None,
             chat_keymap,
             permission_shortcut_pending: false,
             queued_message_edit_hint_binding,
