@@ -3963,6 +3963,7 @@
               "previous_permission_mode": null,
               "prompt_stack_back": null,
               "skip_question": null,
+              "stash_prompt": null,
               "toggle_voice_mute": null
             },
             "composer": {
@@ -4437,6 +4438,14 @@
           ],
           "description": "Skip the focused question."
         },
+        "stash_prompt": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Temporarily stash or restore the current composer draft."
+        },
         "toggle_voice_mute": {
           "allOf": [
             {
@@ -4792,6 +4801,7 @@
             "previous_permission_mode": null,
             "prompt_stack_back": null,
             "skip_question": null,
+            "stash_prompt": null,
             "toggle_voice_mute": null
           }
         },

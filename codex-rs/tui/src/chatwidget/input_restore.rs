@@ -117,6 +117,48 @@ impl ChatWidget {
         }
     }
 
+    pub(super) fn toggle_prompt_stash(&mut self) {
+        match self.prompt_stash.take() {
+            Some(stash) if self.composer_is_empty() => self.restore_composer_state(stash.composer),
+            Some(stash) => self.prompt_stash = Some(stash),
+            None => {
+                let composer = self.current_composer_state();
+                if composer.has_content() {
+                    self.prompt_stash = Some(PromptStash {
+                        composer,
+                        restore: PromptStashRestore::ManualOnly,
+                    });
+                    self.restore_composer_state(ThreadComposerState::default());
+                }
+            }
+        }
+    }
+
+    pub(super) fn arm_prompt_stash_for_turn(&mut self) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.restore = PromptStashRestore::AwaitingTurnStart;
+        }
+    }
+
+    pub(super) fn bind_prompt_stash_to_started_turn(&mut self, turn_id: &str) {
+        if let Some(stash) = self.prompt_stash.as_mut() {
+            stash.bind_to_started_turn(turn_id);
+        }
+    }
+
+    pub(super) fn restore_prompt_stash_on_idle_completion(&mut self, turn_id: &str) {
+        let composer_is_empty = self.composer_is_empty();
+        let Some(stash) = self.prompt_stash.take_if(|stash| {
+            composer_is_empty
+                && matches!(
+                    &stash.restore,
+                    PromptStashRestore::OnIdleCompletion(armed) if armed == turn_id
+                )
+        }) else {
+            return;
+        };
+        self.restore_composer_state(stash.composer);
+    }
     pub(crate) fn set_initial_user_message_submit_suppressed(&mut self, suppressed: bool) {
         self.suppress_initial_user_message_submit = suppressed;
     }
@@ -404,6 +446,7 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
             pending_pastes,
+            cursor,
         } = composer;
         let local_image_paths = local_images.into_iter().map(|img| img.path).collect();
         self.set_remote_image_urls(remote_image_urls);
@@ -414,6 +457,7 @@ impl ChatWidget {
             mention_bindings,
         );
         self.bottom_pane.set_composer_pending_pastes(pending_pastes);
+        self.bottom_pane.set_composer_cursor(cursor);
     }
 
     fn composer_state_from_user_message(
@@ -427,6 +471,7 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
         } = user_message;
+        let cursor = text.len();
         ThreadComposerState {
             text,
             local_images,
@@ -434,19 +479,12 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
             pending_pastes,
+            cursor,
         }
     }
 
     pub(crate) fn capture_thread_input_state(&mut self) -> Option<ThreadInputState> {
-        let draft = self.bottom_pane.composer_draft_snapshot();
-        let composer = ThreadComposerState {
-            text: draft.text,
-            text_elements: draft.text_elements,
-            local_images: draft.local_images,
-            remote_image_urls: draft.remote_image_urls,
-            mention_bindings: draft.mention_bindings,
-            pending_pastes: draft.pending_pastes,
-        };
+        let composer = self.current_composer_state();
         Some(ThreadInputState {
             questions: self
                 .bottom_pane
@@ -456,6 +494,7 @@ impl ChatWidget {
             composer: composer.has_content().then_some(composer),
             safety_buffering_prompt: self.safety_buffering_prompt.clone(),
             pending_steers: self.input_queue.pending_steers.clone(),
+            prompt_stash: self.prompt_stash.clone(),
             rejected_steers_queue: self.input_queue.rejected_steers_queue.clone(),
             rejected_steer_history_records: self.input_queue.rejected_steer_history_records.clone(),
             queued_user_messages: self.input_queue.queued_user_messages.clone(),
@@ -475,6 +514,19 @@ impl ChatWidget {
         })
     }
 
+    fn current_composer_state(&self) -> ThreadComposerState {
+        let draft = self.bottom_pane.composer_draft_snapshot();
+        ThreadComposerState {
+            text: draft.text,
+            text_elements: draft.text_elements,
+            local_images: draft.local_images,
+            remote_image_urls: draft.remote_image_urls,
+            mention_bindings: draft.mention_bindings,
+            pending_pastes: draft.pending_pastes,
+            cursor: draft.cursor,
+        }
+    }
+
     pub(crate) fn restore_thread_input_state(
         &mut self,
         input_state: Option<ThreadInputState>,
@@ -486,6 +538,7 @@ impl ChatWidget {
         if let Some(input_state) = input_state {
             self.bottom_pane.restore_questions(input_state.questions);
             self.input_queue.recovered_queue = input_state.recovered_queue;
+            self.prompt_stash = input_state.prompt_stash;
             self.current_collaboration_mode = input_state.current_collaboration_mode;
             self.active_collaboration_mask = input_state.active_collaboration_mask;
             self.safety_buffering_prompt = input_state.safety_buffering_prompt;
@@ -528,6 +581,7 @@ impl ChatWidget {
                 UserMessageHistoryRecord::UserMessageText,
             );
         } else {
+            self.prompt_stash = None;
             self.turn_lifecycle
                 .restore_running(/*running*/ false, Instant::now());
             self.safety_buffering_prompt = None;

@@ -141,6 +141,8 @@ pub struct TuiChatKeymap {
     pub prompt_stack_back: Option<KeybindingsSpec>,
     /// Skip the focused question.
     pub skip_question: Option<KeybindingsSpec>,
+    /// Temporarily stash or restore the current composer draft.
+    pub stash_prompt: Option<KeybindingsSpec>,
 }
 
 /// Composer context keybindings. These override corresponding `global` actions.

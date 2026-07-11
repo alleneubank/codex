@@ -1564,6 +1564,10 @@ impl BottomPane {
         self.composer.is_empty()
     }
 
+    pub(crate) fn composer_history_search_active(&self) -> bool {
+        self.composer.history_search_active()
+    }
+
     pub(crate) fn composer_is_vim_enabled(&self) -> bool {
         self.composer.is_vim_enabled()
     }

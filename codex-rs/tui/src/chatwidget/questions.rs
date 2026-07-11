@@ -132,7 +132,6 @@ impl ChatWidget {
                         questions.accept_answer();
                     }
                 } else if self.bottom_pane.composer_draft_snapshot() != main {
-                    let cursor = main.cursor;
                     self.restore_composer_state(ThreadComposerState {
                         text: main.text,
                         text_elements: main.text_elements,
@@ -140,8 +139,8 @@ impl ChatWidget {
                         remote_image_urls: main.remote_image_urls,
                         mention_bindings: main.mention_bindings,
                         pending_pastes: main.pending_pastes,
+                        cursor: main.cursor,
                     });
-                    self.bottom_pane.set_composer_cursor(cursor);
                 }
             }
         }

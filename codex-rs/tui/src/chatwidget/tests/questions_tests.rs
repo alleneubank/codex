@@ -24,6 +24,31 @@ async fn unavailable_send_keeps_answer_and_skip_remains_available() {
 }
 
 #[tokio::test]
+async fn rejected_question_answer_preserves_main_draft_and_cursor() {
+    let (mut chat, mut events, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_model("");
+    chat.bottom_pane
+        .set_composer_text("main draft".into(), Vec::new(), Vec::new());
+    chat.bottom_pane.set_composer_cursor(/*cursor*/ 4);
+    let main = chat.capture_thread_input_state().unwrap().composer;
+    chat.add_async_questions("message", &questions());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+    chat.bottom_pane.handle_paste("retained answer".into());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_eq!(chat.capture_thread_input_state().unwrap().composer, main);
+    assert_eq!(question_count(&chat), 2);
+    assert!(ops.try_recv().is_err());
+    let rendered = drain_insert_history(&mut events)
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Thread model is unavailable."));
+}
+
+#[tokio::test]
 async fn accepted_question_answer_uses_existing_delivery_and_keeps_main_draft() {
     for queued in [false, true] {
         let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
