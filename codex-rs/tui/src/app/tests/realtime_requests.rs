@@ -27,12 +27,14 @@ fn normalize_voice_snapshot_directory(rendered: &str, cwd: &Path) -> String {
         "{placeholder}{}",
         " ".repeat(cwd.len().saturating_sub(placeholder.len()))
     );
-    rendered
-        .replace(&cwd, &padded_placeholder)
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
+    crate::test_support::normalize_snapshot_version(
+        rendered
+            .replace(&cwd, &padded_placeholder)
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 #[test]

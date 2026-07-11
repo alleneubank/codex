@@ -18,6 +18,7 @@ use crate::pager_overlay::TranscriptOverlay;
 use crate::status::StatusAccountDisplay;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::test_support::PathBufExt;
+use crate::test_support::normalize_snapshot_version;
 use crate::test_support::test_path_buf;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
@@ -193,6 +194,7 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
     lines
         .into_iter()
         .map(|line| {
+            let line = normalize_snapshot_version(line);
             if let (Some(frame_width), Some(dir_pos), Some(pipe_idx)) =
                 (frame_width, line.find("Directory: "), line.rfind('│'))
             {
@@ -813,7 +815,10 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
-    assert_snapshot!("status_server_auth_not_required", rendered);
+    assert_snapshot!(
+        "status_server_auth_not_required",
+        normalize_snapshot_version(rendered)
+    );
 
     config.model_provider_id = "openai-proxy".to_string();
     config.model_provider = ModelProviderInfo {
@@ -844,7 +849,10 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
-    assert_snapshot!("status_server_auth_required", rendered);
+    assert_snapshot!(
+        "status_server_auth_required",
+        normalize_snapshot_version(rendered)
+    );
 
     let wide_destinations: Vec<String> = composite
         .display_hyperlink_lines(/*width*/ 120)
