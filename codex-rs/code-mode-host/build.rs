@@ -1,6 +1,3 @@
-#[path = "src/build_version.rs"]
-mod build_version;
-
 fn main() {
     let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
         Some(manifest_dir) => manifest_dir,
@@ -23,20 +20,27 @@ fn main() {
         "{} must contain a non-zero SemVer",
         version_path.display()
     );
-
-    // Keep the comparable upstream version separate from fork provenance. Source archives without
-    // Git metadata honestly fall back to the pinned SemVer instead of inventing a revision.
     let revision = git_output(&["rev-parse", "--short=12", "HEAD"]);
-    let version = build_version::format_cli_version(&semver.to_string(), revision.as_deref());
-    println!("cargo:rustc-env=CODEX_CLI_VERSION={version}");
+    let version = revision.map_or_else(
+        || semver.to_string(),
+        |revision| format!("{semver}+fork.{revision}"),
+    );
+    println!("cargo:rustc-env=CODEX_CLI_VERSION=codex-cli {version}");
     println!("cargo:rerun-if-changed=build.rs");
+    // The embedded revision comes from `git rev-parse HEAD`, which Cargo cannot
+    // see as an input. Release builds reuse codex-rs/target/fork-release across
+    // commits, so without tracking HEAD (and the ref it points at, which is what
+    // actually moves on a commit) a rebuild at an unchanged fork-version.txt can
+    // ship a binary stamped with the previous revision.
     track_git_path("HEAD");
     if let Some(head_ref) = git_output(&["symbolic-ref", "-q", "HEAD"]) {
         track_git_path(&head_ref);
     }
+}
 
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        println!("cargo:rustc-link-arg=-ObjC");
+fn track_git_path(path: &str) {
+    if let Some(git_path) = git_output(&["rev-parse", "--git-path", path]) {
+        println!("cargo:rerun-if-changed={git_path}");
     }
 }
 
@@ -45,14 +49,7 @@ fn git_output(args: &[&str]) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-
     let value = String::from_utf8(output.stdout).ok()?;
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-fn track_git_path(path: &str) {
-    if let Some(git_path) = git_output(&["rev-parse", "--git-path", path]) {
-        println!("cargo:rerun-if-changed={git_path}");
-    }
 }
