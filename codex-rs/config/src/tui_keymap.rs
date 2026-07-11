@@ -137,6 +137,8 @@ pub struct TuiChatKeymap {
     pub next_permission_mode: Option<KeybindingsSpec>,
     /// Edit the most recently queued message.
     pub edit_queued_message: Option<KeybindingsSpec>,
+    /// Temporarily stash or restore the current composer draft.
+    pub stash_prompt: Option<KeybindingsSpec>,
 }
 
 /// Composer context keybindings. These override corresponding `global` actions.
