@@ -62,11 +62,11 @@ impl ChatWidget {
         }
     }
 
-    pub(super) fn submit_user_message(&mut self, user_message: UserMessage) {
-        let _accepted = self.submit_user_message_with_history_record(
+    pub(super) fn submit_user_message(&mut self, user_message: UserMessage) -> bool {
+        self.submit_user_message_with_history_record(
             user_message,
             UserMessageHistoryRecord::UserMessageText,
-        );
+        )
     }
 
     pub(super) fn submit_user_message_with_history_record(
@@ -352,6 +352,18 @@ impl ChatWidget {
         );
 
         if !self.submit_op(op.clone()) {
+            if self.bottom_pane.composer_is_empty() {
+                self.restore_user_message_to_composer(user_message_for_restore(
+                    UserMessage {
+                        text,
+                        local_images,
+                        remote_image_urls,
+                        text_elements,
+                        mention_bindings,
+                    },
+                    &history_record,
+                ));
+            }
             return (false, None);
         }
         if render_in_history {

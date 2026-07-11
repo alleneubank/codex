@@ -379,6 +379,7 @@ pub(crate) struct ChatComposer {
     frame_requester: Option<FrameRequester>,
     attachments: AttachmentState,
     placeholder_text: String,
+    has_stashed_draft: bool,
     is_task_running: bool,
     queue_submissions: bool,
     /// Slash-command draft staged for local recall after application-level dispatch.
@@ -422,7 +423,7 @@ struct ComposerDraft {
     cursor: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComposerDraftSnapshot {
     pub(crate) text: String,
     pub(crate) text_elements: Vec<TextElement>,
@@ -430,6 +431,7 @@ pub(crate) struct ComposerDraftSnapshot {
     pub(crate) remote_image_urls: Vec<String>,
     pub(crate) mention_bindings: Vec<MentionBinding>,
     pub(crate) pending_pastes: Vec<(String, String)>,
+    pub(crate) cursor: usize,
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
@@ -549,6 +551,7 @@ impl ChatComposer {
             frame_requester: None,
             attachments: AttachmentState::default(),
             placeholder_text,
+            has_stashed_draft: false,
             is_task_running: false,
             queue_submissions: false,
             pending_slash_command_history: None,
@@ -824,7 +827,22 @@ impl ChatComposer {
     }
     /// Returns true if the composer currently contains no user-entered input.
     pub(crate) fn is_empty(&self) -> bool {
-        self.draft.textarea.is_empty() && !self.draft.is_bash_mode && self.attachments.is_empty()
+        self.draft.textarea.is_empty()
+            && !self.draft.is_bash_mode
+            && self.attachments.is_empty()
+            && !self.draft.paste_burst.is_active()
+    }
+
+    /// Projects whether the active thread retains a draft outside the visible composer.
+    ///
+    /// This is presentation-only: `ChatWidget::prompt_stash` remains the source of truth for
+    /// restoring the rich draft.
+    pub(crate) fn set_has_stashed_draft(&mut self, has_stashed_draft: bool) -> bool {
+        if self.has_stashed_draft == has_stashed_draft {
+            return false;
+        }
+        self.has_stashed_draft = has_stashed_draft;
+        true
     }
 
     /// Record local persistent-history metadata so the composer can navigate
@@ -1471,7 +1489,13 @@ impl ChatComposer {
             remote_image_urls: self.remote_image_urls(),
             mention_bindings: self.mention_bindings(),
             pending_pastes: self.pending_pastes(),
+            cursor: self.current_cursor(),
         }
+    }
+
+    pub(crate) fn set_cursor(&mut self, cursor: usize) {
+        self.set_current_cursor(cursor);
+        self.sync_popups();
     }
 
     #[cfg(test)]
@@ -4497,6 +4521,7 @@ impl ChatComposer {
         }
         let style = user_message_style();
         Block::default().style(style).render_ref(composer_rect, buf);
+        self.render_stashed_draft_indicator(composer_rect, buf, textarea_right_reserve);
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
@@ -4570,6 +4595,33 @@ impl ChatComposer {
                     .render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
             }
         }
+    }
+
+    fn render_stashed_draft_indicator(
+        &self,
+        composer_rect: Rect,
+        buf: &mut Buffer,
+        textarea_right_reserve: u16,
+    ) {
+        if !self.has_stashed_draft || composer_rect.is_empty() {
+            return;
+        }
+
+        let available_width = composer_rect
+            .width
+            .saturating_sub(1u16.saturating_add(textarea_right_reserve));
+        let line = ["draft stashed", "stashed"]
+            .into_iter()
+            .map(|label| Line::from(label).cyan().dim())
+            .find(|line| line.width() <= available_width as usize);
+        let Some(line) = line else {
+            return;
+        };
+        let width = line.width() as u16;
+        let x = composer_rect
+            .x
+            .saturating_add(available_width.saturating_sub(width));
+        buf.set_line(x, composer_rect.y, &line, width);
     }
 }
 
