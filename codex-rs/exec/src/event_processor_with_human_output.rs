@@ -219,8 +219,10 @@ impl EventProcessor for EventProcessorWithHumanOutput {
         session_configured_event: &SessionConfiguredEvent,
         workspace_roots: &[PathUri],
     ) {
-        const VERSION: &str = env!("CARGO_PKG_VERSION");
-        eprintln!("OpenAI Codex v{VERSION}\n--------");
+        eprintln!(
+            "OpenAI Codex v{}\n--------",
+            crate::version::CODEX_CLI_VERSION
+        );
         for (key, value) in
             config_summary_entries(config, session_configured_event, workspace_roots)
         {

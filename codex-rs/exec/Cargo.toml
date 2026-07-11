@@ -21,6 +21,9 @@ path = "tests/all.rs"
 [lints]
 workspace = true
 
+[build-dependencies]
+semver = { workspace = true }
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
