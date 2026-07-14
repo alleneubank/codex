@@ -464,8 +464,16 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
     let next_step = session
         .capture_step_context(Arc::clone(&turn_context))
         .await;
-    assert!(next_step.workspace_roots.contains(&expected_worktree_path));
-    assert!(next_step.workspace_roots.contains(&common_dir));
+    assert!(
+        next_step
+            .workspace_roots
+            .contains(&PathUri::from_abs_path(&expected_worktree_path))
+    );
+    assert!(
+        next_step
+            .workspace_roots
+            .contains(&PathUri::from_abs_path(&common_dir))
+    );
 
     let world_state = session.build_world_state_for_step(next_step.as_ref()).await;
     let rendered = world_state
@@ -656,7 +664,8 @@ async fn enter_worktree_rejects_remote_primary_environment() -> anyhow::Result<(
         turn_environments: vec![TurnEnvironment::new(
             REMOTE_ENVIRONMENT_ID.to_string(),
             remote_environment,
-            cwd,
+            cwd.clone(),
+            vec![cwd],
             /*shell*/ None,
         )],
         starting: Vec::new(),
@@ -702,6 +711,7 @@ async fn enter_worktree_retargets_only_local_primary_and_preserves_remote_second
                     REMOTE_ENVIRONMENT_ID.to_string(),
                     remote_environment,
                     original_cwd.clone(),
+                    vec![original_cwd.clone()],
                     /*shell*/ None,
                 ),
             ],
@@ -772,10 +782,12 @@ async fn enter_worktree_retargets_local_primary_and_preserves_starting_secondary
         TurnEnvironmentSelection {
             environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
             cwd: original_cwd.clone(),
+            workspace_roots: vec![original_cwd.clone()],
         },
         TurnEnvironmentSelection {
             environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
             cwd: original_cwd.clone(),
+            workspace_roots: vec![original_cwd.clone()],
         },
     ]);
     let snapshot = turn_environments.snapshot().await;
@@ -841,10 +853,12 @@ async fn enter_worktree_rejects_starting_only_environment_selections() -> anyhow
         TurnEnvironmentSelection {
             environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
             cwd: original_cwd.clone(),
+            workspace_roots: vec![original_cwd.clone()],
         },
         TurnEnvironmentSelection {
             environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
             cwd: original_cwd.clone(),
+            workspace_roots: vec![original_cwd.clone()],
         },
     ]);
     let snapshot = turn_environments.snapshot().await;

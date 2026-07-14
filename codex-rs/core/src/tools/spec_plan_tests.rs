@@ -528,7 +528,8 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
                     ))
                     .expect("remote test environment"),
                 ),
-                cwd,
+                cwd.clone(),
+                vec![cwd],
                 /*shell*/ None,
             )];
     })
@@ -761,7 +762,6 @@ async fn environment_tools_follow_the_step_context() {
     let step_context = Arc::new(StepContext::new(
         Arc::clone(&turn),
         environments,
-        turn.config.effective_workspace_roots(),
         Vec::new(),
         crate::session::McpRuntimeSnapshot::new_uninitialized_for_test(&turn.config),
         /*loaded_agents_md*/ None,

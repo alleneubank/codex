@@ -2926,12 +2926,6 @@ impl Session {
         let selected_capability_roots = self
             .resolve_selected_capability_roots_for_step(&environments)
             .await;
-        let workspace_roots = self
-            .state
-            .lock()
-            .await
-            .session_configuration
-            .effective_workspace_roots();
         let mcp = self
             .mcp_runtime_for_step(
                 turn_context.as_ref(),
@@ -2942,7 +2936,6 @@ impl Session {
         Arc::new(StepContext::new(
             turn_context,
             environments,
-            workspace_roots,
             selected_capability_roots,
             mcp,
             loaded_agents_md,

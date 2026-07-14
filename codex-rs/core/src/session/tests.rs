@@ -206,7 +206,6 @@ impl StepContext {
         Arc::new(Self::new(
             Arc::clone(&turn),
             environments,
-            turn.config.effective_workspace_roots(),
             Vec::new(),
             crate::session::McpRuntimeSnapshot::new_uninitialized_for_test(&turn.config),
             /*loaded_agents_md*/ None,
