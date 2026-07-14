@@ -6,7 +6,6 @@ use crate::context::environment_context::NetworkContext;
 use crate::context::environment_context::push_xml_escaped_text;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::session::turn_context::TurnContext;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
 use serde::Deserialize;
 use serde::Serialize;
@@ -27,7 +26,7 @@ impl EnvironmentsState {
     pub(crate) fn from_turn_context_with_environments(
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
-        workspace_roots: &[AbsolutePathBuf],
+        workspace_roots: &[PathUri],
     ) -> Self {
         Self {
             environments: environment_states(environments),

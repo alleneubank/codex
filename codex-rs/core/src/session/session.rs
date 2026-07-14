@@ -175,10 +175,6 @@ impl SessionConfiguration {
         self.permission_profile_state.profile_workspace_roots()
     }
 
-    pub(super) fn effective_workspace_roots(&self) -> Vec<AbsolutePathBuf> {
-        self.primary_workspace_roots()
-    }
-
     pub(super) fn apply_permission_profile_to_permissions(
         &self,
         permissions: &mut crate::config::Permissions,
@@ -306,10 +302,8 @@ impl SessionConfiguration {
         if let Some(workspace_roots) = updates.workspace_roots.as_ref()
             && let Some(primary_environment) = next_environments.environments.first_mut()
         {
-            primary_environment.workspace_roots = workspace_roots
-                .iter()
-                .map(PathUri::from_abs_path)
-                .collect();
+            primary_environment.workspace_roots =
+                workspace_roots.iter().map(PathUri::from_abs_path).collect();
         }
         let cwd_changed = next_environments.legacy_fallback_cwd != current_cwd;
         next_configuration.environments = next_environments;
