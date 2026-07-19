@@ -125,7 +125,7 @@ pub enum CodexErrorDetails {
     InvalidImageRequest(),
     #[error("{0}")]
     UsageLimitReached(UsageLimitReachedError),
-    #[error("Selected model is at capacity. Please try a different model.")]
+    #[error("Selected model is at capacity. Please try again later.")]
     ServerOverloaded,
     #[error("{message}")]
     CyberPolicy { message: String },
