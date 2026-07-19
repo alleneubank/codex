@@ -305,6 +305,12 @@ pub struct ModelClientSession {
     turn_state: Arc<OnceLock<String>>,
 }
 
+#[derive(Clone, Copy)]
+enum ServerOverloadRetryOwner {
+    Transport,
+    Turn,
+}
+
 #[derive(Debug, Clone)]
 struct LastResponse {
     response_id: String,
@@ -1428,6 +1434,7 @@ impl ModelClientSession {
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
+        server_overload_retry_owner: ServerOverloadRetryOwner,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.provider.auth_manager();
@@ -1484,6 +1491,10 @@ impl ModelClientSession {
                 client_setup.api_auth,
             )
             .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+            let client = match server_overload_retry_owner {
+                ServerOverloadRetryOwner::Transport => client,
+                ServerOverloadRetryOwner::Turn => client.defer_server_overload_retries_to_caller(),
+            };
             let stream_result = client.stream_request(request, options).await;
 
             match stream_result {
@@ -1813,6 +1824,60 @@ impl ModelClientSession {
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
+        self.stream_with_server_overload_retry_owner(
+            prompt,
+            model_info,
+            session_telemetry,
+            effort,
+            summary,
+            service_tier,
+            responses_metadata,
+            ServerOverloadRetryOwner::Transport,
+            inference_trace,
+        )
+        .await
+    }
+
+    /// Streams a sampling request while leaving overload backoff to the outer turn loop.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn stream_with_turn_managed_server_overload_retries(
+        &mut self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        summary: ReasoningSummaryConfig,
+        service_tier: Option<String>,
+        responses_metadata: &CodexResponsesMetadata,
+        inference_trace: &InferenceTraceContext,
+    ) -> Result<ResponseStream> {
+        self.stream_with_server_overload_retry_owner(
+            prompt,
+            model_info,
+            session_telemetry,
+            effort,
+            summary,
+            service_tier,
+            responses_metadata,
+            ServerOverloadRetryOwner::Turn,
+            inference_trace,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn stream_with_server_overload_retry_owner(
+        &mut self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        summary: ReasoningSummaryConfig,
+        service_tier: Option<String>,
+        responses_metadata: &CodexResponsesMetadata,
+        server_overload_retry_owner: ServerOverloadRetryOwner,
+        inference_trace: &InferenceTraceContext,
+    ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
             WireApi::Responses => {
@@ -1848,6 +1913,7 @@ impl ModelClientSession {
                     summary,
                     service_tier,
                     responses_metadata,
+                    server_overload_retry_owner,
                     inference_trace,
                 )
                 .await

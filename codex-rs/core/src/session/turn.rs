@@ -1223,6 +1223,7 @@ async fn run_sampling_request(
     );
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
+    let mut server_overloaded_retries = 0;
     let mut initial_input = Some(input);
     let mut original_input = None;
     loop {
@@ -1273,18 +1274,26 @@ async fn run_sampling_request(
             original_input = Some(prompt.input);
         }
 
-        if !err.is_retryable() {
+        let should_retry_server_overload = matches!(&err, CodexErr::ServerOverloaded)
+            && !crate::guardian::is_guardian_reviewer_source(&turn_context.session_source);
+        if !err.is_retryable() && !should_retry_server_overload {
             return Err(err);
         }
 
+        let retry_counter = if should_retry_server_overload {
+            &mut server_overloaded_retries
+        } else {
+            &mut retries
+        };
         handle_retryable_response_stream_error(
-            &mut retries,
+            retry_counter,
             max_retries,
             err,
             client_session,
             &sess,
             &turn_context,
             ResponsesStreamRequest::Sampling,
+            &cancellation_token,
         )
         .await?;
         turn_context.turn_timing_state.record_sampling_retry();
@@ -2050,7 +2059,7 @@ async fn try_run_sampling_request(
         .enabled(Feature::ConcurrentReasoningSummaries)
         && turn_context.provider.info().is_openai();
     let mut stream = client_session
-        .stream(
+        .stream_with_turn_managed_server_overload_retries(
             prompt,
             &turn_context.model_info,
             &turn_context.session_telemetry,
