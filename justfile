@@ -91,6 +91,30 @@ test *args:
 test-github-scripts:
     {{ python }} -m unittest discover -s {{ justfile_directory() }}/.github/scripts -p 'test_*.py'
 
+# Configure this clone to use the repository-owned fork maintenance hooks.
+[no-cd]
+install-fork-hooks:
+    git -C {{ justfile_directory() }} config core.hooksPath .githooks
+
+# Resolve and write the latest stable upstream SemVer after rebasing the fork.
+[no-cd]
+update-fork-version:
+    bash {{ justfile_directory() }}/.github/scripts/fork-version.sh update
+
+# Fail closed when the committed fork SemVer is not the latest stable upstream release.
+[no-cd]
+check-fork-version:
+    bash {{ justfile_directory() }}/.github/scripts/fork-version.sh check
+
+# Run the deterministic local verifier for fork maintenance and release policy.
+[no-cd]
+test-fork-maintenance:
+    bash {{ justfile_directory() }}/.github/scripts/test-fork-version.sh
+    bash {{ justfile_directory() }}/.github/scripts/test-fork-pre-push.sh
+    bash {{ justfile_directory() }}/.github/scripts/test-fork-release.sh
+    bash {{ justfile_directory() }}/.github/scripts/test-setup-rusty-v8.sh
+    shellcheck {{ justfile_directory() }}/.githooks/pre-push {{ justfile_directory() }}/.github/scripts/*fork*.sh {{ justfile_directory() }}/.github/scripts/setup-rusty-v8.sh
+
 # Run explicit workspace benchmark targets.
 bench *args:
     cargo bench --workspace --bench '*' {args}
