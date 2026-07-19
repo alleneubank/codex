@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+remote_name="${1:-}"
+repo_root="${CODEX_FORK_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+version_script="${CODEX_FORK_VERSION_SCRIPT:-${repo_root}/.github/scripts/fork-version.sh}"
+zero_sha="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref _remote_sha; do
+  if [[ "${remote_name}" != "origin" ]]; then
+    continue
+  fi
+
+  if [[ "${remote_ref}" == "refs/heads/fork" && "${local_sha}" != "${zero_sha}" ]]; then
+    die "origin/fork is retired; maintain and push the fork product on origin/main"
+  fi
+
+  if [[ "${remote_ref}" != "refs/heads/main" ]]; then
+    continue
+  fi
+  [[ "${local_sha}" != "${zero_sha}" ]] || die "origin/main cannot be deleted"
+  [[ "${local_ref}" == "refs/heads/main" ]] ||
+    die "origin/main must be updated from local main, not ${local_ref}"
+
+  version_file="$(mktemp "${TMPDIR:-/tmp}/codex-fork-version.XXXXXX")"
+  trap 'rm -f "${version_file}"' EXIT
+  git -C "${repo_root}" show "${local_sha}:codex-rs/fork-version.txt" >"${version_file}" ||
+    die "the pushed main commit does not contain codex-rs/fork-version.txt"
+  bash "${version_script}" check --version-file "${version_file}" >/dev/null
+  rm -f "${version_file}"
+  trap - EXIT
+done
