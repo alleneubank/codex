@@ -253,6 +253,9 @@ impl ChatWidget {
                 "id": self.current_model(),
                 "display_name": self.model_display_name(),
             },
+            "effort": {
+                "level": self.effective_reasoning_effort().map(|effort| effort.to_string()),
+            },
             "context_window": {
                 "current_usage": token_usage_payload(&last_usage),
                 "context_window_size": self.status_line_context_window_size(),
