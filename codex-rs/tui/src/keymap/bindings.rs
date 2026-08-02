@@ -241,6 +241,7 @@ define_runtime_action_bindings! {
         decrease_reasoning_effort,
         increase_reasoning_effort,
         edit_queued_message,
+        stash_prompt,
     ],
     "composer" => Composer, composer, composer [
         submit,

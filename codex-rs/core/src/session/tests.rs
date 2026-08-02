@@ -4518,6 +4518,24 @@ async fn turn_context_with_model_updates_model_fields() {
     );
 }
 
+#[tokio::test]
+async fn turn_context_with_model_preserves_configured_reasoning_effort() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    Arc::make_mut(&mut turn_context.config).model_reasoning_effort =
+        Some(ReasoningEffortConfig::High);
+    turn_context.reasoning_effort = None;
+
+    let updated = turn_context
+        .with_model("gpt-5.4".to_string(), &session.services.models_manager)
+        .await;
+
+    assert_eq!(updated.reasoning_effort, Some(ReasoningEffortConfig::High));
+    assert_eq!(
+        updated.config.model_reasoning_effort,
+        Some(ReasoningEffortConfig::High)
+    );
+}
+
 #[test]
 fn falls_back_to_content_when_structured_is_null() {
     let ctr = McpCallToolResult {
