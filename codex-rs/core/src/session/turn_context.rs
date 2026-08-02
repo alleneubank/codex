@@ -244,8 +244,11 @@ impl TurnContext {
             .iter()
             .map(|preset| preset.effort.clone())
             .collect::<Vec<_>>();
-        let reasoning_effort = if let Some(current_reasoning_effort) = self.reasoning_effort.clone()
-        {
+        let configured_reasoning_effort = self
+            .reasoning_effort
+            .clone()
+            .or_else(|| config.model_reasoning_effort.clone());
+        let reasoning_effort = if let Some(current_reasoning_effort) = configured_reasoning_effort {
             if supported_reasoning_levels.contains(&current_reasoning_effort) {
                 Some(current_reasoning_effort)
             } else {
