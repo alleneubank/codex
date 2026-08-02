@@ -292,6 +292,7 @@ define_runtime_action_bindings! {
         edit_queued_message,
         prompt_stack_back,
         skip_question,
+        stash_prompt,
     ],
     "chat" => Voice, chat, chat [toggle_voice_mute],
     "composer" => Composer, composer, composer [
