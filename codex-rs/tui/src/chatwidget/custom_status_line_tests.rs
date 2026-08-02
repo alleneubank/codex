@@ -38,6 +38,7 @@ use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 use std::collections::VecDeque;
 use std::future::Future;
@@ -518,6 +519,20 @@ async fn service_tier_toggle_refreshes_custom_status_line_payload() {
             Some(json!(ServiceTier::Fast.request_value())),
         ]
     );
+}
+
+#[tokio::test]
+async fn payload_includes_effective_reasoning_effort() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let (mut chat, _app_event_tx, _rx, _op_rx) =
+        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
+    chat.config.cwd = tempdir.path().to_path_buf().abs();
+    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.set_reasoning_effort(Some(ReasoningEffort::XHigh));
+
+    let payload = chat.custom_status_line_payload(tempdir.path());
+
+    assert_eq!(payload.pointer("/effort/level"), Some(&json!("xhigh")));
 }
 
 #[tokio::test]
