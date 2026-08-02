@@ -259,6 +259,7 @@ define_runtime_action_bindings! {
         previous_permission_mode,
         next_permission_mode,
         edit_queued_message,
+        stash_prompt,
     ],
     "composer" => Composer, composer, composer [
         submit,
