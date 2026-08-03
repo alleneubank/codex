@@ -489,35 +489,7 @@ impl Session {
     ) -> Result<ReviewDecision, ToolError> {
         let is_mcp_tool_call = matches!(&action, ApprovalAction::McpToolCall { .. });
         let is_network_approval = matches!(&action, ApprovalAction::NetworkAccess { .. });
-        let permission_request_run_id = match &action {
-            #[cfg(unix)]
-            ApprovalAction::Execve { approval_id, .. } => approval_id.clone(),
-            ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
-            _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
-            _ => ctx.call_id.clone(),
-        };
-
-        // Approval precedence is:
-        // 1. Hooks
-        // 2. If StrictAutoReview || Guardian enabled, then Guardian. Else, user.
-        let resolution = match run_permission_request_hooks(
-            self,
-            ctx.review_context.turn(),
-            &permission_request_run_id,
-            action.permission_request_payload(),
-        )
-        .await
-        {
-            Some(PermissionRequestDecision::Allow) => ApprovalResolution {
-                decision: ReviewDecision::Approved,
-                source: ApprovalResolutionSource::Hook,
-            },
-            Some(PermissionRequestDecision::Deny { message }) => ApprovalResolution {
-                decision: ReviewDecision::denied(message),
-                source: ApprovalResolutionSource::Hook,
-            },
-            None => self.request_reviewer_approval(action, &ctx).await,
-        };
+        let resolution = self.request_reviewer_approval(action, &ctx).await;
         // Network approvals record their final telemetry after validation and persistence.
         if !is_network_approval {
             record_resolution(&ctx, &resolution);
@@ -564,18 +536,47 @@ impl Session {
             ApprovalReviewer::for_turn(ctx.review_context.turn())
         };
 
-        let decision = match reviewer {
-            ApprovalReviewer::Guardian => {
-                self.request_guardian_approval(action, ctx, /*cancellation_token*/ None)
-                    .await
+        match reviewer {
+            ApprovalReviewer::Guardian => ApprovalResolution {
+                decision: self
+                    .request_guardian_approval(action, ctx, /*cancellation_token*/ None)
+                    .await,
+                source: ApprovalResolutionSource::Guardian,
+            },
+            ApprovalReviewer::User => {
+                // PermissionRequest is the human-interrupt lifecycle signal. Guardian
+                // reviews already have the PreToolUse heartbeat and must not emit a
+                // false blocked signal while the automatic reviewer is active.
+                let permission_request_run_id = match &action {
+                    #[cfg(unix)]
+                    ApprovalAction::Execve { approval_id, .. } => approval_id.clone(),
+                    ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
+                    _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
+                    _ => ctx.call_id.clone(),
+                };
+                let (decision, source) = match run_permission_request_hooks(
+                    self,
+                    ctx.review_context.turn(),
+                    &permission_request_run_id,
+                    action.permission_request_payload(),
+                )
+                .await
+                {
+                    Some(PermissionRequestDecision::Allow) => {
+                        (ReviewDecision::Approved, ApprovalResolutionSource::Hook)
+                    }
+                    Some(PermissionRequestDecision::Deny { message }) => (
+                        ReviewDecision::denied(message),
+                        ApprovalResolutionSource::Hook,
+                    ),
+                    None => (
+                        self.request_user_approval(&action, ctx).await,
+                        ApprovalResolutionSource::User,
+                    ),
+                };
+                ApprovalResolution { decision, source }
             }
-            ApprovalReviewer::User => self.request_user_approval(&action, ctx).await,
-        };
-        let source = match reviewer {
-            ApprovalReviewer::Guardian => ApprovalResolutionSource::Guardian,
-            ApprovalReviewer::User => ApprovalResolutionSource::User,
-        };
-        ApprovalResolution { decision, source }
+        }
     }
 
     pub(crate) async fn request_guardian_approval(
@@ -835,7 +836,6 @@ impl Session {
                 unreachable!("permission requests are routed directly to Guardian")
             }
         }
-    }
 }
 
 fn record_resolution(ctx: &ApprovalContext, resolution: &ApprovalResolution) {
