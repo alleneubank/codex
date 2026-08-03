@@ -219,12 +219,14 @@ define_runtime_action_bindings! {
         toggle_fast_mode,
         toggle_raw_output,
         toggle_side_conversation,
+        cycle_permission_mode,
     ],
     "chat" => Chat, chat, chat [
         interrupt_turn,
         decrease_reasoning_effort,
         increase_reasoning_effort,
         edit_queued_message,
+        stash_prompt,
     ],
     "composer" => Composer, composer, composer [
         submit,
