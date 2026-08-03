@@ -15,6 +15,7 @@ use codex_config::types::KeybindingsSpec;
 use codex_config::types::TuiKeymap;
 use crossterm::event::KeyEvent;
 
+use crate::key_hint::KeyBinding;
 use crate::keymap::RuntimeKeymap;
 use crate::keymap::bindings_for_action;
 
@@ -352,7 +353,7 @@ pub(super) fn binding_slot<'a>(
 /// This reads from [`RuntimeKeymap`] rather than root config so UI labels show
 /// the actual active binding after defaults, global fallback, explicit
 /// unbinding, and duplicate-key validation have already been applied.
-pub(super) fn bindings_for_action<'a>(
+fn catalog_bindings_for_action<'a>(
     runtime_keymap: &'a RuntimeKeymap,
     context: &str,
     action: &str,
@@ -484,7 +485,7 @@ pub(super) fn format_action_binding_summary(
     action: &str,
 ) -> String {
     let specs = super::active_binding_specs(runtime_keymap, context, action).unwrap_or_else(|_| {
-        bindings_for_action(runtime_keymap, context, action)
+        catalog_bindings_for_action(runtime_keymap, context, action)
             .unwrap_or_default()
             .iter()
             .filter_map(|binding| super::binding_to_config_key_spec(*binding).ok())
