@@ -298,32 +298,7 @@ impl Session {
         action: ApprovalAction,
         ctx: ApprovalContext,
     ) -> Result<ReviewDecision, ToolError> {
-        let permission_request_run_id = ctx
-            .retry_reason
-            .as_ref()
-            .map(|_| format!("{}:retry", ctx.call_id));
-
-        // Approval precedence is:
-        // 1. Hooks
-        // 2. If StrictAutoReview || Guardian enabled, then Guardian. Else, user.
-        let resolution = match run_permission_request_hooks(
-            self,
-            &ctx.turn,
-            permission_request_run_id.as_deref().unwrap_or(&ctx.call_id),
-            action.permission_request_payload(),
-        )
-        .await
-        {
-            Some(PermissionRequestDecision::Allow) => ApprovalResolution {
-                decision: ReviewDecision::Approved,
-                source: ApprovalResolutionSource::Hook,
-            },
-            Some(PermissionRequestDecision::Deny { message }) => ApprovalResolution {
-                decision: ReviewDecision::denied(message),
-                source: ApprovalResolutionSource::Hook,
-            },
-            None => self.request_reviewer_approval(action, &ctx).await,
-        };
+        let resolution = self.request_reviewer_approval(action, &ctx).await;
         record_resolution(&ctx, &resolution);
         resolution.into_tool_result()
     }
@@ -339,15 +314,42 @@ impl Session {
             ApprovalReviewer::for_turn(&ctx.turn)
         };
 
-        let decision = match reviewer {
-            ApprovalReviewer::Guardian => self.request_guardian_approval(action, ctx).await,
-            ApprovalReviewer::User => self.request_user_approval(&action, ctx).await,
-        };
-        let source = match reviewer {
-            ApprovalReviewer::Guardian => ApprovalResolutionSource::Guardian,
-            ApprovalReviewer::User => ApprovalResolutionSource::User,
-        };
-        ApprovalResolution { decision, source }
+        match reviewer {
+            ApprovalReviewer::Guardian => ApprovalResolution {
+                decision: self.request_guardian_approval(action, ctx).await,
+                source: ApprovalResolutionSource::Guardian,
+            },
+            ApprovalReviewer::User => {
+                // PermissionRequest is the human-interrupt lifecycle signal. Guardian
+                // reviews already have the PreToolUse heartbeat and must not emit a
+                // false blocked signal while the automatic reviewer is active.
+                let permission_request_run_id = ctx
+                    .retry_reason
+                    .as_ref()
+                    .map(|_| format!("{}:retry", ctx.call_id));
+                let (decision, source) = match run_permission_request_hooks(
+                    self,
+                    &ctx.turn,
+                    permission_request_run_id.as_deref().unwrap_or(&ctx.call_id),
+                    action.permission_request_payload(),
+                )
+                .await
+                {
+                    Some(PermissionRequestDecision::Allow) => {
+                        (ReviewDecision::Approved, ApprovalResolutionSource::Hook)
+                    }
+                    Some(PermissionRequestDecision::Deny { message }) => (
+                        ReviewDecision::denied(message),
+                        ApprovalResolutionSource::Hook,
+                    ),
+                    None => (
+                        self.request_user_approval(&action, ctx).await,
+                        ApprovalResolutionSource::User,
+                    ),
+                };
+                ApprovalResolution { decision, source }
+            }
+        }
     }
 
     async fn request_guardian_approval(
@@ -480,7 +482,6 @@ impl Session {
                 .await
             }
         }
-    }
 }
 
 fn record_resolution(ctx: &ApprovalContext, resolution: &ApprovalResolution) {
