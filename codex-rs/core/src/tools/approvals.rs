@@ -200,36 +200,7 @@ pub(super) async fn resolve_tool_apporval<Rq, Out, T>(
 where
     T: ToolRuntime<Rq, Out>,
 {
-    if let Some(permission_request) = tool.permission_request_payload(req) {
-        match run_permission_request_hooks(
-            ctx.session,
-            ctx.turn,
-            permission_request_run_id,
-            permission_request,
-        )
-        .await
-        {
-            Some(PermissionRequestDecision::Allow) => {
-                let resolution = ApprovalResolution {
-                    decision: ReviewDecision::Approved,
-                    source: ApprovalResolutionSource::Hook,
-                };
-                record_resolution(otel, tool_ctx, &resolution);
-                return resolution.into_tool_result();
-            }
-            Some(PermissionRequestDecision::Deny { message }) => {
-                let resolution = ApprovalResolution {
-                    decision: ReviewDecision::denied(message),
-                    source: ApprovalResolutionSource::Hook,
-                };
-                record_resolution(otel, tool_ctx, &resolution);
-                return resolution.into_tool_result();
-            }
-            None => {}
-        }
-    }
-
-    let resolution = match reviewer {
+    let (decision, source) = match reviewer {
         ApprovalReviewer::Guardian => {
             let review_id = new_guardian_review_id();
             let action = match tool
@@ -249,25 +220,52 @@ where
                     return resolution.into_tool_result();
                 }
             };
-            review_approval_request(
-                ctx.session,
-                ctx.turn,
-                review_id,
-                action,
-                ctx.retry_reason.clone(),
+            (
+                review_approval_request(
+                    ctx.session,
+                    ctx.turn,
+                    review_id,
+                    action,
+                    ctx.retry_reason.clone(),
+                )
+                .await,
+                ApprovalResolutionSource::Guardian,
             )
-            .await
         }
-        ApprovalReviewer::User => tool.start_approval_async(req, ctx.clone()).await,
+        ApprovalReviewer::User => {
+            // PermissionRequest is the human-interrupt lifecycle signal. Guardian
+            // reviews already have the PreToolUse heartbeat and must not emit a
+            // false blocked signal while the automatic reviewer is active.
+            if let Some(permission_request) = tool.permission_request_payload(req) {
+                match run_permission_request_hooks(
+                    ctx.session,
+                    ctx.turn,
+                    permission_request_run_id,
+                    permission_request,
+                )
+                .await
+                {
+                    Some(PermissionRequestDecision::Allow) => {
+                        (ReviewDecision::Approved, ApprovalResolutionSource::Hook)
+                    }
+                    Some(PermissionRequestDecision::Deny { message }) => (
+                        ReviewDecision::denied(message),
+                        ApprovalResolutionSource::Hook,
+                    ),
+                    None => (
+                        tool.start_approval_async(req, ctx.clone()).await,
+                        ApprovalResolutionSource::User,
+                    ),
+                }
+            } else {
+                (
+                    tool.start_approval_async(req, ctx.clone()).await,
+                    ApprovalResolutionSource::User,
+                )
+            }
+        }
     };
-    let source = match reviewer {
-        ApprovalReviewer::Guardian => ApprovalResolutionSource::Guardian,
-        ApprovalReviewer::User => ApprovalResolutionSource::User,
-    };
-    let resolution = ApprovalResolution {
-        decision: resolution,
-        source,
-    };
+    let resolution = ApprovalResolution { decision, source };
     record_resolution(otel, tool_ctx, &resolution);
     resolution.into_tool_result()
 }
