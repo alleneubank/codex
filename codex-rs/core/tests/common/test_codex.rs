@@ -668,12 +668,9 @@ impl TestCodexBuilder {
                     config.codex_home.clone(),
                 ))
             });
-        let models_manager = self
-            .models_manager
-            .clone()
-            .unwrap_or_else(|| {
-                codex_core::build_models_manager(&config, Arc::clone(&auth_manager))
-            });
+        let models_manager = self.models_manager.clone().unwrap_or_else(|| {
+            codex_core::build_models_manager(&config, Arc::clone(&auth_manager))
+        });
         let thread_manager = ThreadManager::new(
             &config,
             Arc::clone(&auth_manager),
@@ -714,46 +711,49 @@ impl TestCodexBuilder {
             )
         };
 
-        let new_conversation = match (resume_from, user_shell_override) {
-            (Some(path), Some(user_shell_override)) => Box::pin(
-                codex_core::test_support::resume_thread_from_rollout_with_user_shell_override(
-                    thread_manager.as_ref(),
-                    config.clone(),
-                    path,
-                    Arc::clone(&auth_manager),
-                    user_shell_override,
-                    self.supports_openai_form_elicitation,
-                ),
-            )
-            .await?,
-            (Some(path), None) => {
-                Box::pin(thread_manager.resume_thread_from_rollout(
-                    config.clone(),
-                    path,
-                    Arc::clone(&auth_manager),
-                    /*parent_trace*/ None,
-                    client_mcp_extensions(),
-                ))
-                .await?
-            }
-            (None, Some(user_shell_override)) => Box::pin(
-                codex_core::test_support::start_thread_with_user_shell_override(
-                    thread_manager.as_ref(),
-                    config.clone(),
-                    user_shell_override,
-                    self.supports_openai_form_elicitation,
-                ),
-            )
-            .await?,
-            (None, None) => {
-                Box::pin(thread_manager.start_thread(StartThreadOptions {
-                    history_mode: self.history_mode,
-                    client_mcp_extensions: client_mcp_extensions(),
-                    ..StartThreadOptions::new(config.clone())
-                }))
-                .await?
-            }
-        };
+        let new_conversation =
+            match (resume_from, user_shell_override) {
+                (Some(path), Some(user_shell_override)) => Box::pin(
+                    codex_core::test_support::resume_thread_from_rollout_with_user_shell_override(
+                        thread_manager.as_ref(),
+                        config.clone(),
+                        path,
+                        Arc::clone(&auth_manager),
+                        user_shell_override,
+                        self.supports_openai_form_elicitation,
+                    ),
+                )
+                .await?,
+                (Some(path), None) => {
+                    Box::pin(thread_manager.resume_thread_from_rollout(
+                        config.clone(),
+                        path,
+                        Arc::clone(&auth_manager),
+                        /*parent_trace*/ None,
+                        client_mcp_extensions(),
+                    ))
+                    .await?
+                }
+                (None, Some(user_shell_override)) => {
+                    Box::pin(
+                        codex_core::test_support::start_thread_with_user_shell_override(
+                            thread_manager.as_ref(),
+                            config.clone(),
+                            user_shell_override,
+                            self.supports_openai_form_elicitation,
+                        ),
+                    )
+                    .await?
+                }
+                (None, None) => {
+                    Box::pin(thread_manager.start_thread(StartThreadOptions {
+                        history_mode: self.history_mode,
+                        client_mcp_extensions: client_mcp_extensions(),
+                        ..StartThreadOptions::new(config.clone())
+                    }))
+                    .await?
+                }
+            };
 
         Ok(TestCodex {
             home,

@@ -365,8 +365,8 @@ print(json.dumps({{
     assert!(
         timeout(Duration::from_millis(150), results.recv())
             .await
-        .expect("shutdown should close the result channel")
-        .is_err(),
+            .expect("shutdown should close the result channel")
+            .is_err(),
         "shutdown must not deliver a late async result"
     );
 }
