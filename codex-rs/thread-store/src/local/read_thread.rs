@@ -65,9 +65,6 @@ pub(super) async fn read_thread(
             rollout_thread.section = thread.section;
             rollout_thread.section_position = thread.section_position;
             rollout_thread.section_entered_at = thread.section_entered_at;
-            if !thread.cwd.as_os_str().is_empty() {
-                rollout_thread.cwd = thread.cwd;
-            }
             if thread.name.is_some() {
                 rollout_thread.name = thread.name;
             }

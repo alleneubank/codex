@@ -482,6 +482,7 @@ impl Session {
                 .await
             }
         }
+    }
 }
 
 fn record_resolution(ctx: &ApprovalContext, resolution: &ApprovalResolution) {
