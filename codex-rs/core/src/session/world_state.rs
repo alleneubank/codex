@@ -204,7 +204,6 @@ impl Session {
                     turn_context,
                     &step_context.environments,
                     Some(current_date),
-                    &step_context.workspace_roots,
                 )
                 .with_subagents(environment_subagents),
             );

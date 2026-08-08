@@ -139,6 +139,31 @@ fn rollout_account_change_fence_marker_count(rollout_path: &std::path::Path) -> 
         .count()
 }
 
+async fn start_text_turn(codex: &codex_core::CodexThread, text: &str) -> anyhow::Result<()> {
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+    Ok(())
+}
+
+async fn start_fenced_text_turn(codex: &codex_core::CodexThread, text: &str) -> anyhow::Result<()> {
+    let error = codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .expect_err("fenced turn submission should return the account-change error");
+    assert!(
+        error.to_string().contains("Start a new session"),
+        "unexpected fenced turn submission error: {error}"
+    );
+    Ok(())
+}
+
 fn test_turn_responses_metadata(
     _client: &ModelClient,
     thread_id: ThreadId,
@@ -1868,12 +1893,7 @@ async fn chatgpt_401_reload_account_change_returns_new_session_error() -> anyhow
         .clone()
         .expect("rollout path should be configured");
 
-    test.codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "hello".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_text_turn(&test.codex, "hello").await?;
 
     let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
@@ -1904,12 +1924,7 @@ async fn chatgpt_401_reload_account_change_returns_new_session_error() -> anyhow
         Some("Bearer account-a-token")
     );
 
-    test.codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "next".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_fenced_text_turn(&test.codex, "next").await?;
     let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
         unreachable!();
@@ -1954,13 +1969,7 @@ async fn chatgpt_401_reload_account_change_returns_new_session_error() -> anyhow
     let resumed = builder
         .resume(&server, resumed_home, rollout_path.clone())
         .await?;
-    resumed
-        .codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "after resume".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_fenced_text_turn(&resumed.codex, "after resume").await?;
     let error_event = wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
         unreachable!();
@@ -2063,12 +2072,7 @@ async fn chatgpt_401_refresh_account_change_returns_new_session_error() -> anyho
         .build(&server)
         .await?;
 
-    test.codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "hello".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_text_turn(&test.codex, "hello").await?;
 
     let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
@@ -2172,12 +2176,7 @@ async fn chatgpt_401_external_refresh_account_change_returns_new_session_error()
         .build(&server)
         .await?;
 
-    test.codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "hello".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_text_turn(&test.codex, "hello").await?;
 
     let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
@@ -2199,12 +2198,7 @@ async fn chatgpt_401_external_refresh_account_change_returns_new_session_error()
         "external refresh should cache the refreshed account for the next session"
     );
 
-    test.codex
-        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
-            text: "next".into(),
-            text_elements: Vec::new(),
-        }]))
-        .await?;
+    start_fenced_text_turn(&test.codex, "next").await?;
     let error_event = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let EventMsg::Error(error) = error_event else {
         unreachable!();

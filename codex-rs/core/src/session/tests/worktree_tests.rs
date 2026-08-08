@@ -1,5 +1,49 @@
 use super::*;
+use crate::config::PermissionProfileSnapshot;
+use crate::environment_selection::EnvironmentConfigOrigin;
+use crate::environment_selection::ThreadEnvironments;
+use codex_protocol::protocol::EnvironmentConfig;
 use pretty_assertions::assert_eq;
+
+fn set_turn_permission_profile(
+    turn_context: &mut Arc<TurnContext>,
+    permission_profile: PermissionProfile,
+) {
+    let turn_context = Arc::get_mut(turn_context).expect("single turn context ref");
+    Arc::make_mut(&mut turn_context.config)
+        .permissions
+        .set_permission_profile(permission_profile.clone())
+        .expect("test permission profile should be allowed");
+    let Some(environment) = turn_context
+        .environments
+        .environments
+        .iter_mut()
+        .find_map(|state| match state {
+            TurnEnvironmentState::Ready(environment)
+                if environment.selection.environment_id == LOCAL_ENVIRONMENT_ID =>
+            {
+                Some(environment)
+            }
+            _ => None,
+        })
+    else {
+        return;
+    };
+    environment.config_mut().permission_profile =
+        PermissionProfileSnapshot::legacy(permission_profile);
+}
+
+fn writable_environment_config() -> EnvironmentConfig {
+    EnvironmentConfig {
+        allow_login_shell: true,
+        permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::workspace_write()),
+        shell_environment_policy: Default::default(),
+        exec_policy: None,
+        mcp_policy: None,
+        network_policy: None,
+        selected_capability_roots: Vec::new(),
+    }
+}
 
 fn init_worktree_tool_repo(repo_path: &Path) -> anyhow::Result<()> {
     run_worktree_tool_git(repo_path, &["init"])?;
@@ -54,9 +98,35 @@ async fn make_worktree_tool_session_with_rx(
     async_channel::Receiver<Event>,
 )> {
     let repo_path = repo_path.abs();
-    let (session, rx) = make_session_with_config_and_rx(move |config| {
-        config.cwd = repo_path;
-    })
+    let original_cwd = PathUri::from_abs_path(&repo_path);
+    let remote_selection = TurnEnvironmentSelection {
+        environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+        cwd: original_cwd.clone(),
+        workspace_roots: vec![original_cwd.clone()],
+        config: EnvironmentConfigState::FromThread,
+    };
+    let remote_environment = Arc::new(Environment::create_for_tests(Some(
+        "ws://127.0.0.1:8765".to_string(),
+    ))?);
+    let mut inherited_remote_selection = remote_selection.clone();
+    inherited_remote_selection.config =
+        EnvironmentConfigState::Ready(writable_environment_config());
+    let inherited_environments = TurnEnvironmentSnapshot {
+        environments: vec![TurnEnvironmentState::Ready(TurnEnvironment::new(
+            inherited_remote_selection,
+            EnvironmentConfigOrigin::Thread,
+            remote_environment,
+            /*shell*/ None,
+        ))],
+    };
+    let config_cwd = repo_path.clone();
+    let (session, rx) = make_session_with_config_and_rx_with_environments(
+        move |config| {
+            config.cwd = config_cwd;
+        },
+        Some(vec![local(repo_path), remote_selection]),
+        Some(inherited_environments),
+    )
     .await?;
     let turn_context = session.new_default_turn().await;
     Ok((session, turn_context, rx))
@@ -205,9 +275,7 @@ async fn enter_worktree_rejects_managed_creation_without_write_permission() -> a
     std::fs::create_dir(&repo)?;
     init_worktree_tool_repo(&repo)?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::read_only();
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::read_only());
 
     let result = enter_worktree_result(
         session,
@@ -262,9 +330,7 @@ async fn enter_worktree_path_rejects_unmanaged_same_repo_worktree() -> anyhow::R
         &["worktree", "add", unmanaged.to_str().expect("utf-8 path")],
     )?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     let result = enter_worktree_result(
         session,
@@ -287,9 +353,11 @@ async fn enter_worktree_path_accepts_existing_managed_worktree() -> anyhow::Resu
     init_worktree_tool_repo(&repo)?;
     let managed = codex_git_utils::create_or_reuse_managed_worktree(&repo, "codex-existing")?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+    let turn_context_config = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+    Arc::make_mut(&mut turn_context_config.config)
+        .permissions
+        .set_permission_profile(PermissionProfile::read_only())?;
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -318,6 +386,45 @@ async fn enter_worktree_path_accepts_existing_managed_worktree() -> anyhow::Resu
 }
 
 #[tokio::test]
+async fn enter_worktree_path_rejects_environment_read_only_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    init_worktree_tool_repo(&repo)?;
+    let managed = codex_git_utils::create_or_reuse_managed_worktree(&repo, "codex-env-read-only")?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+    let turn_context_config = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+    let environment = turn_context_config
+        .environments
+        .environments
+        .iter_mut()
+        .find_map(|state| match state {
+            TurnEnvironmentState::Ready(environment)
+                if environment.selection.environment_id == LOCAL_ENVIRONMENT_ID =>
+            {
+                Some(environment)
+            }
+            _ => None,
+        })
+        .expect("local environment");
+    environment.config_mut().permission_profile =
+        PermissionProfileSnapshot::legacy(PermissionProfile::read_only());
+
+    let result = enter_worktree_result(
+        session,
+        turn_context,
+        json!({
+            "path": managed.path,
+        }),
+    )
+    .await;
+
+    assert_respond_to_model(result, "requires filesystem write permission");
+    Ok(())
+}
+
+#[tokio::test]
 async fn enter_worktree_rejects_derived_active_managed_worktree() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
@@ -325,9 +432,7 @@ async fn enter_worktree_rejects_derived_active_managed_worktree() -> anyhow::Res
     init_worktree_tool_repo(&repo)?;
     let managed = codex_git_utils::create_or_reuse_managed_worktree(&repo, "codex-active")?;
     let (session, mut turn_context) = make_worktree_tool_session(&managed.path).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     let result = enter_worktree_result(
         Arc::clone(&session),
@@ -356,9 +461,7 @@ async fn enter_worktree_updates_later_step_context_in_same_turn() -> anyhow::Res
     std::fs::create_dir(&repo)?;
     init_worktree_tool_repo(&repo)?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
     let original_workspace_roots = turn_context.config.workspace_roots.clone();
 
     enter_worktree_result(
@@ -407,6 +510,89 @@ async fn enter_worktree_updates_later_step_context_in_same_turn() -> anyhow::Res
 }
 
 #[tokio::test]
+async fn enter_worktree_uses_primary_environment_state() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    let stale_cwd = temp.path().join("stale-cwd");
+    let stale_workspace_root = temp.path().join("stale-workspace-root");
+    std::fs::create_dir(&repo)?;
+    std::fs::create_dir(&stale_cwd)?;
+    std::fs::create_dir(&stale_workspace_root)?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    let expected_environment = turn_context
+        .environments
+        .primary()
+        .expect("primary environment");
+    let expected_cwd = expected_environment.cwd().to_abs_path()?;
+    let expected_workspace_roots = expected_environment
+        .workspace_roots()
+        .iter()
+        .map(codex_utils_path_uri::PathUri::to_abs_path)
+        .collect::<Result<Vec<_>, _>>()?;
+    let turn_context_config = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+    let turn_config = Arc::make_mut(&mut turn_context_config.config);
+    turn_config.cwd = stale_cwd.abs();
+    turn_config.workspace_roots = vec![stale_workspace_root.abs()];
+    turn_config
+        .permissions
+        .set_permission_profile(PermissionProfile::read_only())?;
+
+    enter_worktree_result(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        json!({
+            "name": "codex-environment-state",
+        }),
+    )
+    .await?;
+
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("worktree should be active");
+    assert_eq!(active_worktree.original_cwd, expected_cwd);
+    assert_eq!(
+        active_worktree.original_workspace_roots,
+        Some(expected_workspace_roots.clone())
+    );
+
+    let info = codex_git_utils::inspect_worktree(&repo)?;
+    let expected_worktree_path =
+        codex_git_utils::managed_worktree_path(&info.common_dir, "codex-environment-state")?.abs();
+    let next_step = session
+        .capture_step_context(Arc::clone(&turn_context), &CancellationToken::new())
+        .await?;
+    assert!(
+        next_step
+            .environments
+            .primary()
+            .expect("primary environment")
+            .workspace_roots()
+            .contains(&PathUri::from_abs_path(&expected_worktree_path))
+    );
+    assert!(
+        !next_step
+            .environments
+            .primary()
+            .expect("primary environment")
+            .workspace_roots()
+            .contains(&PathUri::from_abs_path(&stale_workspace_root.abs(),))
+    );
+
+    exit_worktree_result(Arc::clone(&session), session.new_default_turn().await).await?;
+    let restored_turn = session.new_default_turn().await;
+    assert_eq!(restored_turn.config.cwd, expected_cwd);
+    assert_eq!(
+        restored_turn.config.workspace_roots,
+        expected_workspace_roots
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn cwd_settings_update_persists_thread_metadata_cwd() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let next_cwd = temp.path().join("next").abs();
@@ -445,9 +631,7 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
     std::fs::create_dir(&repo)?;
     init_worktree_tool_repo(&repo)?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -467,12 +651,18 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
         .await?;
     assert!(
         next_step
-            .workspace_roots
+            .environments
+            .primary()
+            .expect("primary environment")
+            .workspace_roots()
             .contains(&PathUri::from_abs_path(&expected_worktree_path))
     );
     assert!(
         next_step
-            .workspace_roots
+            .environments
+            .primary()
+            .expect("primary environment")
+            .workspace_roots()
             .contains(&PathUri::from_abs_path(&common_dir))
     );
 
@@ -497,9 +687,7 @@ async fn worktree_tools_emit_thread_settings_applied_events() -> anyhow::Result<
     std::fs::create_dir(&repo)?;
     init_worktree_tool_repo(&repo)?;
     let (session, mut turn_context, rx) = make_worktree_tool_session_with_rx(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -524,9 +712,7 @@ async fn enter_worktree_without_args_requires_explicit_name_or_path() -> anyhow:
     std::fs::create_dir(&repo)?;
     init_worktree_tool_repo(&repo)?;
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     let result = enter_worktree_result(Arc::clone(&session), turn_context, json!({})).await;
 
@@ -545,9 +731,7 @@ async fn exit_worktree_derived_state_restores_metadata_original_subdirectory() -
     init_worktree_tool_repo(&repo)?;
     std::fs::create_dir(&subdir)?;
     let (session, mut turn_context) = make_worktree_tool_session(&subdir).await?;
-    Arc::get_mut(&mut turn_context)
-        .expect("single turn context ref")
-        .permission_profile = PermissionProfile::Disabled;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -665,10 +849,14 @@ async fn enter_worktree_rejects_remote_primary_environment() -> anyhow::Result<(
         .expect("single turn context ref")
         .environments = TurnEnvironmentSnapshot {
         environments: vec![TurnEnvironmentState::Ready(TurnEnvironment::new(
-            REMOTE_ENVIRONMENT_ID.to_string(),
+            TurnEnvironmentSelection {
+                environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+                cwd: cwd.clone(),
+                workspace_roots: vec![cwd.clone()],
+                config: EnvironmentConfigState::Ready(writable_environment_config()),
+            },
+            EnvironmentConfigOrigin::Thread,
             remote_environment,
-            cwd.clone(),
-            vec![cwd],
             /*shell*/ None,
         ))],
     };
@@ -705,20 +893,24 @@ async fn enter_worktree_retargets_only_local_primary_and_preserves_remote_second
     ))?);
     {
         let turn_context = Arc::get_mut(&mut turn_context).expect("single turn context ref");
-        turn_context.permission_profile = PermissionProfile::Disabled;
         turn_context.environments = TurnEnvironmentSnapshot {
             environments: vec![
                 TurnEnvironmentState::Ready(local_environment),
                 TurnEnvironmentState::Ready(TurnEnvironment::new(
-                    REMOTE_ENVIRONMENT_ID.to_string(),
+                    TurnEnvironmentSelection {
+                        environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+                        cwd: original_cwd.clone(),
+                        workspace_roots: vec![original_cwd.clone()],
+                        config: EnvironmentConfigState::Ready(writable_environment_config()),
+                    },
+                    EnvironmentConfigOrigin::Thread,
                     remote_environment,
-                    original_cwd.clone(),
-                    vec![original_cwd.clone()],
                     /*shell*/ None,
                 )),
             ],
         };
     }
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -729,8 +921,7 @@ async fn enter_worktree_retargets_only_local_primary_and_preserves_remote_second
     )
     .await?;
 
-    let state = session.state.lock().await;
-    let selections = state.session_configuration.environment_selections();
+    let selections = session.services.turn_environments.selections();
     assert_eq!(selections.len(), 2);
     assert_eq!(selections[0].environment_id, LOCAL_ENVIRONMENT_ID);
     let info = codex_git_utils::inspect_worktree(&repo)?;
@@ -769,35 +960,65 @@ async fn enter_worktree_retargets_local_primary_and_preserves_starting_secondary
         .primary()
         .expect("default local environment")
         .clone();
+    let environment_config = writable_environment_config();
     let turn_environments = ThreadEnvironments::new(
         manager,
         default_user_shell(),
+        environment_config.clone(),
         ShellSnapshot::disabled(),
         TurnEnvironmentSnapshot {
             environments: vec![TurnEnvironmentState::Ready(local_environment)],
         },
         /*non_blocking_snapshots*/ true,
     );
-    turn_environments.update_selections(&[
-        TurnEnvironmentSelection {
-            environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
-            cwd: original_cwd.clone(),
-            workspace_roots: vec![original_cwd.clone()],
-        },
-        TurnEnvironmentSelection {
-            environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
-            cwd: original_cwd.clone(),
-            workspace_roots: vec![original_cwd.clone()],
-        },
-    ]);
+    turn_environments.update_selections(
+        &[
+            TurnEnvironmentSelection {
+                environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+                cwd: original_cwd.clone(),
+                workspace_roots: vec![original_cwd.clone()],
+                config: EnvironmentConfigState::FromThread,
+            },
+            TurnEnvironmentSelection {
+                environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+                cwd: original_cwd.clone(),
+                workspace_roots: vec![original_cwd.clone()],
+                config: EnvironmentConfigState::FromThread,
+            },
+        ],
+        &environment_config,
+    );
     let snapshot = turn_environments.snapshot().await;
     assert_eq!(snapshot.turn_environments().count(), 1);
     assert_eq!(snapshot.starting().count(), 1);
     {
-        let turn_context = Arc::get_mut(&mut turn_context).expect("single turn context ref");
-        turn_context.permission_profile = PermissionProfile::Disabled;
-        turn_context.environments = snapshot;
+        let turn_context_config = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+        turn_context_config.environments = TurnEnvironmentSnapshot {
+            environments: snapshot.environments.iter().rev().cloned().collect(),
+        };
     }
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    let result = enter_worktree_result(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        json!({
+            "name": "codex-starting-primary",
+        }),
+    )
+    .await;
+    assert_respond_to_model(result, "requires a local primary environment that is ready");
+    let exit_result = exit_worktree_result(Arc::clone(&session), Arc::clone(&turn_context)).await;
+    assert_respond_to_model(
+        exit_result,
+        "requires a local primary environment that is ready",
+    );
+
+    {
+        let turn_context_config = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+        turn_context_config.environments = snapshot;
+    }
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
     enter_worktree_result(
         Arc::clone(&session),
@@ -808,8 +1029,7 @@ async fn enter_worktree_retargets_local_primary_and_preserves_starting_secondary
     )
     .await?;
 
-    let state = session.state.lock().await;
-    let selections = state.session_configuration.environment_selections();
+    let selections = session.services.turn_environments.selections();
     assert_eq!(selections.len(), 2);
     assert_eq!(selections[0].environment_id, LOCAL_ENVIRONMENT_ID);
     let info = codex_git_utils::inspect_worktree(&repo)?;
@@ -842,33 +1062,40 @@ async fn enter_worktree_rejects_starting_only_environment_selections() -> anyhow
         )
         .await,
     );
+    let environment_config = writable_environment_config();
     let turn_environments = ThreadEnvironments::new(
         manager,
         default_user_shell(),
+        environment_config.clone(),
         ShellSnapshot::disabled(),
         TurnEnvironmentSnapshot::default(),
         /*non_blocking_snapshots*/ true,
     );
-    turn_environments.update_selections(&[
-        TurnEnvironmentSelection {
-            environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
-            cwd: original_cwd.clone(),
-            workspace_roots: vec![original_cwd.clone()],
-        },
-        TurnEnvironmentSelection {
-            environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
-            cwd: original_cwd.clone(),
-            workspace_roots: vec![original_cwd.clone()],
-        },
-    ]);
+    turn_environments.update_selections(
+        &[
+            TurnEnvironmentSelection {
+                environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+                cwd: original_cwd.clone(),
+                workspace_roots: vec![original_cwd.clone()],
+                config: EnvironmentConfigState::FromThread,
+            },
+            TurnEnvironmentSelection {
+                environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+                cwd: original_cwd.clone(),
+                workspace_roots: vec![original_cwd.clone()],
+                config: EnvironmentConfigState::FromThread,
+            },
+        ],
+        &environment_config,
+    );
     let snapshot = turn_environments.snapshot().await;
     assert_eq!(snapshot.turn_environments().count(), 0);
     assert_eq!(snapshot.starting().count(), 2);
     {
         let turn_context = Arc::get_mut(&mut turn_context).expect("single turn context ref");
-        turn_context.permission_profile = PermissionProfile::Disabled;
         turn_context.environments = snapshot;
     }
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::Disabled);
 
     let result = enter_worktree_result(
         Arc::clone(&session),

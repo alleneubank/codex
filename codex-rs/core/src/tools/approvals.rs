@@ -10,6 +10,7 @@ use crate::guardian::review_approval_request;
 use crate::guardian::review_approval_request_with_cancel;
 use crate::guardian::routes_approval_policy_to_guardian;
 use crate::guardian::spawn_approval_request_review;
+use crate::hook_runtime::PermissionRequestHookEventMode;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_tool_call::request_mcp_tool_user_approval;
 use crate::sandboxing::SandboxPermissions;
@@ -490,44 +491,46 @@ impl Session {
             ApprovalReviewer::for_turn(ctx.review_context.turn())
         };
 
+        let permission_request_run_id = match &action {
+            #[cfg(unix)]
+            ApprovalAction::Execve { approval_id, .. } => approval_id.clone(),
+            ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
+            _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
+            _ => ctx.call_id.clone(),
+        };
+        let event_mode = if matches!(&reviewer, ApprovalReviewer::Guardian) {
+            PermissionRequestHookEventMode::Suppress
+        } else {
+            PermissionRequestHookEventMode::Emit
+        };
+        if let Some(decision) = run_permission_request_hooks(
+            self,
+            ctx.review_context.turn(),
+            &permission_request_run_id,
+            action.permission_request_payload(),
+            event_mode,
+        )
+        .await
+        {
+            let decision = match decision {
+                PermissionRequestDecision::Allow => ReviewDecision::Approved,
+                PermissionRequestDecision::Deny { message } => ReviewDecision::denied(message),
+            };
+            return ApprovalResolution {
+                decision,
+                source: ApprovalResolutionSource::Hook,
+            };
+        }
+
         match reviewer {
             ApprovalReviewer::Guardian => ApprovalResolution {
                 decision: self.request_guardian_approval(action, ctx).await,
                 source: ApprovalResolutionSource::Guardian,
             },
-            ApprovalReviewer::User => {
-                // PermissionRequest is the human-interrupt lifecycle signal. Guardian
-                // reviews already have the PreToolUse heartbeat and must not emit a
-                // false blocked signal while the automatic reviewer is active.
-                let permission_request_run_id = match &action {
-                    #[cfg(unix)]
-                    ApprovalAction::Execve { approval_id, .. } => approval_id.clone(),
-                    ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
-                    _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
-                    _ => ctx.call_id.clone(),
-                };
-                let (decision, source) = match run_permission_request_hooks(
-                    self,
-                    ctx.review_context.turn(),
-                    &permission_request_run_id,
-                    action.permission_request_payload(),
-                )
-                .await
-                {
-                    Some(PermissionRequestDecision::Allow) => {
-                        (ReviewDecision::Approved, ApprovalResolutionSource::Hook)
-                    }
-                    Some(PermissionRequestDecision::Deny { message }) => (
-                        ReviewDecision::denied(message),
-                        ApprovalResolutionSource::Hook,
-                    ),
-                    None => (
-                        self.request_user_approval(&action, ctx).await,
-                        ApprovalResolutionSource::User,
-                    ),
-                };
-                ApprovalResolution { decision, source }
-            }
+            ApprovalReviewer::User => ApprovalResolution {
+                decision: self.request_user_approval(&action, ctx).await,
+                source: ApprovalResolutionSource::User,
+            },
         }
     }
 
@@ -770,6 +773,7 @@ impl Session {
                 unreachable!("permission requests are routed directly to Guardian")
             }
         }
+    }
 }
 
 fn record_resolution(ctx: &ApprovalContext, resolution: &ApprovalResolution) {
