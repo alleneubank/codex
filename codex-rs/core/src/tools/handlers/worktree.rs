@@ -1,7 +1,9 @@
+use crate::environment_selection::TurnEnvironmentState;
 use crate::function_tool::FunctionCallError;
 use crate::session::ActiveWorktree;
 use crate::session::SessionSettingsUpdate;
 use crate::session::thread_settings_applied_event;
+use crate::session::turn_context::TurnEnvironment;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -164,8 +166,27 @@ async fn enter_worktree(
             )));
         }
     };
-    ensure_local_primary_environment(ENTER_WORKTREE_TOOL_NAME, &step_context.environments)?;
-    let original_cwd = turn.config.cwd.clone();
+    let primary_environment =
+        local_primary_environment(ENTER_WORKTREE_TOOL_NAME, &step_context.environments)?;
+    let original_cwd = primary_environment.cwd().to_abs_path().map_err(|err| {
+        worktree_model_error(format!(
+            "{ENTER_WORKTREE_TOOL_NAME} requires a native local primary environment cwd: {err}"
+        ))
+    })?;
+    let original_workspace_roots = primary_environment
+        .workspace_roots()
+        .iter()
+        .map(|workspace_root| {
+            workspace_root.to_abs_path().map_err(|err| {
+                worktree_model_error(format!(
+                    "{ENTER_WORKTREE_TOOL_NAME} requires native local primary environment workspace roots: {err}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let file_system_sandbox_policy = primary_environment
+        .permission_profile_with_workspace_roots()
+        .file_system_sandbox_policy();
     if let Some(active_worktree_state) =
         active_or_derived_worktree(&session, original_cwd.as_path()).await?
     {
@@ -188,7 +209,7 @@ async fn enter_worktree(
         (Some(name), None) => {
             ensure_managed_worktree_writes_allowed(
                 ENTER_WORKTREE_TOOL_NAME,
-                turn.file_system_sandbox_policy(),
+                file_system_sandbox_policy,
                 original_cwd.as_path(),
                 &original_info,
                 &name,
@@ -219,7 +240,7 @@ async fn enter_worktree(
             .await?;
             ensure_worktree_paths_writable(
                 ENTER_WORKTREE_TOOL_NAME,
-                turn.file_system_sandbox_policy(),
+                file_system_sandbox_policy,
                 original_cwd.as_path(),
                 &[original_cwd.as_path().to_path_buf()],
             )?;
@@ -256,7 +277,7 @@ async fn enter_worktree(
         &worktree_cwd,
         &step_context.environments,
         PrimaryWorkspaceRootsUpdate::Replace(workspace_roots_for_enter(
-            &turn.config.workspace_roots,
+            &original_workspace_roots,
             &original_cwd,
             &worktree_cwd,
             &worktree_path,
@@ -279,7 +300,7 @@ async fn enter_worktree(
         .set_active_worktree(ActiveWorktree {
             original_cwd: original_cwd.clone(),
             original_common_dir: original_info.common_dir,
-            original_workspace_roots: Some(turn.config.workspace_roots.clone()),
+            original_workspace_roots: Some(original_workspace_roots),
             worktree_path: worktree_path.clone(),
             branch: branch.clone(),
             name: name.clone(),
@@ -319,7 +340,7 @@ async fn exit_worktree(
         }
     };
     let args: ExitWorktreeArgs = parse_arguments(&arguments).map_err(bound_worktree_error)?;
-    ensure_local_primary_environment(EXIT_WORKTREE_TOOL_NAME, &step_context.environments)?;
+    local_primary_environment(EXIT_WORKTREE_TOOL_NAME, &step_context.environments)?;
     let (active_worktree_state, current_cwd) =
         active_or_derived_worktree_for_exit(&session, &step_context.environments).await?;
     let is_session_active_worktree =
@@ -383,11 +404,11 @@ async fn exit_worktree(
     })
 }
 
-fn ensure_local_primary_environment(
+fn local_primary_environment<'a>(
     tool_name: &str,
-    environments: &crate::environment_selection::TurnEnvironmentSnapshot,
-) -> Result<(), FunctionCallError> {
-    let Some(primary) = environments.primary() else {
+    environments: &'a crate::environment_selection::TurnEnvironmentSnapshot,
+) -> Result<&'a TurnEnvironment, FunctionCallError> {
+    let Some(TurnEnvironmentState::Ready(primary)) = environments.environments.first() else {
         return Err(worktree_model_error(format!(
             "{tool_name} requires a local primary environment that is ready"
         )));
@@ -397,7 +418,7 @@ fn ensure_local_primary_environment(
             "{tool_name} requires a local primary environment"
         )));
     }
-    Ok(())
+    Ok(primary)
 }
 
 fn cwd_settings_update(
