@@ -16,9 +16,7 @@ use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::RequestId;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
-use codex_config::types::AuthCredentialsStoreMode;
 use codex_feedback::CodexFeedback;
-use codex_login::AuthKeyringBackendKind;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -173,6 +171,7 @@ async fn start_test_app_server_client() -> anyhow::Result<TestAppServerClient> {
         .codex_home(codex_home_path.clone())
         .build()
         .await?;
+    let auth_config = config.auth_config();
     let arg0_paths = Arg0DispatchPaths::default();
     #[cfg(target_os = "linux")]
     let arg0_paths = {
@@ -190,14 +189,10 @@ async fn start_test_app_server_client() -> anyhow::Result<TestAppServerClient> {
         loader_overrides: Default::default(),
         strict_config: false,
         cloud_config_bundle: cloud_config_bundle_loader_for_storage(
-            codex_home_path,
+            auth_config,
             /*enable_codex_api_key_env*/ false,
-            AuthCredentialsStoreMode::File,
-            AuthKeyringBackendKind::default(),
-            "https://chatgpt.com/backend-api/".to_string(),
-            codex_login::test_support::transport_default_auth_route_config(),
         )
-        .await,
+        .await?,
         feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,

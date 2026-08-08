@@ -3,16 +3,26 @@
 `origin/main` is the only maintained product branch for this fork. It contains the fork commits on
 top of `upstream/main`; `origin/fork` is retired and must not be recreated.
 
-After syncing upstream, update and verify the stable version pin before committing:
+After syncing upstream, update and commit the stable version pin, then run the maintenance and
+freshness checks:
 
 ```sh
 git fetch --prune origin
 git fetch --prune --tags upstream
 git rebase upstream/main
 just update-fork-version
+git diff --quiet HEAD -- codex-rs/fork-version.txt || {
+  git add codex-rs/fork-version.txt
+  git commit -m "chore: update fork version"
+}
 just test-fork-maintenance
 just check-fork-version
 ```
+
+During that rebase, compare fork-only integrations with upstream's current extension points,
+types, permission/environment models, lifecycle APIs, and release/build conventions. Adapt them
+as part of conflict resolution; stage the adapted files and run `git rebase --continue` before
+updating the fork version. Add focused regression coverage for each adaptation.
 
 Install the repository-owned push policy once per clone:
 
