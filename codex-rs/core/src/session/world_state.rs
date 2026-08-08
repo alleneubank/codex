@@ -239,7 +239,6 @@ impl Session {
                     turn_context,
                     &step_context.environments,
                     Some(current_date),
-                    &step_context.workspace_roots,
                 )
                 .await
                 .with_subagents(environment_subagents),

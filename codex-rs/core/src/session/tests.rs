@@ -268,7 +268,6 @@ impl StepContext {
             session_telemetry: turn.session_telemetry.clone(),
             turn: Arc::clone(&turn),
             environments,
-            workspace_roots,
             selected_capability_roots: Vec::new(),
             executor_capability_discovery: None,
             mcp: Arc::new(codex_mcp::McpBinding::empty(mcp_config_for_test(
@@ -3776,7 +3775,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         active_permission_profile: None,
@@ -6658,6 +6657,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
+        auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
         next_internal_sub_id: AtomicU64::new(0),
     };
     let per_turn_config =
@@ -6730,6 +6730,14 @@ async fn load_latest_config_for_session(session: &Session) -> Config {
 async fn make_session_with_config_and_rx(
     mutator: impl FnOnce(&mut Config),
 ) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
+    make_session_with_config_and_rx_with_environments(mutator, None, None).await
+}
+
+pub(crate) async fn make_session_with_config_and_rx_with_environments(
+    mutator: impl FnOnce(&mut Config),
+    environment_selections: Option<Vec<TurnEnvironmentSelection>>,
+    inherited_environments: Option<TurnEnvironmentSnapshot>,
+) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let mut config = build_test_config(codex_home.path()).await;
     mutator(&mut config);
@@ -6751,7 +6759,8 @@ async fn make_session_with_config_and_rx(
             developer_instructions: None,
         },
     };
-    let default_environments = vec![local(config.cwd.clone())];
+    let default_environments =
+        environment_selections.unwrap_or_else(|| vec![local(config.cwd.clone())]);
     let session_configuration = SessionConfiguration {
         provider: create_model_provider(
             config.model_provider.clone(),
@@ -6833,7 +6842,7 @@ async fn make_session_with_config_and_rx(
         AgentControl::default(),
         /*reserved_thread_id*/ None,
         environment_manager,
-        /*inherited_environments*/ None,
+        inherited_environments,
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
@@ -8941,6 +8950,7 @@ where
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
+        auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
         next_internal_sub_id: AtomicU64::new(0),
     });
     let per_turn_config =

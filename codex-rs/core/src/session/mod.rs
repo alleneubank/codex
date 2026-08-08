@@ -251,7 +251,6 @@ use self::code_mode_warning::unsupported_code_mode_warning;
 #[cfg(test)]
 use self::handlers::submission_dispatch_span;
 use self::handlers::submission_loop;
-pub(crate) use self::thread_settings::applied_event as thread_settings_applied_event;
 pub(crate) use self::input_queue::InputQueueActivity;
 pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
@@ -262,6 +261,7 @@ use self::session::Session;
 use self::session::SessionConfiguration;
 use self::session::SessionSettingsCommit;
 pub(crate) use self::session::SessionSettingsUpdate;
+pub(crate) use self::thread_settings::applied_event as thread_settings_applied_event;
 #[cfg(test)]
 use self::turn::AssistantMessageStreamParsers;
 use self::turn::agent_message_text;
@@ -3647,7 +3647,7 @@ impl Session {
                 tool_router
                     .tool_namespaces_info()
                     .cloned()
-                .unwrap_or_default(),
+                    .unwrap_or_default(),
             );
         }
         Ok(Arc::new(StepContext {
@@ -3656,7 +3656,6 @@ impl Session {
             session_telemetry,
             turn: turn_context,
             environments,
-            workspace_roots,
             selected_capability_roots,
             executor_capability_discovery,
             mcp,
@@ -3754,6 +3753,35 @@ impl Session {
     ) {
         self.send_event(turn_context, EventMsg::TurnModerationMetadata(metadata))
             .await;
+    }
+
+    pub(crate) async fn send_auth_account_change_error(&self, turn_context: &TurnContext) {
+        let msg = EventMsg::Error(
+            crate::client::account_changed_new_session_error().to_error_event(None),
+        );
+        if self.mark_auth_account_change_fenced() {
+            self.send_event(turn_context, msg).await;
+        } else {
+            self.deliver_event_raw(Event {
+                id: turn_context.sub_id.clone(),
+                msg,
+            })
+            .await;
+        }
+    }
+
+    pub(crate) async fn send_auth_account_change_error_raw(&self, id: String) {
+        let event = Event {
+            id,
+            msg: EventMsg::Error(
+                crate::client::account_changed_new_session_error().to_error_event(None),
+            ),
+        };
+        if self.mark_auth_account_change_fenced() {
+            self.send_event_raw(event).await;
+        } else {
+            self.deliver_event_raw(event).await;
+        }
     }
 
     #[cfg(test)]
