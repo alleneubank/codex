@@ -194,12 +194,11 @@ impl App {
 
         let status_line_invalid_items_warned = Arc::new(AtomicBool::new(false));
         let terminal_title_invalid_items_warned = Arc::new(AtomicBool::new(false));
-        let workspace_command_runner: WorkspaceCommandRunner = Arc::new(
-            AppServerWorkspaceCommandRunner::new(
+        let workspace_command_runner: WorkspaceCommandRunner =
+            Arc::new(AppServerWorkspaceCommandRunner::new(
                 app_server.request_handle(),
                 app_server.platform_os(),
-            ),
-        );
+            ));
         let runtime_model_provider_started_at = Instant::now();
         let runtime_model_provider_base_url = match startup_draft
             .run_until(

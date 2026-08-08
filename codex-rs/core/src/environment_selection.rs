@@ -751,12 +751,12 @@ impl TurnEnvironmentSnapshot {
     }
 
     pub(crate) fn selections_including_starting(&self) -> Vec<TurnEnvironmentSelection> {
-        self.turn_environments()
-            .map(TurnEnvironment::selection)
-            .chain(
-                self.starting()
-                    .map(|environment| environment.selection.clone()),
-            )
+        self.environments
+            .iter()
+            .map(|environment| match environment {
+                TurnEnvironmentState::Ready(environment) => environment.selection(),
+                TurnEnvironmentState::Starting(environment) => environment.selection.clone(),
+            })
             .collect()
     }
 
@@ -1296,6 +1296,10 @@ url = "ws://127.0.0.1:8765"
             vec![resolved_remote.clone()]
         );
         assert_eq!(starting.to_selections(), vec![local.clone()]);
+        assert_eq!(
+            starting.selections_including_starting(),
+            vec![remote.clone(), local.clone()]
+        );
         assert!(starting.single_local_environment().is_none());
 
         let next_config = test_environment_config();

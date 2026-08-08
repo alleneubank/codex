@@ -61,6 +61,12 @@ pub(crate) struct HookRuntimeOutcome {
     pub additional_contexts: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PermissionRequestHookEventMode {
+    Emit,
+    Suppress,
+}
+
 pub(crate) enum PreToolUseHookResult {
     Continue { updated_input: Option<Value> },
     Blocked(String),
@@ -235,6 +241,7 @@ pub(crate) async fn run_permission_request_hooks(
     turn_context: &Arc<TurnContext>,
     run_id_suffix: &str,
     payload: PermissionRequestPayload,
+    event_mode: PermissionRequestHookEventMode,
 ) -> Option<PermissionRequestDecision> {
     let request = PermissionRequestRequest {
         session_id: sess.session_id().into(),
@@ -252,13 +259,21 @@ pub(crate) async fn run_permission_request_hooks(
     };
     let hooks = sess.hooks();
     let preview_runs = hooks.preview_permission_request(&request);
-    emit_hook_started_events(sess, turn_context, preview_runs).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_started_events(sess, turn_context, preview_runs).await;
+    }
 
     let PermissionRequestOutcome {
         hook_events,
         decision,
     } = hooks.run_permission_request(request).await;
-    emit_hook_completed_events(sess, turn_context, hook_events).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_completed_events(sess, turn_context, hook_events).await;
+    } else {
+        for completed in &hook_events {
+            record_hook_completed_event(sess, turn_context, completed);
+        }
+    }
 
     decision
 }
@@ -744,13 +759,21 @@ pub(crate) async fn emit_hook_completed_events(
     }
 
     for completed in completed_events {
-        emit_hook_completed_metrics(turn_context, &completed);
-        track_hook_completed_analytics(sess, turn_context, &completed);
+        record_hook_completed_event(sess, turn_context, &completed);
         if completed.run.execution_mode == HookExecutionMode::Sync {
             sess.send_event(turn_context, EventMsg::HookCompleted(completed))
                 .await;
         }
     }
+}
+
+fn record_hook_completed_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    completed: &HookCompletedEvent,
+) {
+    emit_hook_completed_metrics(turn_context, completed);
+    track_hook_completed_analytics(sess, turn_context, completed);
 }
 
 fn emit_hook_completed_metrics(turn_context: &TurnContext, completed: &HookCompletedEvent) {

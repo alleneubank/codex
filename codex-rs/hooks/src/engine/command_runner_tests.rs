@@ -319,6 +319,7 @@ fn write_handler(temp: &TempDir, source: &str) -> ConfiguredHandler {
 fn handler(command: String) -> ConfiguredHandler {
     ConfiguredHandler {
         event_name: HookEventName::Stop,
+        execution_mode: HookExecutionMode::Sync,
         matcher: None,
         command,
         timeout_sec: 5,

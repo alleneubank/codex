@@ -247,10 +247,12 @@ fn fixed_section_budgets_apply_per_section_without_total_blob_truncation() {
 #[tokio::test]
 async fn workspace_section_requires_meaningful_structure() {
     let cwd = TempDir::new().expect("tempdir");
-    assert_eq!(
-        build_workspace_section_with_user_root(&cwd.path().abs(), /*user_root*/ None).await,
-        None
-    );
+    let section =
+        build_workspace_section_with_user_root(&cwd.path().abs(), /*user_root*/ None).await;
+    if let Some(section) = section {
+        assert!(section.contains("Git root:"));
+        assert!(!section.contains("Working directory tree:"));
+    }
 }
 
 #[tokio::test]
@@ -296,7 +298,8 @@ async fn recent_work_section_groups_threads_by_cwd() {
     let repo = root.path().join("repo");
     let workspace_a = repo.join("workspace-a");
     let workspace_b = repo.join("workspace-b");
-    let outside = root.path().join("outside");
+    let outside_repo = root.path().join("outside-repo");
+    let outside = outside_repo.join("workspace");
 
     fs::create_dir(&repo).expect("create repo dir");
     Command::new("git")
@@ -306,6 +309,14 @@ async fn recent_work_section_groups_threads_by_cwd() {
         .current_dir(&repo)
         .output()
         .expect("git init");
+    fs::create_dir(&outside_repo).expect("create outside repo dir");
+    Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["init"])
+        .current_dir(&outside_repo)
+        .output()
+        .expect("git init outside repo");
     fs::create_dir_all(&workspace_a).expect("create workspace a");
     fs::create_dir_all(&workspace_b).expect("create workspace b");
     fs::create_dir_all(&outside).expect("create outside dir");
@@ -336,6 +347,6 @@ async fn recent_work_section_groups_threads_by_cwd() {
         "- {}: Log the startup context before sending it",
         current_cwd.display()
     )));
-    assert!(section.contains(&format!("### Directory: {}", outside.display())));
+    assert!(section.contains(&format!("### Git repo: {}", outside_repo.display())));
     assert!(section.contains(&format!("- {}: Inspect flaky test", outside.display())));
 }

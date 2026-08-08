@@ -100,7 +100,10 @@ async fn wait_for_file_contents(path: &Path) -> Result<String> {
 }
 
 fn policy_set_path_for_test() -> HashMap<String, String> {
-    HashMap::from([("PATH".to_string(), POLICY_PATH_FOR_TEST.to_string())])
+    HashMap::from([(
+        "PATH".to_string(),
+        format!("/usr/bin:/bin:{POLICY_PATH_FOR_TEST}"),
+    )])
 }
 
 fn snapshot_override_content_for_policy_test() -> String {

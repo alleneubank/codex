@@ -698,15 +698,33 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
             .clone();
         turn.environments.environments = vec![TurnEnvironmentState::Ready(
             crate::session::turn_context::TurnEnvironment::new(
-                "remote".to_string(),
+                TurnEnvironmentSelection {
+                    environment_id: "remote".to_string(),
+                    cwd: cwd.clone(),
+                    workspace_roots: vec![cwd],
+                    config: EnvironmentConfigState::Ready(
+                        codex_protocol::protocol::EnvironmentConfig {
+                            allow_login_shell: true,
+                            permission_profile: turn
+                                .config
+                                .permissions
+                                .permission_profile_state()
+                                .snapshot(),
+                            shell_environment_policy: Default::default(),
+                            exec_policy: None,
+                            mcp_policy: None,
+                            network_policy: None,
+                            selected_capability_roots: Vec::new(),
+                        },
+                    ),
+                },
+                crate::environment_selection::EnvironmentConfigOrigin::Thread,
                 Arc::new(
                     codex_exec_server::Environment::create_for_tests(Some(
                         "ws://127.0.0.1:1/remote-exec-server".to_string(),
                     ))
                     .expect("remote test environment"),
                 ),
-                cwd.clone(),
-                vec![cwd],
                 /*shell*/ None,
             ),
         )];
@@ -720,7 +738,7 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
 #[tokio::test]
 async fn worktree_tools_stay_direct_in_model_selected_code_mode_only() {
     let plan = probe(|turn| {
-        turn.model_info.tool_mode = Some(ToolMode::CodeModeOnly);
+        Arc::make_mut(&mut turn.model_info).tool_mode = Some(ToolMode::CodeModeOnly);
     })
     .await;
 

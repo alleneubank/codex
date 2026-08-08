@@ -1,4 +1,5 @@
 use anyhow::Result;
+use codex_core::TurnInputRequest;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
@@ -25,6 +26,16 @@ fn overloaded_response() -> ResponseTemplate {
             "message": "selected model is at capacity"
         }
     }))
+}
+
+async fn start_text_turn(codex: &codex_core::CodexThread, text: &str) -> Result<()> {
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -58,18 +69,7 @@ async fn server_overload_retries_use_a_separate_budget_on_the_same_turn() -> Res
         .await?;
     tokio::time::pause();
 
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "keep working".to_string(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&test.codex, "keep working").await?;
 
     let mut server_overload_retry_messages = Vec::new();
     loop {
@@ -119,18 +119,7 @@ async fn server_overload_stops_after_the_capacity_retry_budget() -> Result<()> {
         .await?;
     tokio::time::pause();
 
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "keep working".to_string(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&test.codex, "keep working").await?;
 
     let mut server_overload_retry_messages = Vec::new();
     let terminal_error = loop {
@@ -178,18 +167,7 @@ async fn server_overload_backoff_stops_when_the_turn_is_interrupted() -> Result<
         .await?;
     tokio::time::pause();
 
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "keep working".to_string(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&test.codex, "keep working").await?;
 
     loop {
         match test.codex.next_event().await?.msg {
