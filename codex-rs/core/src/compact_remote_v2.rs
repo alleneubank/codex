@@ -363,7 +363,7 @@ async fn run_remote_compaction_request_v2(
     let cancellation_token = CancellationToken::new();
     loop {
         let result = match client_session
-            .stream(
+            .stream_with_turn_managed_server_overload_retries(
                 prompt,
                 &turn_context.model_info,
                 &turn_context.session_telemetry,
@@ -378,10 +378,17 @@ async fn run_remote_compaction_request_v2(
             Ok(stream) => collect_compaction_output(stream).await,
             Err(err) => Err(err),
         };
-
         match result {
             Ok(compaction_output) => return Ok(compaction_output),
-            Err(err) if !err.is_retryable() => return Err(err),
+            Err(err)
+                if !err.is_retryable()
+                    && (!matches!(err.details(), CodexErrorDetails::ServerOverloaded)
+                        || crate::guardian::is_guardian_reviewer_source(
+                            &turn_context.session_source,
+                        )) =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 handle_retryable_response_stream_error(
                     &mut retry_state,

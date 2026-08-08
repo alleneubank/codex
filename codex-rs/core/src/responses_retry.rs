@@ -6,9 +6,9 @@ use crate::client::ModelClientSession;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
+use crate::util::positive_jitter;
 use codex_client::RetryOperation;
 use codex_features::Feature;
-use crate::util::positive_jitter;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::protocol::EventMsg;
@@ -152,7 +152,6 @@ pub(crate) async fn handle_retryable_response_stream_error(
             )
             .await;
         }
-        codex_client::record_retry!(retry_count, delay, operation);
         codex_client::record_retry!(retry_count, delay, operation);
         return tokio::select! {
             () = tokio::time::sleep(delay) => Ok(()),

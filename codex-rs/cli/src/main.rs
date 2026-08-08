@@ -46,12 +46,12 @@ use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
-mod cloud_config;
 #[cfg(test)]
 mod build_version;
 #[cfg(test)]
 #[path = "build_version_tests.rs"]
 mod build_version_tests;
+mod cloud_config;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;

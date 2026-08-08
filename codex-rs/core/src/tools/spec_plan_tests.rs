@@ -698,16 +698,28 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
             .clone();
         turn.environments.environments = vec![TurnEnvironmentState::Ready(
             crate::session::turn_context::TurnEnvironment::new(
-                "remote".to_string(),
+                TurnEnvironmentSelection {
+                    environment_id: "remote".to_string(),
+                    cwd: cwd.clone(),
+                    workspace_roots: vec![cwd],
+                    config: EnvironmentConfigState::FromThread,
+                },
                 Arc::new(
                     codex_exec_server::Environment::create_for_tests(Some(
                         "ws://127.0.0.1:1/remote-exec-server".to_string(),
                     ))
                     .expect("remote test environment"),
                 ),
-                cwd.clone(),
-                vec![cwd],
                 /*shell*/ None,
+                crate::session::turn_context::TurnEnvironmentConfig {
+                    allow_login_shell: true,
+                    permission_profile: turn
+                        .config
+                        .permissions
+                        .permission_profile_state()
+                        .snapshot(),
+                    selected_capability_roots: None,
+                },
             ),
         )];
     })

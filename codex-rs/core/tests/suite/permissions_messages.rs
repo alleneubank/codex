@@ -97,6 +97,16 @@ async fn submit_text_turn(
     Ok(())
 }
 
+async fn start_text_turn(codex: &codex_core::CodexThread, text: &str) -> Result<()> {
+    codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn catalog_approval_message_is_sent_in_initial_permissions() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -482,18 +492,7 @@ async fn permissions_message_added_on_approvals_reviewer_change() -> Result<()> 
     });
     let test = builder.build(&server).await?;
 
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello 1".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&test.codex, "hello 1").await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     core_test_support::submit_thread_settings(
@@ -505,18 +504,7 @@ async fn permissions_message_added_on_approvals_reviewer_change() -> Result<()> 
     )
     .await?;
 
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello 2".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&test.codex, "hello 2").await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_1 = permissions_texts(&req1.single_request());
@@ -871,34 +859,10 @@ async fn resume_and_fork_append_permissions_messages_for_reviewer_change() -> Re
         .clone()
         .expect("rollout path");
 
-    initial
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello auto reviewer 1".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&initial.codex, "hello auto reviewer 1").await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    initial
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello auto reviewer 2".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&initial.codex, "hello auto reviewer 2").await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_base = permissions_texts(&req2.single_request());
@@ -913,19 +877,7 @@ async fn resume_and_fork_append_permissions_messages_for_reviewer_change() -> Re
         config.approvals_reviewer = ApprovalsReviewer::User;
     });
     let resumed = builder.restart(&server, &initial).await?;
-    resumed
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "after resume".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&resumed.codex, "after resume").await?;
     wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_resume = permissions_texts(&req3.single_request());
@@ -950,19 +902,7 @@ async fn resume_and_fork_append_permissions_messages_for_reviewer_change() -> Re
             /*parent_trace*/ None,
         )
         .await?;
-    forked
-        .thread
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "after fork".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&forked.thread, "after fork").await?;
     wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_fork = permissions_texts(&req4.single_request());
@@ -1008,34 +948,10 @@ async fn resume_and_fork_do_not_append_permissions_messages_for_same_reviewer() 
         .clone()
         .expect("rollout path");
 
-    initial
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello auto reviewer 1".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&initial.codex, "hello auto reviewer 1").await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    initial
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "hello auto reviewer 2".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&initial.codex, "hello auto reviewer 2").await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_base = permissions_texts(&req2.single_request());
@@ -1050,19 +966,7 @@ async fn resume_and_fork_do_not_append_permissions_messages_for_same_reviewer() 
         config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     });
     let resumed = builder.restart(&server, &initial).await?;
-    resumed
-        .codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "after resume".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&resumed.codex, "after resume").await?;
     wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_resume = permissions_texts(&req3.single_request());
@@ -1078,19 +982,7 @@ async fn resume_and_fork_do_not_append_permissions_messages_for_same_reviewer() 
             /*parent_trace*/ None,
         )
         .await?;
-    forked
-        .thread
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "after fork".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
-        })
-        .await?;
+    start_text_turn(&forked.thread, "after fork").await?;
     wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let permissions_fork = permissions_texts(&req4.single_request());
