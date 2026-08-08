@@ -321,7 +321,7 @@ async fn process_compacted_history_reinjects_full_initial_context() {
         comp_hash: turn_context.model_info.comp_hash.clone(),
         realtime_active: Some(turn_context.realtime_active),
         permission_profile: turn_context.permission_profile(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy().value(),
         approvals_reviewer: Some(turn_context.config.approvals_reviewer),
     };
     let compacted_history = vec![ResponseItem::Message {
