@@ -3084,10 +3084,25 @@ async fn permission_request_hook_allow_bypasses_strict_auto_review() -> Result<(
         })
         .await?;
 
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
+    let mut permission_request_hook_events = 0;
+    loop {
+        let event = test.codex.next_event().await?;
+        match event.msg {
+            EventMsg::TurnComplete(_) => break,
+            EventMsg::HookStarted(event)
+                if event.run.event_name == HookEventName::PermissionRequest =>
+            {
+                permission_request_hook_events += 1;
+            }
+            EventMsg::HookCompleted(event)
+                if event.run.event_name == HookEventName::PermissionRequest =>
+            {
+                permission_request_hook_events += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(permission_request_hook_events, 0);
 
     let requests = responses.requests();
     assert_eq!(requests.len(), 3);

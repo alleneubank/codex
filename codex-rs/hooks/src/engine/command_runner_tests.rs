@@ -325,14 +325,17 @@ fn handler(command: String) -> ConfiguredHandler {
     ConfiguredHandler {
         event_name: HookEventName::Stop,
         matcher: None,
-        command,
         timeout_sec: 5,
         status_message: None,
         additional_context_limit: Default::default(),
-        source_path: AbsolutePathBuf::current_dir().expect("current dir"),
+        source_path: AbsolutePathBuf::current_dir().expect("current dir").into(),
         source: HookSource::Project,
         display_order: 0,
-        env: HashMap::new(),
+        kind: ConfiguredHandlerKind::Command {
+            command,
+            r#async: false,
+            env: HashMap::new(),
+        },
     }
 }
 
@@ -558,11 +561,15 @@ print(json.dumps({{
 async fn missing_shell_script_is_reported_as_hook_execution_error() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (runtime, _result_receiver) = runtime();
-    let command = "printf '%s\\n' 'sh: 0: cannot open /tmp/missing-hook.sh: No such file' >&2; exit 2"
-        .to_string();
+    let command =
+        "printf '%s\\n' 'sh: 0: cannot open /tmp/missing-hook.sh: No such file' >&2; exit 2"
+            .to_string();
+    let env = HashMap::new();
     let result = run_command(
         &runtime,
-        &handler(command),
+        &handler(command.clone()),
+        &command,
+        &env,
         "{}",
         temp.path(),
     )
