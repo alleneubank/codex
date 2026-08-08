@@ -2,7 +2,11 @@
 
 - Maintain the fork product and release source only on local `main` and `origin/main`.
 - Rebase `main` onto `upstream/main`; do not recreate or maintain `origin/fork`.
-- After every upstream sync, run `just update-fork-version`, commit the changed pin, and run
+- During every upstream sync, compare fork-only integrations with newly shipped upstream designs
+  and adapt them to current extension points, types, permission/environment models, lifecycle APIs,
+  and release/build conventions to guide conflict resolution. Add focused regression coverage for
+  each adaptation rather than preserving a stale compatibility projection because it compiles.
+- After every upstream sync, run `just update-fork-version`, commit the changed pin, and then run
   `just test-fork-maintenance` plus `just check-fork-version`.
 - Install the repository-owned pre-push policy with `just install-fork-hooks`. It checks the exact
   pushed commit and fails closed when the stable version pin is stale.
