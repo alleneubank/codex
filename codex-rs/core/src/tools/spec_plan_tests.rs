@@ -706,6 +706,14 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
                 cwd.clone(),
                 vec![cwd],
                 /*shell*/ None,
+                crate::session::turn_context::EnvironmentConfig {
+                    allow_login_shell: true,
+                    permission_profile: turn
+                        .config
+                        .permissions
+                        .permission_profile_state()
+                        .snapshot(),
+                },
             ),
         )];
     })
