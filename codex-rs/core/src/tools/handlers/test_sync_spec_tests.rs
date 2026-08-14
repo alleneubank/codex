@@ -60,7 +60,8 @@ fn test_sync_tool_matches_expected_spec() {
                     (
                         "timing_label".to_string(),
                         JsonSchema::string(Some(
-                            "When set, return a JSON timing record with this label.".to_string(),
+                            "When set, return a JSON timing record with this label. Limited to 128 bytes."
+                                .to_string(),
                         )),
                     ),
                 ]), /*required*/ None, Some(false.into())),

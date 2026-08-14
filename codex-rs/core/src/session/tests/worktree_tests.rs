@@ -108,12 +108,12 @@ async fn make_worktree_tool_session_with_rx(
     let remote_environment = Arc::new(Environment::create_for_tests(Some(
         "ws://127.0.0.1:8765".to_string(),
     ))?);
-    let mut inherited_remote_selection = remote_selection.clone();
-    inherited_remote_selection.config =
-        EnvironmentConfigState::Ready(writable_environment_config());
     let inherited_environments = TurnEnvironmentSnapshot {
         environments: vec![TurnEnvironmentState::Ready(TurnEnvironment::new(
-            inherited_remote_selection,
+            TurnEnvironmentSelection {
+                config: EnvironmentConfigState::Ready(writable_environment_config()),
+                ..remote_selection.clone()
+            },
             EnvironmentConfigOrigin::Thread,
             remote_environment,
             /*shell*/ None,
@@ -173,12 +173,20 @@ async fn exit_worktree_result(
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> std::result::Result<(), FunctionCallError> {
+    exit_worktree_result_with_arguments(session, turn_context, json!({})).await
+}
+
+async fn exit_worktree_result_with_arguments(
+    session: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    arguments: serde_json::Value,
+) -> std::result::Result<(), FunctionCallError> {
     ExitWorktreeHandler
         .handle(worktree_tool_invocation(
             session,
             turn_context,
             "exit_worktree",
-            json!({}),
+            arguments,
         ))
         .await
         .map(|_| ())
@@ -293,7 +301,7 @@ async fn enter_worktree_rejects_managed_creation_without_write_permission() -> a
 }
 
 #[tokio::test]
-async fn enter_worktree_path_rejects_another_repository() -> anyhow::Result<()> {
+async fn enter_worktree_path_adopts_another_repository_subdirectory() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
     let other_repo = temp.path().join("other-repo");
@@ -301,23 +309,33 @@ async fn enter_worktree_path_rejects_another_repository() -> anyhow::Result<()> 
     std::fs::create_dir(&other_repo)?;
     init_worktree_tool_repo(&repo)?;
     init_worktree_tool_repo(&other_repo)?;
-    let (session, turn_context) = make_worktree_tool_session(&repo).await?;
+    let subdirectory = other_repo.join("nested");
+    std::fs::create_dir(&subdirectory)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
-    let result = enter_worktree_result(
-        session,
-        turn_context,
-        json!({
-            "path": other_repo,
-        }),
-    )
-    .await;
+    let arguments = json!({ "path": &subdirectory });
+    enter_worktree_result(Arc::clone(&session), turn_context, arguments).await?;
 
-    assert_respond_to_model(result, "belongs to git common dir");
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("adopted repository should be active");
+    assert_eq!(
+        active_worktree.worktree_path.as_path(),
+        other_repo.canonicalize()?
+    );
+    assert_eq!(active_worktree.branch.as_deref(), Some("main"));
+    assert_eq!(active_worktree.name, None);
+    let adopted_config = session.new_default_turn().await.config.clone();
+    let subdirectory = subdirectory.canonicalize()?.abs();
+    assert_eq!(adopted_config.cwd, subdirectory);
+    assert_eq!(adopted_config.workspace_roots, vec![subdirectory]);
     Ok(())
 }
 
 #[tokio::test]
-async fn enter_worktree_path_rejects_unmanaged_same_repo_worktree() -> anyhow::Result<()> {
+async fn enter_worktree_path_adopts_unmanaged_same_repo_worktree() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
     let unmanaged = temp.path().join("unmanaged");
@@ -332,16 +350,172 @@ async fn enter_worktree_path_rejects_unmanaged_same_repo_worktree() -> anyhow::R
     let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
     set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
 
-    let result = enter_worktree_result(
-        session,
+    let arguments = json!({ "path": &unmanaged });
+    enter_worktree_result(Arc::clone(&session), turn_context, arguments).await?;
+
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("adopted worktree should be active");
+    assert_eq!(
+        active_worktree.worktree_path.as_path(),
+        unmanaged.canonicalize()?
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn enter_worktree_path_adopts_plain_directory_from_plain_directory() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let original = temp.path().join("original");
+    let adopted = temp.path().join("adopted");
+    std::fs::create_dir(&original)?;
+    std::fs::create_dir(&adopted)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&original).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    enter_worktree_result(
+        Arc::clone(&session),
         turn_context,
-        json!({
-            "path": unmanaged,
-        }),
+        json!({ "path": &adopted }),
+    )
+    .await?;
+
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("adopted directory should be active");
+    assert_eq!(
+        active_worktree.worktree_path.as_path(),
+        adopted.canonicalize()?
+    );
+    assert_eq!(active_worktree.branch, None);
+    assert_eq!(active_worktree.name, None);
+    assert_eq!(active_worktree.ownership, ActiveWorktreeOwnership::Adopted);
+    assert_eq!(
+        session.new_default_turn().await.config.cwd.as_path(),
+        adopted.canonicalize()?
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn enter_worktree_path_resolves_existing_relative_directory() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    let adopted = temp.path().join("adopted");
+    std::fs::create_dir(&repo)?;
+    std::fs::create_dir(&adopted)?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    enter_worktree_result(
+        Arc::clone(&session),
+        turn_context,
+        json!({ "path": "../adopted" }),
+    )
+    .await?;
+
+    assert_eq!(
+        session.new_default_turn().await.config.cwd.as_path(),
+        adopted.canonicalize()?
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn enter_worktree_path_rejects_invalid_target_without_state_change() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    let missing = temp.path().join("missing");
+    let file = temp.path().join("file.txt");
+    std::fs::create_dir(&repo)?;
+    std::fs::write(&file, "preserve me\n")?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, turn_context) = make_worktree_tool_session(&repo).await?;
+    let original_config = session.new_default_turn().await.config.clone();
+
+    let missing_result = enter_worktree_result(
+        Arc::clone(&session),
+        turn_context,
+        json!({ "path": &missing }),
+    )
+    .await;
+    assert_respond_to_model(missing_result, "failed to canonicalize worktree path");
+
+    let file_result = enter_worktree_result(
+        Arc::clone(&session),
+        session.new_default_turn().await,
+        json!({ "path": &file }),
+    )
+    .await;
+    assert_respond_to_model(file_result, "must be an existing directory");
+
+    let current_config = session.new_default_turn().await.config.clone();
+    assert_eq!(
+        (&current_config.cwd, &current_config.workspace_roots),
+        (&original_config.cwd, &original_config.workspace_roots)
+    );
+    assert!(session.active_worktree().await.is_none());
+    assert!(!missing.exists());
+    assert_eq!(std::fs::read_to_string(file)?, "preserve me\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn exit_worktree_keep_false_rejects_adopted_directory_without_state_change()
+-> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    let adopted = temp.path().join("adopted");
+    let sentinel = adopted.join("sentinel.txt");
+    std::fs::create_dir(&repo)?;
+    std::fs::create_dir(&adopted)?;
+    std::fs::write(&sentinel, "preserve me\n")?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+    let original_config = session.new_default_turn().await.config.clone();
+
+    enter_worktree_result(
+        Arc::clone(&session),
+        turn_context,
+        json!({ "path": &adopted }),
+    )
+    .await?;
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("adopted directory should be active");
+    let adopted_config = session.new_default_turn().await.config.clone();
+
+    let result = exit_worktree_result_with_arguments(
+        Arc::clone(&session),
+        session.new_default_turn().await,
+        json!({ "keep": false }),
     )
     .await;
 
-    assert_respond_to_model(result, "escapes managed worktree directory");
+    assert_respond_to_model(result, "cannot remove an adopted workdir");
+    assert_eq!(session.active_worktree().await, Some(active_worktree));
+    let current_config = session.new_default_turn().await.config.clone();
+    assert_eq!(current_config.cwd, adopted_config.cwd);
+    assert_eq!(
+        current_config.workspace_roots,
+        adopted_config.workspace_roots
+    );
+    assert_eq!(std::fs::read_to_string(sentinel)?, "preserve me\n");
+
+    exit_worktree_result(Arc::clone(&session), session.new_default_turn().await).await?;
+    let restored_config = session.new_default_turn().await.config.clone();
+    assert_eq!(restored_config.cwd, original_config.cwd);
+    assert_eq!(
+        restored_config.workspace_roots,
+        original_config.workspace_roots
+    );
+    assert!(session.active_worktree().await.is_none());
+    assert!(adopted.is_dir());
     Ok(())
 }
 
@@ -373,15 +547,12 @@ async fn enter_worktree_path_accepts_existing_managed_worktree() -> anyhow::Resu
         next_turn.config.cwd.as_path().canonicalize()?,
         managed.info.repo_root
     );
+    let active_worktree = session.active_worktree().await.expect("active worktree");
     assert_eq!(
-        session
-            .active_worktree()
-            .await
-            .expect("active worktree")
-            .worktree_path
-            .as_path(),
-        managed.info.repo_root.as_path()
+        active_worktree.worktree_path.as_path(),
+        managed.info.repo_root
     );
+    assert_eq!(active_worktree.ownership, ActiveWorktreeOwnership::Adopted);
     Ok(())
 }
 
@@ -492,12 +663,6 @@ async fn enter_worktree_updates_later_step_context_in_same_turn() -> anyhow::Res
             .config
             .workspace_roots
             .contains(&expected_worktree_path.abs())
-    );
-    assert!(
-        worktree_turn
-            .config
-            .workspace_roots
-            .contains(&info.common_dir.abs())
     );
 
     exit_worktree_result(Arc::clone(&session), worktree_turn).await?;
@@ -645,7 +810,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
     let info = codex_git_utils::inspect_worktree(&repo)?;
     let expected_worktree_path =
         codex_git_utils::managed_worktree_path(&info.common_dir, "codex-context")?.abs();
-    let common_dir = info.common_dir.abs();
     let next_step = session
         .capture_step_context(Arc::clone(&turn_context), &CancellationToken::new())
         .await?;
@@ -657,15 +821,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
             .workspace_roots()
             .contains(&PathUri::from_abs_path(&expected_worktree_path))
     );
-    assert!(
-        next_step
-            .environments
-            .primary()
-            .expect("primary environment")
-            .workspace_roots()
-            .contains(&PathUri::from_abs_path(&common_dir))
-    );
-
     let world_state = session
         .build_world_state_for_step(next_step.as_ref())
         .await?;
@@ -676,7 +831,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
         .collect::<Vec<_>>();
     let rendered_text = response_items_text(&rendered);
     assert!(rendered_text.contains(expected_worktree_path.to_string_lossy().as_ref()));
-    assert!(rendered_text.contains(common_dir.to_string_lossy().as_ref()));
     Ok(())
 }
 
@@ -777,6 +931,44 @@ async fn exit_worktree_derives_managed_cwd_without_rebinding_workspace_roots() -
 }
 
 #[tokio::test]
+async fn exit_worktree_keep_false_preserves_session_when_removal_fails() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    enter_worktree_result(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        json!({"name": "codex-dirty-exit"}),
+    )
+    .await?;
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("worktree should be active");
+    std::fs::write(active_worktree.worktree_path.join("dirty.txt"), "dirty\n")?;
+
+    let result = exit_worktree_result_with_arguments(
+        Arc::clone(&session),
+        session.new_default_turn().await,
+        json!({"keep": false}),
+    )
+    .await;
+
+    assert_respond_to_model(result, "worktree operation failed");
+    let current_active_worktree = session
+        .active_worktree()
+        .await
+        .expect("failed removal must preserve the active worktree");
+    assert_eq!(current_active_worktree, active_worktree);
+    assert!(current_active_worktree.worktree_path.exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn exit_worktree_rejects_stale_active_state_from_original_checkout() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
@@ -788,11 +980,11 @@ async fn exit_worktree_rejects_stale_active_state_from_original_checkout() -> an
     session
         .set_active_worktree(ActiveWorktree {
             original_cwd: repo.abs(),
-            original_common_dir: original_info.common_dir,
             original_workspace_roots: None,
             worktree_path: managed.path.abs(),
             branch: managed.info.current_branch,
             name: Some(managed.name),
+            ownership: ActiveWorktreeOwnership::ManagedByCodex(original_info.common_dir),
         })
         .await;
 
@@ -815,11 +1007,11 @@ async fn settings_cwd_update_outside_active_worktree_clears_active_state() -> an
     session
         .set_active_worktree(ActiveWorktree {
             original_cwd: repo.abs(),
-            original_common_dir: original_info.common_dir,
             original_workspace_roots: None,
             worktree_path: managed.path.abs(),
             branch: managed.info.current_branch,
             name: Some(managed.name),
+            ownership: ActiveWorktreeOwnership::ManagedByCodex(original_info.common_dir),
         })
         .await;
 

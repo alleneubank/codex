@@ -11,6 +11,7 @@ use crate::guardian::review_approval_request_with_cancel;
 use crate::guardian::routes_approval_policy_to_guardian;
 use crate::guardian::spawn_approval_request_review;
 use crate::hook_runtime::PermissionRequestHookEventMode;
+use crate::hook_runtime::ToolHookContext;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_tool_call::request_mcp_tool_user_approval;
 use crate::sandboxing::SandboxPermissions;
@@ -549,9 +550,14 @@ impl Session {
         } else {
             PermissionRequestHookEventMode::Emit
         };
+        let effective_cwd = ctx
+            .review_context
+            .environments()
+            .local_environment_cwd()
+            .unwrap_or_else(|| ctx.review_context.turn().config.cwd.clone());
+        let hook_context = ToolHookContext::new(self, ctx.review_context.turn(), &effective_cwd);
         if let Some(decision) = run_permission_request_hooks(
-            self,
-            ctx.review_context.turn(),
+            &hook_context,
             &permission_request_run_id,
             action.permission_request_payload(),
             event_mode,
