@@ -40,13 +40,17 @@ fn try_build_bwrap() -> Result<(), String> {
         .map_err(|err| format!("libcap not available via pkg-config: {err}"))?;
 
     let config_h = out_dir.join("config.h");
+    let package_string = std::env::var("CODEX_BWRAP_VERSION")
+        .unwrap_or_else(|_| "bubblewrap built for Codex".to_string());
     std::fs::write(
         &config_h,
-        r#"#pragma once
-#define PACKAGE_STRING "bubblewrap built for Codex"
-"#,
+        format!(
+            "#pragma once\n#define PACKAGE_STRING \"{}\"\n",
+            package_string.replace('"', "\\\"")
+        ),
     )
     .map_err(|err| format!("failed to write {}: {err}", config_h.display()))?;
+    println!("cargo:rerun-if-env-changed=CODEX_BWRAP_VERSION");
 
     let mut build = cc::Build::new();
     build

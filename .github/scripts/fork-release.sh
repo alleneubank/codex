@@ -217,12 +217,18 @@ remote_tag_sha() {
     '
 }
 
-ensure_local_tag() {
+validate_local_tag() {
   local tag_sha
   tag_sha="$(local_tag_sha)"
   if [[ -n "${tag_sha}" && "${tag_sha}" != "${head_sha}" ]]; then
     die "Local tag ${release_tag} points to ${tag_sha}, expected ${head_sha}"
   fi
+}
+
+ensure_local_tag() {
+  validate_local_tag
+  local tag_sha
+  tag_sha="$(local_tag_sha)"
   if [[ -z "${tag_sha}" ]]; then
     git -C "${git_root}" tag -a "${release_tag}" -m "${release_tag}" "${head_sha}"
   fi
@@ -261,6 +267,7 @@ publish_verified_release() {
     die "Unable to confirm that GitHub release ${release_tag} is absent: ${release_lookup}"
   fi
 
+  validate_local_tag
   publish_main_branch
   ensure_local_tag
   if [[ -z "${remote_sha}" ]]; then
