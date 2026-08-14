@@ -62,4 +62,19 @@ if [[ "${actual_version}" != "${expected_version}" ]]; then
   exit 1
 fi
 
+actual_code_mode_host_version="$("${verify_root}/codex-code-mode-host" --version)"
+if [[ "${actual_code_mode_host_version}" != "${expected_version}" ]]; then
+  echo "Expected ${expected_version} from codex-code-mode-host, got ${actual_code_mode_host_version}" >&2
+  exit 1
+fi
+
+if [[ "${target}" == x86_64-unknown-linux-musl ]]; then
+  actual_bwrap_version="$("${verify_root}/codex-resources/bwrap" --version)"
+  expected_bwrap_version="bubblewrap built for Codex ${expected_version}"
+  if [[ "${actual_bwrap_version}" != "${expected_bwrap_version}" ]]; then
+    echo "Expected ${expected_bwrap_version} from bwrap, got ${actual_bwrap_version}" >&2
+    exit 1
+  fi
+fi
+
 echo "Verified ${bundle} (${target}, ${expected_version})"
