@@ -37,7 +37,7 @@ impl EnvironmentsState {
             filesystem: environments.primary().map(|environment| {
                 FileSystemContext::from_permission_profile(
                     environment.permission_profile(),
-                    environment.workspace_roots(),
+                    workspace_roots,
                 )
             }),
             subagents: None,

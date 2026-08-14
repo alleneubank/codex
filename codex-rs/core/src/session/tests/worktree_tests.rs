@@ -1,7 +1,8 @@
 use super::*;
 use crate::config::PermissionProfileSnapshot;
+use crate::environment_selection::EnvironmentConfigOrigin;
 use crate::environment_selection::ThreadEnvironments;
-use crate::session::turn_context::TurnEnvironmentConfig;
+use codex_protocol::protocol::EnvironmentConfig;
 use pretty_assertions::assert_eq;
 
 fn set_turn_permission_profile(
@@ -28,14 +29,15 @@ fn set_turn_permission_profile(
     else {
         return;
     };
-    environment.config.permission_profile = PermissionProfileSnapshot::legacy(permission_profile);
+    environment.config_mut().permission_profile =
+        PermissionProfileSnapshot::legacy(permission_profile);
 }
 
-fn writable_environment_config() -> TurnEnvironmentConfig {
-    TurnEnvironmentConfig {
+fn writable_environment_config() -> EnvironmentConfig {
+    EnvironmentConfig {
         allow_login_shell: true,
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::workspace_write()),
-        selected_capability_roots: None,
+        selected_capability_roots: Vec::new(),
     }
 }
 
@@ -104,10 +106,13 @@ async fn make_worktree_tool_session_with_rx(
     ))?);
     let inherited_environments = TurnEnvironmentSnapshot {
         environments: vec![TurnEnvironmentState::Ready(TurnEnvironment::new(
-            remote_selection.clone(),
+            TurnEnvironmentSelection {
+                config: EnvironmentConfigState::Ready(writable_environment_config()),
+                ..remote_selection.clone()
+            },
+            EnvironmentConfigOrigin::Thread,
             remote_environment,
             /*shell*/ None,
-            writable_environment_config(),
         ))],
     };
     let config_cwd = repo_path.clone();
@@ -164,12 +169,20 @@ async fn exit_worktree_result(
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> std::result::Result<(), FunctionCallError> {
+    exit_worktree_result_with_arguments(session, turn_context, json!({})).await
+}
+
+async fn exit_worktree_result_with_arguments(
+    session: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    arguments: serde_json::Value,
+) -> std::result::Result<(), FunctionCallError> {
     ExitWorktreeHandler
         .handle(worktree_tool_invocation(
             session,
             turn_context,
             "exit_worktree",
-            json!({}),
+            arguments,
         ))
         .await
         .map(|_| ())
@@ -399,7 +412,7 @@ async fn enter_worktree_path_rejects_environment_read_only_profile() -> anyhow::
             _ => None,
         })
         .expect("local environment");
-    environment.config.permission_profile =
+    environment.config_mut().permission_profile =
         PermissionProfileSnapshot::legacy(PermissionProfile::read_only());
 
     let result = enter_worktree_result(
@@ -483,12 +496,6 @@ async fn enter_worktree_updates_later_step_context_in_same_turn() -> anyhow::Res
             .config
             .workspace_roots
             .contains(&expected_worktree_path.abs())
-    );
-    assert!(
-        worktree_turn
-            .config
-            .workspace_roots
-            .contains(&info.common_dir.abs())
     );
 
     exit_worktree_result(Arc::clone(&session), worktree_turn).await?;
@@ -630,7 +637,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
     let info = codex_git_utils::inspect_worktree(&repo)?;
     let expected_worktree_path =
         codex_git_utils::managed_worktree_path(&info.common_dir, "codex-context")?.abs();
-    let common_dir = info.common_dir.abs();
     let next_step = session
         .capture_step_context(Arc::clone(&turn_context), &CancellationToken::new())
         .await?;
@@ -638,11 +644,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
         next_step
             .workspace_roots
             .contains(&PathUri::from_abs_path(&expected_worktree_path))
-    );
-    assert!(
-        next_step
-            .workspace_roots
-            .contains(&PathUri::from_abs_path(&common_dir))
     );
 
     let world_state = session
@@ -655,7 +656,6 @@ async fn enter_worktree_updates_same_turn_filesystem_context_roots() -> anyhow::
         .collect::<Vec<_>>();
     let rendered_text = response_items_text(&rendered);
     assert!(rendered_text.contains(expected_worktree_path.to_string_lossy().as_ref()));
-    assert!(rendered_text.contains(common_dir.to_string_lossy().as_ref()));
     Ok(())
 }
 
@@ -756,6 +756,44 @@ async fn exit_worktree_derives_managed_cwd_without_rebinding_workspace_roots() -
 }
 
 #[tokio::test]
+async fn exit_worktree_keep_false_preserves_session_when_removal_fails() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    init_worktree_tool_repo(&repo)?;
+    let (session, mut turn_context) = make_worktree_tool_session(&repo).await?;
+    set_turn_permission_profile(&mut turn_context, PermissionProfile::workspace_write());
+
+    enter_worktree_result(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        json!({"name": "codex-dirty-exit"}),
+    )
+    .await?;
+    let active_worktree = session
+        .active_worktree()
+        .await
+        .expect("worktree should be active");
+    std::fs::write(active_worktree.worktree_path.join("dirty.txt"), "dirty\n")?;
+
+    let result = exit_worktree_result_with_arguments(
+        Arc::clone(&session),
+        session.new_default_turn().await,
+        json!({"keep": false}),
+    )
+    .await;
+
+    assert_respond_to_model(result, "worktree operation failed");
+    let current_active_worktree = session
+        .active_worktree()
+        .await
+        .expect("failed removal must preserve the active worktree");
+    assert_eq!(current_active_worktree, active_worktree);
+    assert!(current_active_worktree.worktree_path.exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn exit_worktree_rejects_stale_active_state_from_original_checkout() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
@@ -832,11 +870,11 @@ async fn enter_worktree_rejects_remote_primary_environment() -> anyhow::Result<(
                 environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: cwd.clone(),
                 workspace_roots: vec![cwd.clone()],
-                config: EnvironmentConfigState::FromThread,
+                config: EnvironmentConfigState::Ready(writable_environment_config()),
             },
+            EnvironmentConfigOrigin::Thread,
             remote_environment,
             /*shell*/ None,
-            writable_environment_config(),
         ))],
     };
 
@@ -880,11 +918,11 @@ async fn enter_worktree_retargets_only_local_primary_and_preserves_remote_second
                         environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
                         cwd: original_cwd.clone(),
                         workspace_roots: vec![original_cwd.clone()],
-                        config: EnvironmentConfigState::FromThread,
+                        config: EnvironmentConfigState::Ready(writable_environment_config()),
                     },
+                    EnvironmentConfigOrigin::Thread,
                     remote_environment,
                     /*shell*/ None,
-                    writable_environment_config(),
                 )),
             ],
         };

@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio::task::JoinError;
 use tokio_util::either::Either;
@@ -37,6 +39,90 @@ struct ToolCallTimingGuard {
     tool_name: codex_tools::ToolName,
 }
 
+struct SerialToolCallCompletion {
+    completed: AtomicBool,
+    notify: Notify,
+}
+
+impl SerialToolCallCompletion {
+    fn new() -> Self {
+        Self {
+            completed: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait(&self) {
+        while !self.completed.load(Ordering::Acquire) {
+            let notified = self.notify.notified();
+            if self.completed.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn complete(&self) {
+        self.completed.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+}
+
+struct SerialToolCallCompletionGuard(Arc<SerialToolCallCompletion>);
+
+impl Drop for SerialToolCallCompletionGuard {
+    fn drop(&mut self) {
+        self.0.complete();
+    }
+}
+
+/// Dispatch ordering for one turn's tool calls.
+///
+/// A serial tool call is a two-sided barrier: every call dispatched before it
+/// must finish first, and every call dispatched after it must wait for it.
+/// Parallel calls may overlap one another, but the next serial call still has
+/// to follow them — otherwise a serial call such as `exit_worktree` can take
+/// the write lock and retarget the environment while a parallel `exec_command`
+/// dispatched ahead of it has not yet captured its context.
+#[derive(Default)]
+struct ToolCallOrdering {
+    /// Most recent serial call. Every later call waits on it.
+    serial_tail: Option<Arc<SerialToolCallCompletion>>,
+    /// Parallel calls dispatched since `serial_tail`. Drained by, and awaited
+    /// by, the next serial call.
+    parallel_since_serial: Vec<Arc<SerialToolCallCompletion>>,
+}
+
+/// What one dispatch must wait for, and what it signals when it finishes.
+struct ToolCallDispatchOrder {
+    predecessors: Vec<Arc<SerialToolCallCompletion>>,
+    completion: Arc<SerialToolCallCompletion>,
+}
+
+impl ToolCallOrdering {
+    /// Records a dispatch in call order and returns the calls it must follow.
+    ///
+    /// Call order is the order the model emitted the calls in, which is the
+    /// order this runs in — so the state read here is exactly the set of calls
+    /// already dispatched ahead of this one.
+    fn register(&mut self, supports_parallel: bool) -> ToolCallDispatchOrder {
+        let completion = Arc::new(SerialToolCallCompletion::new());
+        let mut predecessors: Vec<Arc<SerialToolCallCompletion>> =
+            self.serial_tail.iter().cloned().collect();
+        if supports_parallel {
+            // Overlaps its peers, but the next serial call must still follow it.
+            self.parallel_since_serial.push(Arc::clone(&completion));
+        } else {
+            predecessors.append(&mut self.parallel_since_serial);
+            self.serial_tail = Some(Arc::clone(&completion));
+        }
+        ToolCallDispatchOrder {
+            predecessors,
+            completion,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ToolCallRuntime {
     session: Arc<Session>,
@@ -45,6 +131,7 @@ pub(crate) struct ToolCallRuntime {
     tracker: SharedTurnDiffTracker,
     parallel_execution: Arc<RwLock<()>>,
     serial_tool_call_seen: Arc<AtomicBool>,
+    tool_call_ordering: Arc<Mutex<ToolCallOrdering>>,
 }
 
 impl ToolCallRuntime {
@@ -59,6 +146,7 @@ impl ToolCallRuntime {
             tracker,
             parallel_execution: Arc::new(RwLock::new(())),
             serial_tool_call_seen: Arc::new(AtomicBool::new(false)),
+            tool_call_ordering: Arc::new(Mutex::new(ToolCallOrdering::default())),
         }
     }
 
@@ -126,6 +214,16 @@ impl ToolCallRuntime {
         if !supports_parallel {
             serial_tool_call_seen.store(true, Ordering::Release);
         }
+        let ToolCallDispatchOrder {
+            predecessors: dispatch_predecessors,
+            completion: dispatch_completion,
+        } = {
+            let mut ordering = self
+                .tool_call_ordering
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            ordering.register(supports_parallel)
+        };
         let invocation_cancellation_token = cancellation_token.clone();
         let started = Instant::now();
         let tool_call_timing_guard =
@@ -149,8 +247,20 @@ impl ToolCallRuntime {
         );
         let abort_dispatch_span = dispatch_span.clone();
 
+        // Built here, outside the task, so it lives in the future's captured
+        // state rather than being constructed by the task body. A task aborted
+        // before its first poll never runs its body at all, so a guard built
+        // inside would never exist to drop - and every call registered behind
+        // this one would wait on a completion nobody signals. Owned this way,
+        // dropping the unpolled future drops the guard and releases them.
+        let dispatch_completion_guard = SerialToolCallCompletionGuard(dispatch_completion);
+
         let mut dispatch_handle: AbortOnDropHandle<Result<AnyToolResult, FunctionCallError>> =
             AbortOnDropHandle::new(tokio::spawn(async move {
+                let _dispatch_completion_guard = dispatch_completion_guard;
+                for predecessor in dispatch_predecessors {
+                    predecessor.wait().await;
+                }
                 if let Some(tool_runtime) = tool_runtime
                     && let Some(readiness) = tool_runtime.wait_until_ready(&session)
                 {
@@ -403,6 +513,64 @@ mod tests {
     use codex_protocol::models::FunctionCallOutputBody;
     use codex_protocol::models::FunctionCallOutputPayload;
     use pretty_assertions::assert_eq;
+
+    const SERIAL: bool = false;
+    const PARALLEL: bool = true;
+
+    fn waits_for(order: &ToolCallDispatchOrder, predecessor: &ToolCallDispatchOrder) -> bool {
+        order
+            .predecessors
+            .iter()
+            .any(|waited| Arc::ptr_eq(waited, &predecessor.completion))
+    }
+
+    /// The `enter_worktree`, `exec_command`, `exit_worktree` sequence: the exit
+    /// must not be able to retarget the environment while the exec is in
+    /// flight. Previously only serial calls were recorded as predecessors, so
+    /// exit waited on enter alone and could overtake exec.
+    #[test]
+    fn serial_call_waits_for_parallel_calls_dispatched_before_it() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let enter = ordering.register(SERIAL);
+        let exec = ordering.register(PARALLEL);
+        let exit = ordering.register(SERIAL);
+
+        assert!(waits_for(&exec, &enter), "exec must follow enter");
+        assert!(waits_for(&exit, &enter), "exit must follow enter");
+        assert!(
+            waits_for(&exit, &exec),
+            "exit must follow the in-flight exec"
+        );
+    }
+
+    /// The barrier must not cost parallelism: peers still overlap each other.
+    #[test]
+    fn parallel_calls_do_not_wait_for_each_other() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let first = ordering.register(PARALLEL);
+        let second = ordering.register(PARALLEL);
+
+        assert!(second.predecessors.is_empty());
+        assert!(!waits_for(&second, &first));
+    }
+
+    /// A serial call consumes the backlog, so a later serial call waits only on
+    /// its immediate predecessor rather than re-waiting the whole turn.
+    #[test]
+    fn serial_call_drains_the_parallel_backlog() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let exec = ordering.register(PARALLEL);
+        let first_serial = ordering.register(SERIAL);
+        let second_serial = ordering.register(SERIAL);
+
+        assert!(waits_for(&first_serial, &exec));
+        assert!(!waits_for(&second_serial, &exec));
+        assert!(waits_for(&second_serial, &first_serial));
+        assert_eq!(second_serial.predecessors.len(), 1);
+    }
     use tokio::sync::Notify;
     use tokio::sync::oneshot;
     use tracing_test::internal::MockWriter;
@@ -931,6 +1099,70 @@ mod tests {
             .await
             .expect("timed out waiting for cleanup response")
             .expect("cleanup response task should join")?;
+
+        Ok(())
+    }
+
+    /// A dispatch registers its completion synchronously but runs on a spawned
+    /// task, and that task can be aborted before the runtime ever polls it -
+    /// Code Mode cancels per invocation while sibling nested calls stay live.
+    /// The completion guard therefore has to be owned by the future's captured
+    /// state; built by the task body instead, an unpolled abort constructs
+    /// nothing, signals nothing, and every call behind it waits forever.
+    #[tokio::test]
+    async fn dispatch_aborted_before_first_poll_releases_the_next_call() -> anyhow::Result<()> {
+        let (session, turn_context) = crate::session::tests::make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+        let abandoned_tool_name = codex_tools::ToolName::plain("abandoned_tool");
+        let following_tool_name = codex_tools::ToolName::plain("following_tool");
+        let step_context = StepContext::for_test(Arc::clone(&turn_context));
+        let router = Arc::new(ToolRouter::from_parts(
+            ToolRegistry::from_tools([
+                Arc::new(ImmediateHandler {
+                    tool_name: abandoned_tool_name.clone(),
+                }) as Arc<dyn CoreToolRuntime>,
+                Arc::new(ImmediateHandler {
+                    tool_name: following_tool_name.clone(),
+                }) as Arc<dyn CoreToolRuntime>,
+            ]),
+            Vec::new(),
+        ));
+        let step_context = step_context.with_tool_router_for_test(router);
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+        let runtime = ToolCallRuntime::new(session, step_context, tracker);
+
+        // `handle_tool_call` spawns the dispatch task synchronously, so dropping
+        // its future without ever yielding aborts that task before its first
+        // poll. The completion is already registered at this point.
+        drop(runtime.clone().handle_tool_call(
+            ToolCall {
+                tool_name: abandoned_tool_name,
+                call_id: "call-abandoned".to_string(),
+                payload: ToolPayload::Function {
+                    arguments: "{}".to_string(),
+                },
+                encrypted_function_args: None,
+            },
+            CancellationToken::new(),
+        ));
+
+        let following_task = tokio::spawn(runtime.handle_tool_call(
+            ToolCall {
+                tool_name: following_tool_name,
+                call_id: "call-following".to_string(),
+                payload: ToolPayload::Function {
+                    arguments: "{}".to_string(),
+                },
+                encrypted_function_args: None,
+            },
+            CancellationToken::new(),
+        ));
+
+        tokio::time::timeout(Duration::from_secs(1), following_task)
+            .await
+            .expect("next call must not wait on a dispatch aborted before it ran")
+            .expect("following tool response task should join")?;
 
         Ok(())
     }

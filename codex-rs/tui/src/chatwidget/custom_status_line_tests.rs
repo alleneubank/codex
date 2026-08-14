@@ -24,13 +24,9 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 #[cfg(windows)]
 use codex_config::ConfigBuilder;
-#[cfg(windows)]
-use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::CustomStatusLineType;
 #[cfg(windows)]
 use codex_feedback::CodexFeedback;
-#[cfg(windows)]
-use codex_login::AuthKeyringBackendKind;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
@@ -909,14 +905,10 @@ async fn windows_app_server_runner_pipes_base64_payload_to_command() -> anyhow::
         loader_overrides: Default::default(),
         strict_config: false,
         cloud_config_bundle: cloud_config_bundle_loader_for_storage(
-            codex_home_path,
+            config.auth_config(),
             /*enable_codex_api_key_env*/ false,
-            AuthCredentialsStoreMode::File,
-            AuthKeyringBackendKind::default(),
-            "https://chatgpt.com/backend-api/".to_string(),
-            codex_login::test_support::transport_default_auth_route_config(),
         )
-        .await,
+        .await?,
         feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,

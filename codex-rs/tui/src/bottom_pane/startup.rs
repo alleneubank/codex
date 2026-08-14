@@ -75,8 +75,8 @@ impl BottomPane {
 
     /// Restore the visible cursor before synchronizing composer-owned popups.
     pub(crate) fn set_composer_cursor(&mut self, cursor: usize) {
-        self.composer.set_current_cursor(cursor);
-        self.composer.sync_popups();
+        self.composer.set_cursor(cursor);
+        self.request_redraw();
     }
 
     /// Preserve startup-local history and the newest protected-prompt activity timestamp.

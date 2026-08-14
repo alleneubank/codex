@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::function_tool::FunctionCallError;
 use crate::hook_runtime::PreToolUseHookResult;
+use crate::hook_runtime::ToolHookContext;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
@@ -567,9 +568,15 @@ impl ToolRegistry {
         }
 
         if let Some(pre_tool_use_payload) = tool.pre_tool_use_payload(&invocation) {
+            let effective_hook_cwd = invocation
+                .step_context
+                .environments
+                .local_environment_cwd()
+                .unwrap_or_else(|| invocation.turn.config.cwd.clone());
+            let hook_context =
+                ToolHookContext::new(&invocation.session, &invocation.turn, &effective_hook_cwd);
             match run_pre_tool_use_hooks(
-                &invocation.session,
-                &invocation.turn,
+                &hook_context,
                 invocation.call_id.clone(),
                 &pre_tool_use_payload.tool_name,
                 &pre_tool_use_payload.tool_input,
@@ -673,10 +680,16 @@ impl ToolRegistry {
             None
         };
         let post_tool_use_outcome = if let Some(post_tool_use_payload) = post_tool_use_payload {
+            let effective_hook_cwd = invocation
+                .step_context
+                .environments
+                .local_environment_cwd()
+                .unwrap_or_else(|| invocation.turn.config.cwd.clone());
+            let hook_context =
+                ToolHookContext::new(&invocation.session, &invocation.turn, &effective_hook_cwd);
             Some(
                 run_post_tool_use_hooks(
-                    &invocation.session,
-                    &invocation.turn,
+                    &hook_context,
                     post_tool_use_payload.tool_use_id,
                     post_tool_use_payload.tool_name.name().to_string(),
                     post_tool_use_payload.tool_name.matcher_aliases().to_vec(),

@@ -192,7 +192,7 @@ async fn start_test_app_server_client() -> anyhow::Result<TestAppServerClient> {
             auth_config,
             /*enable_codex_api_key_env*/ false,
         )
-        .await,
+        .await?,
         feedback: CodexFeedback::new(),
         log_db: None,
         state_db: None,

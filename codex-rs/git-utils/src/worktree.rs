@@ -28,6 +28,7 @@ pub struct ManagedWorktree {
     pub name: String,
     pub path: PathBuf,
     pub created: bool,
+    pub created_branch: Option<String>,
     pub info: WorktreeInfo,
 }
 
@@ -113,12 +114,12 @@ pub fn create_or_reuse_managed_worktree(
     let canonical_base = ensure_managed_base(&source, &managed_base)?;
 
     let target_path = canonical_base.join(name);
-    let created = if std::fs::symlink_metadata(&target_path).is_ok() {
+    let (created, created_branch) = if std::fs::symlink_metadata(&target_path).is_ok() {
         ensure_managed_target_stays_under_base(&target_path, &canonical_base)?;
-        false
+        (false, None)
     } else {
-        add_managed_worktree(&source.repo_root, &target_path, name)?;
-        true
+        let branch_created = add_managed_worktree(&source.repo_root, &target_path, name)?;
+        (true, branch_created.then(|| name.to_string()))
     };
 
     let info = validate_same_repository_worktree_with_info(&source, &target_path)?;
@@ -126,6 +127,7 @@ pub fn create_or_reuse_managed_worktree(
         name: name.to_string(),
         path: target_path,
         created,
+        created_branch,
         info,
     })
 }
@@ -146,6 +148,40 @@ pub fn remove_managed_worktree(
         ],
         /*env*/ None,
     )
+}
+
+/// Remove a newly created managed worktree and its newly created branch.
+pub fn remove_created_managed_worktree(
+    repository_path: &Path,
+    worktree_path: &Path,
+    created_branch: Option<&str>,
+) -> Result<(), GitToolingError> {
+    let source = inspect_worktree(repository_path)?;
+    let candidate = validate_managed_same_repository_worktree_with_info(&source, worktree_path)?;
+    let branch = created_branch.map(str::to_owned);
+    if let Some(expected_branch) = branch.as_deref()
+        && candidate.current_branch.as_deref() != Some(expected_branch)
+    {
+        return Err(GitToolingError::WorktreeBranchMismatch {
+            path: candidate.repo_root,
+            expected_branch: expected_branch.to_string(),
+            actual_branch: candidate.current_branch,
+        });
+    }
+    remove_managed_worktree(repository_path, worktree_path)?;
+    if let Some(branch) = branch {
+        run_git_for_status(
+            &source.repo_root,
+            [
+                OsString::from("branch"),
+                OsString::from("-D"),
+                OsString::from("--"),
+                OsString::from(branch),
+            ],
+            /*env*/ None,
+        )?;
+    }
+    Ok(())
 }
 
 /// Return the Codex-managed worktree directory under a repository git common dir.
@@ -267,20 +303,10 @@ fn add_managed_worktree(
     repo_root: &Path,
     target_path: &Path,
     name: &str,
-) -> Result<(), GitToolingError> {
+) -> Result<bool, GitToolingError> {
     let checkout_filter_env = checkout_filter_config_env_overrides(repo_root)?;
-    if branch_exists(repo_root, name)? {
-        run_git_for_status(
-            repo_root,
-            vec![
-                OsString::from("worktree"),
-                OsString::from("add"),
-                target_path.as_os_str().to_os_string(),
-                OsString::from(name),
-            ],
-            Some(&checkout_filter_env),
-        )
-    } else {
+    let branch_created = !branch_exists(repo_root, name)?;
+    if branch_created {
         run_git_for_status(
             repo_root,
             vec![
@@ -292,8 +318,20 @@ fn add_managed_worktree(
                 OsString::from("HEAD"),
             ],
             Some(&checkout_filter_env),
-        )
+        )?;
+    } else {
+        run_git_for_status(
+            repo_root,
+            vec![
+                OsString::from("worktree"),
+                OsString::from("add"),
+                target_path.as_os_str().to_os_string(),
+                OsString::from(name),
+            ],
+            Some(&checkout_filter_env),
+        )?;
     }
+    Ok(branch_created)
 }
 
 fn branch_exists(repo_root: &Path, name: &str) -> Result<bool, GitToolingError> {

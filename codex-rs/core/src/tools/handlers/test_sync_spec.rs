@@ -41,7 +41,8 @@ pub fn create_test_sync_tool() -> ToolSpec {
         (
             "timing_label".to_string(),
             JsonSchema::string(Some(
-                "When set, return a JSON timing record with this label.".to_string(),
+                "When set, return a JSON timing record with this label. Limited to 128 bytes."
+                    .to_string(),
             )),
         ),
         (

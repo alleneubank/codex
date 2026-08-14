@@ -7,6 +7,8 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
+use serde::de::Deserializer;
+use serde::de::Error;
 use serde_json::json;
 use tokio::sync::Barrier;
 use tokio::time::sleep;
@@ -26,6 +28,7 @@ use codex_tools::ToolSpec;
 pub struct TestSyncHandler;
 
 const DEFAULT_TIMEOUT_MS: u64 = 1_000;
+const MAX_TIMING_LABEL_BYTES: usize = 128;
 
 static BARRIERS: OnceLock<tokio::sync::Mutex<HashMap<String, BarrierState>>> = OnceLock::new();
 
@@ -51,7 +54,23 @@ struct TestSyncArgs {
     #[serde(default)]
     barrier: Option<BarrierArgs>,
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_timing_label")]
     timing_label: Option<String>,
+}
+
+fn deserialize_timing_label<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let label = Option::<String>::deserialize(deserializer)?;
+    if let Some(label) = &label
+        && label.len() > MAX_TIMING_LABEL_BYTES
+    {
+        return Err(D::Error::custom(format!(
+            "timing_label must be at most {MAX_TIMING_LABEL_BYTES} bytes"
+        )));
+    }
+    Ok(label)
 }
 
 fn default_timeout_ms() -> u64 {
@@ -133,6 +152,10 @@ impl TestSyncHandler {
 }
 
 impl CoreToolRuntime for TestSyncHandler {}
+
+#[cfg(test)]
+#[path = "test_sync_tests.rs"]
+mod tests;
 
 fn unix_time_millis() -> i64 {
     let millis = SystemTime::now()
