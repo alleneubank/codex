@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
+use clap::ArgAction;
 use clap::Parser;
 use codex_otel::OtelExporter;
 use codex_otel::OtelHttpProtocol;
@@ -16,6 +17,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 const OTEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
 
 #[derive(Debug, Parser)]
+#[command(disable_version_flag = true)]
 struct Cli {
     /// Transport endpoint: `stdio`, `stdio://`, or `grpc://IP:PORT`.
     #[arg(
@@ -33,11 +35,25 @@ struct Cli {
     /// `otel.trace_exporter` in app-server configuration.
     #[arg(long, value_name = "URL", conflicts_with = "otel_trace_listen")]
     otel_trace_exporter: Option<String>,
+
+    /// Print version information and exit.
+    #[arg(short = 'V', long = "version", action = ArgAction::SetTrue)]
+    version: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.version {
+        // Emit CODEX_CLI_VERSION verbatim. Clap's own version action renders
+        // "<display-name> <version>", which would prefix the binary name onto a
+        // string that already carries the "codex-cli" product name, and
+        // verify-fork-release-bundle.sh requires both release binaries to report
+        // exactly the same version string as the CLI.
+        println!("{}", env!("CODEX_CLI_VERSION"));
+        return Ok(());
+    }
+
     let trace_transport = if let Some(trace_listen) = cli.otel_trace_listen.as_deref() {
         let sender = codex_code_mode_host::trace_batch_channel();
         let (receiver, exporter_endpoint) =

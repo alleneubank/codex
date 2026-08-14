@@ -34,6 +34,14 @@ pub enum GitToolingError {
         expected_common_dir: PathBuf,
         actual_common_dir: PathBuf,
     },
+    #[error(
+        "worktree {path:?} is on branch {actual_branch:?}, expected newly created branch {expected_branch:?}"
+    )]
+    WorktreeBranchMismatch {
+        path: PathBuf,
+        expected_branch: String,
+        actual_branch: Option<String>,
+    },
     #[error("path {path:?} must be relative to the repository root")]
     NonRelativePath { path: PathBuf },
     #[error("path {path:?} escapes the repository root")]
