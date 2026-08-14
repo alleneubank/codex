@@ -72,7 +72,13 @@ export AWS_LC_SYS_NO_JITTER_ENTROPY_x86_64_unknown_linux_musl=1
 if [[ "${include_bwrap}" == true ]]; then
   (
     cd "${codex_root}"
-    cargo build --locked --target "${target}" --release --timings --bin bwrap
+    # CODEX_BWRAP_VERSION is bubblewrap's whole PACKAGE_STRING, not just the
+    # version: bwrap/build.rs writes it verbatim into config.h, so `bwrap
+    # --version` echoes it back. verify-fork-release-bundle.sh asserts the
+    # "bubblewrap built for Codex <version>" form, which is also build.rs's
+    # no-env fallback, so the product name has to be carried here.
+    CODEX_BWRAP_VERSION="bubblewrap built for Codex ${expected_version}" \
+      cargo build --locked --target "${target}" --release --timings --bin bwrap
   )
   bwrap_path="${release_dir}/bwrap"
   strip --strip-debug --strip-unneeded "${bwrap_path}"

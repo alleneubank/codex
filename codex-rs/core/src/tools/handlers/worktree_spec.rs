@@ -18,7 +18,7 @@ pub(crate) fn create_enter_worktree_tool() -> ToolSpec {
             .to_string(),
     ));
     let path_property = JsonSchema::string(Some(
-        "Existing Codex-managed worktree path for the same repository. Relative paths resolve under the current cwd. Required unless `name` is provided. Must not be combined with `name`."
+        "Existing local directory to adopt as this session's workdir. Relative paths resolve under the current cwd. Required unless `name` is provided. Must not be combined with `name`."
             .to_string(),
     ));
     let mut parameters = JsonSchema::object(
@@ -45,10 +45,9 @@ pub(crate) fn create_enter_worktree_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: ENTER_WORKTREE_TOOL_NAME.to_string(),
         description: concat!(
-            "Enter a git worktree for this session. The cwd change is applied to later ",
-            "serialized tool calls and subsequent model requests. Provide either `name` ",
-            "for a Codex-managed worktree, ",
-            "or `path` for an existing Codex-managed worktree in the same repository."
+            "Enter a workdir for this session. The cwd change is applied to later serialized ",
+            "tool calls and subsequent model requests. Provide either `name` for a ",
+            "Codex-managed worktree or `path` to adopt any existing local directory."
         )
         .to_string(),
         strict: false,
@@ -62,10 +61,10 @@ pub(crate) fn create_exit_worktree_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: EXIT_WORKTREE_TOOL_NAME.to_string(),
         description: concat!(
-            "Exit the active worktree and restore this session's original cwd. The cwd change ",
+            "Exit the active workdir and restore this session's original cwd. The cwd change ",
             "is applied to later serialized tool calls and subsequent model requests. By default ",
             "this keeps the worktree. Pass `keep: false` to remove the active clean Codex-managed ",
-            "worktree after restoring the original cwd; dirty worktrees are not force-removed."
+            "worktree after restoring the original cwd; adopted workdirs cannot be removed."
         )
         .to_string(),
         strict: false,
@@ -74,7 +73,7 @@ pub(crate) fn create_exit_worktree_tool() -> ToolSpec {
             BTreeMap::from([(
                 "keep".to_string(),
                 JsonSchema::boolean(Some(
-                    "Whether to keep the active Codex-managed worktree after exiting. Defaults to true; set to false to remove a clean managed worktree."
+                    "Whether to keep the active workdir after exiting. Defaults to true; set to false only to remove a clean Codex-managed worktree. Adopted workdirs must be kept."
                         .to_string(),
                 )),
             )]),

@@ -192,5 +192,5 @@ mod window_headers;
 #[cfg(target_os = "windows")]
 mod windows_sandbox;
 mod workspace_roots;
-mod worktree_trust;
 mod worktree;
+mod worktree_trust;

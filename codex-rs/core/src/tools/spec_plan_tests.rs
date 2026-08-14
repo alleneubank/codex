@@ -936,10 +936,7 @@ async fn worktree_tools_stay_hidden_for_system_feature_threads() {
 #[tokio::test]
 async fn worktree_tools_stay_visible_for_remote_primary_environment() {
     let plan = probe(|turn| {
-        let primary_environment = turn
-            .environments
-            .primary()
-            .expect("primary environment");
+        let primary_environment = turn.environments.primary().expect("primary environment");
         let cwd = primary_environment.cwd().clone();
         let environment_config = primary_environment.config().clone();
         turn.environments.environments = vec![TurnEnvironmentState::Ready(
