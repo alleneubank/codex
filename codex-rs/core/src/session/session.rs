@@ -45,11 +45,19 @@ use tokio::sync::Semaphore;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveWorktree {
     pub(crate) original_cwd: AbsolutePathBuf,
-    pub(crate) original_common_dir: PathBuf,
     pub(crate) original_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub(crate) worktree_path: AbsolutePathBuf,
     pub(crate) branch: Option<String>,
     pub(crate) name: Option<String>,
+    pub(crate) ownership: ActiveWorktreeOwnership,
+}
+
+/// Whether Codex owns cleanup of an entered workdir.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ActiveWorktreeOwnership {
+    /// Codex-managed, with the original Git common directory used to validate cleanup.
+    ManagedByCodex(PathBuf),
+    Adopted,
 }
 
 /// Context for an initialized model agent

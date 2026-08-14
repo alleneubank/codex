@@ -241,6 +241,7 @@ pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 use self::review::spawn_review_thread;
 pub(crate) use self::session::ActiveWorktree;
+pub(crate) use self::session::ActiveWorktreeOwnership;
 use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;

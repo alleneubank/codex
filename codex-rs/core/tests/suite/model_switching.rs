@@ -450,6 +450,101 @@ async fn model_change_appends_model_instructions_developer_message() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_switch_preserves_configured_reasoning_effort_in_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    let initial_model_slug = "test-reasoning-initial";
+    let switched_model_slug = "test-reasoning-switched";
+    let mut initial_model = test_model_info(
+        initial_model_slug,
+        "Initial reasoning model",
+        "supports high reasoning effort",
+        default_input_modalities(),
+    );
+    initial_model.default_reasoning_level = Some(ReasoningEffort::Low);
+    initial_model.supported_reasoning_levels = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::Low,
+            description: ReasoningEffort::Low.to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffort::High,
+            description: ReasoningEffort::High.to_string(),
+        },
+    ];
+    let mut switched_model = initial_model.clone();
+    switched_model.slug = switched_model_slug.to_string();
+    switched_model.display_name = "Switched reasoning model".to_string();
+
+    mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![initial_model.clone(), switched_model.clone()],
+        },
+    )
+    .await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![sse_completed("resp-1"), sse_completed("resp-2")],
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(move |config| {
+            config.model = Some(initial_model_slug.to_string());
+            config.model_reasoning_effort = Some(ReasoningEffort::High);
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![initial_model, switched_model],
+            });
+        });
+    let test = builder.build_with_auto_env(&server).await?;
+
+    let mut initial_turn = read_only_user_turn(
+        &test,
+        vec![UserInput::Text {
+            text: "initial reasoning turn".into(),
+            text_elements: Vec::new(),
+        }],
+        initial_model_slug.to_string(),
+    );
+    initial_turn.thread_settings.collaboration_mode = None;
+    initial_turn.thread_settings.model = Some(initial_model_slug.to_string());
+    test.codex.start_or_steer_turn(initial_turn).await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let mut switched_turn = read_only_user_turn(
+        &test,
+        vec![UserInput::Text {
+            text: "switch reasoning model".into(),
+            text_elements: Vec::new(),
+        }],
+        switched_model_slug.to_string(),
+    );
+    switched_turn.thread_settings.collaboration_mode = None;
+    switched_turn.thread_settings.model = Some(switched_model_slug.to_string());
+    test.codex.start_or_steer_turn(switched_turn).await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2, "expected two model requests");
+    assert_eq!(
+        requests[1].body_json()["reasoning"]["effort"].as_str(),
+        Some("high"),
+        "switching models must retain the configured high reasoning effort"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn model_and_personality_change_only_appends_model_instructions() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

@@ -3,6 +3,7 @@ name = "codex-code-mode-host"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "codex-code-mode-host"
@@ -15,6 +16,9 @@ path = "src/lib.rs"
 
 [lints]
 workspace = true
+
+[build-dependencies]
+semver = { workspace = true }
 
 [dependencies]
 anyhow = { workspace = true }

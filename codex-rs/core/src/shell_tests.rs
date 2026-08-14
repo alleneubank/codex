@@ -19,7 +19,7 @@ fn detects_zsh() {
 #[cfg(target_os = "macos")]
 fn fish_fallback_to_zsh() {
     let zsh_shell = default_user_shell_from_path(Some(PathBuf::from("/bin/fish")));
-    let expected_zsh_shell = get_shell(ShellType::Zsh, /*path*/ None).unwrap();
+    let expected_zsh_shell = get_shell(ShellType::Zsh).unwrap();
 
     assert_eq!(zsh_shell, expected_zsh_shell);
 }

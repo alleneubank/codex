@@ -9,6 +9,7 @@ use super::WorktreeInfo;
 use super::create_or_reuse_managed_worktree;
 use super::inspect_worktree;
 use super::managed_worktree_path;
+use super::remove_created_managed_worktree;
 use super::remove_managed_worktree;
 use crate::GitToolingError;
 
@@ -91,6 +92,7 @@ fn create_or_reuse_managed_worktree_under_codex_dir() -> Result<(), GitToolingEr
     assert_eq!(created.name, "codex-test");
     assert_eq!(created.path, expected_path);
     assert!(created.created);
+    assert_eq!(created.created_branch, Some("codex-test".to_string()));
     assert_eq!(created.info.repo_root, expected_path);
     assert_eq!(created.info.current_branch, Some("codex-test".to_string()));
 
@@ -98,6 +100,7 @@ fn create_or_reuse_managed_worktree_under_codex_dir() -> Result<(), GitToolingEr
     assert_eq!(reused.name, "codex-test");
     assert_eq!(reused.path, expected_path);
     assert!(!reused.created);
+    assert_eq!(reused.created_branch, None);
     assert_eq!(reused.info.common_dir, created.info.common_dir);
 
     Ok(())
@@ -138,6 +141,52 @@ fn remove_managed_worktree_removes_clean_worktree() -> Result<(), GitToolingErro
             .contains(&managed.path.to_string_lossy().to_string()),
         "removed worktree should not appear in git worktree list"
     );
+    Ok(())
+}
+
+#[test]
+fn remove_created_managed_worktree_removes_new_branch() -> Result<(), GitToolingError> {
+    let repo = init_repo()?;
+    let managed = create_or_reuse_managed_worktree(repo.path(), "codex-rollback")?;
+
+    remove_created_managed_worktree(
+        repo.path(),
+        &managed.path,
+        managed.created_branch.as_deref(),
+    )?;
+
+    assert!(!managed.path.exists());
+    let branch = Command::new("git")
+        .current_dir(repo.path())
+        .args(["show-ref", "--verify", "refs/heads/codex-rollback"])
+        .output()
+        .expect("git show-ref");
+    assert!(!branch.status.success());
+    Ok(())
+}
+
+#[test]
+fn remove_created_managed_worktree_preserves_reused_branch() -> Result<(), GitToolingError> {
+    let repo = init_repo()?;
+    let branch = "codex-existing-rollback";
+    let status = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", branch])
+        .status()
+        .expect("git branch");
+    assert!(status.success(), "git branch should succeed");
+    let managed = create_or_reuse_managed_worktree(repo.path(), branch)?;
+    assert_eq!(managed.created_branch, None);
+
+    remove_created_managed_worktree(repo.path(), &managed.path, /*created_branch*/ None)?;
+
+    assert!(!managed.path.exists());
+    let branch = Command::new("git")
+        .current_dir(repo.path())
+        .args(["show-ref", "--verify", "refs/heads/codex-existing-rollback"])
+        .output()
+        .expect("git show-ref");
+    assert!(branch.status.success());
     Ok(())
 }
 

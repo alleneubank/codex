@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio::task::JoinError;
 use tokio_util::either::Either;
@@ -20,6 +22,8 @@ use crate::session::step_context::StepContext;
 use crate::tools::context::AbortedToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::worktree_spec::ENTER_WORKTREE_TOOL_NAME;
+use crate::tools::handlers::worktree_spec::EXIT_WORKTREE_TOOL_NAME;
 use crate::tools::lifecycle::notify_tool_aborted;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolArgumentDiffConsumer;
@@ -37,6 +41,79 @@ struct ToolCallTimingGuard {
     tool_name: codex_tools::ToolName,
 }
 
+struct SerialToolCallCompletion {
+    completed: AtomicBool,
+    notify: Notify,
+}
+
+impl SerialToolCallCompletion {
+    fn new() -> Self {
+        Self {
+            completed: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait(&self) {
+        while !self.completed.load(Ordering::Acquire) {
+            let notified = self.notify.notified();
+            if self.completed.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn complete(&self) {
+        self.completed.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+}
+
+struct SerialToolCallCompletionGuard(Arc<SerialToolCallCompletion>);
+
+impl Drop for SerialToolCallCompletionGuard {
+    fn drop(&mut self) {
+        self.0.complete();
+    }
+}
+
+/// Dispatch ordering around one turn's context-mutating tool calls.
+///
+/// A context barrier is two-sided: every call dispatched before it must finish
+/// first, and every call dispatched after it must wait for it. Ordinary calls
+/// retain the upstream readiness-first scheduling enforced by `parallel_execution`.
+#[derive(Default)]
+struct ToolCallOrdering {
+    /// Most recent context barrier. Every later call waits on it.
+    barrier_tail: Option<Arc<SerialToolCallCompletion>>,
+    /// Calls dispatched since `barrier_tail`. The next barrier drains them.
+    calls_since_barrier: Vec<Arc<SerialToolCallCompletion>>,
+}
+
+struct ToolCallDispatchOrder {
+    predecessors: Vec<Arc<SerialToolCallCompletion>>,
+    completion: Arc<SerialToolCallCompletion>,
+}
+
+impl ToolCallOrdering {
+    fn register(&mut self, is_context_barrier: bool) -> ToolCallDispatchOrder {
+        let completion = Arc::new(SerialToolCallCompletion::new());
+        let mut predecessors: Vec<Arc<SerialToolCallCompletion>> =
+            self.barrier_tail.iter().cloned().collect();
+        if is_context_barrier {
+            predecessors.append(&mut self.calls_since_barrier);
+            self.barrier_tail = Some(Arc::clone(&completion));
+        } else {
+            self.calls_since_barrier.push(Arc::clone(&completion));
+        }
+        ToolCallDispatchOrder {
+            predecessors,
+            completion,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ToolCallRuntime {
     session: Arc<Session>,
@@ -44,7 +121,8 @@ pub(crate) struct ToolCallRuntime {
     step_context: Arc<StepContext>,
     tracker: SharedTurnDiffTracker,
     parallel_execution: Arc<RwLock<()>>,
-    serial_tool_call_seen: Arc<AtomicBool>,
+    context_barrier_seen: Arc<AtomicBool>,
+    tool_call_ordering: Arc<Mutex<ToolCallOrdering>>,
 }
 
 impl ToolCallRuntime {
@@ -58,7 +136,8 @@ impl ToolCallRuntime {
             step_context,
             tracker,
             parallel_execution: Arc::new(RwLock::new(())),
-            serial_tool_call_seen: Arc::new(AtomicBool::new(false)),
+            context_barrier_seen: Arc::new(AtomicBool::new(false)),
+            tool_call_ordering: Arc::new(Mutex::new(ToolCallOrdering::default())),
         }
     }
 
@@ -120,11 +199,26 @@ impl ToolCallRuntime {
         let turn = Arc::clone(&step_context.turn);
         let tracker = Arc::clone(&self.tracker);
         let lock = Arc::clone(&self.parallel_execution);
-        let serial_tool_call_seen = Arc::clone(&self.serial_tool_call_seen);
-        let refresh_step_context_after_serial_tool = serial_tool_call_seen.load(Ordering::Acquire);
-        if !supports_parallel {
-            serial_tool_call_seen.store(true, Ordering::Release);
+        let is_context_barrier = call.tool_name.is_default_namespace()
+            && matches!(
+                call.tool_name.name.as_str(),
+                ENTER_WORKTREE_TOOL_NAME | EXIT_WORKTREE_TOOL_NAME
+            );
+        let context_barrier_seen = Arc::clone(&self.context_barrier_seen);
+        let refresh_step_context_after_barrier = context_barrier_seen.load(Ordering::Acquire);
+        if is_context_barrier {
+            context_barrier_seen.store(true, Ordering::Release);
         }
+        let ToolCallDispatchOrder {
+            predecessors: dispatch_predecessors,
+            completion: dispatch_completion,
+        } = {
+            let mut ordering = self
+                .tool_call_ordering
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            ordering.register(is_context_barrier)
+        };
         let invocation_cancellation_token = cancellation_token.clone();
         let started = Instant::now();
         let tool_call_timing_guard =
@@ -148,8 +242,16 @@ impl ToolCallRuntime {
         );
         let abort_dispatch_span = dispatch_span.clone();
 
+        // Own the completion guard in the spawned future so aborting it before
+        // its first poll still releases later dispatches.
+        let dispatch_completion_guard = SerialToolCallCompletionGuard(dispatch_completion);
+
         let mut dispatch_handle: AbortOnDropHandle<Result<AnyToolResult, FunctionCallError>> =
             AbortOnDropHandle::new(tokio::spawn(async move {
+                let _dispatch_completion_guard = dispatch_completion_guard;
+                for predecessor in dispatch_predecessors {
+                    predecessor.wait().await;
+                }
                 if let Some(tool_runtime) = tool_runtime
                     && let Some(readiness) = tool_runtime.wait_until_ready(&session)
                 {
@@ -163,13 +265,13 @@ impl ToolCallRuntime {
                         Either::Right(lock.write().await)
                     }
                 };
-                let step_context = if refresh_step_context_after_serial_tool {
+                let step_context = if refresh_step_context_after_barrier {
                     session
                         .capture_step_context(Arc::clone(&turn), &invocation_cancellation_token)
                         .await
                         .map_err(|err| {
                             FunctionCallError::Fatal(format!(
-                                "failed to refresh step context after serial tool: {err}"
+                                "failed to refresh step context after context barrier: {err}"
                             ))
                         })?
                 } else {
@@ -384,6 +486,54 @@ mod tests {
     use codex_protocol::models::FunctionCallOutputBody;
     use codex_protocol::models::FunctionCallOutputPayload;
     use pretty_assertions::assert_eq;
+
+    const ORDINARY: bool = false;
+    const CONTEXT_BARRIER: bool = true;
+
+    fn waits_for(order: &ToolCallDispatchOrder, predecessor: &ToolCallDispatchOrder) -> bool {
+        order
+            .predecessors
+            .iter()
+            .any(|waited| Arc::ptr_eq(waited, &predecessor.completion))
+    }
+
+    #[test]
+    fn context_barrier_waits_for_calls_dispatched_before_it() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let enter = ordering.register(CONTEXT_BARRIER);
+        let exec = ordering.register(ORDINARY);
+        let exit = ordering.register(CONTEXT_BARRIER);
+
+        assert!(waits_for(&exec, &enter));
+        assert!(waits_for(&exit, &enter));
+        assert!(waits_for(&exit, &exec));
+    }
+
+    #[test]
+    fn ordinary_calls_do_not_wait_for_each_other() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let first = ordering.register(ORDINARY);
+        let second = ordering.register(ORDINARY);
+
+        assert!(second.predecessors.is_empty());
+        assert!(!waits_for(&second, &first));
+    }
+
+    #[test]
+    fn context_barrier_drains_the_ordinary_backlog() {
+        let mut ordering = ToolCallOrdering::default();
+
+        let exec = ordering.register(ORDINARY);
+        let first_barrier = ordering.register(CONTEXT_BARRIER);
+        let second_barrier = ordering.register(CONTEXT_BARRIER);
+
+        assert!(waits_for(&first_barrier, &exec));
+        assert!(!waits_for(&second_barrier, &exec));
+        assert!(waits_for(&second_barrier, &first_barrier));
+        assert_eq!(second_barrier.predecessors.len(), 1);
+    }
     use tokio::sync::Notify;
     use tokio::sync::oneshot;
     use tracing_test::internal::MockWriter;

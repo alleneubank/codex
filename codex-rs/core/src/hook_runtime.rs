@@ -45,6 +45,7 @@ use codex_protocol::protocol::WarningEvent;
 use codex_rollout::state_db;
 use codex_thread_store::PersistContext;
 use codex_thread_store::ReadThreadParams;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 use tracing::instrument;
 
@@ -73,6 +74,35 @@ pub(crate) enum PermissionRequestHookEventMode {
 pub(crate) enum PreToolUseHookResult {
     Continue { updated_input: Option<Value> },
     Blocked(String),
+}
+
+pub(crate) struct ToolHookContext<'a> {
+    pub(crate) session: &'a Arc<Session>,
+    pub(crate) turn: &'a Arc<TurnContext>,
+    pub(crate) effective_cwd: &'a AbsolutePathBuf,
+}
+
+impl<'a> ToolHookContext<'a> {
+    pub(crate) fn new(
+        session: &'a Arc<Session>,
+        turn: &'a Arc<TurnContext>,
+        effective_cwd: &'a AbsolutePathBuf,
+    ) -> Self {
+        Self {
+            session,
+            turn,
+            effective_cwd,
+        }
+    }
+}
+
+async fn current_hook_cwd(sess: &Arc<Session>, turn_context: &Arc<TurnContext>) -> AbsolutePathBuf {
+    sess.services
+        .turn_environments
+        .snapshot()
+        .await
+        .local_environment_cwd()
+        .unwrap_or_else(|| turn_context.config.cwd.clone())
 }
 
 struct ContextInjectingHookOutcome {
@@ -147,7 +177,7 @@ pub(crate) async fn run_pending_session_start_hooks(
         let request = codex_hooks::SessionStartRequest {
             session_id: sess.session_id().into(),
             #[allow(deprecated)]
-            cwd: turn_context.cwd.clone(),
+            cwd: current_hook_cwd(sess, turn_context).await,
             transcript_path: sess.hook_transcript_path().await,
             model: turn_context.model_info.slug.clone(),
             permission_mode: hook_permission_mode(turn_context),
@@ -178,29 +208,28 @@ pub(crate) async fn run_pending_session_start_hooks(
 /// are internal compatibility names used only for selecting configured hook
 /// handlers.
 pub(crate) async fn run_pre_tool_use_hooks(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
+    context: &ToolHookContext<'_>,
     tool_use_id: String,
     tool_name: &HookToolName,
     tool_input: &Value,
 ) -> PreToolUseHookResult {
     let request = PreToolUseRequest {
-        session_id: sess.session_id().into(),
-        turn_id: turn_context.sub_id.clone(),
-        subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+        session_id: context.session.session_id().into(),
+        turn_id: context.turn.sub_id.clone(),
+        subagent: thread_spawn_subagent_hook_context(context.session, context.turn),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
-        transcript_path: sess.hook_transcript_path().await,
-        model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
+        cwd: context.effective_cwd.clone(),
+        transcript_path: context.session.hook_transcript_path().await,
+        model: context.turn.model_info.slug.clone(),
+        permission_mode: hook_permission_mode(context.turn),
         tool_name: tool_name.name().to_string(),
         matcher_aliases: tool_name.matcher_aliases().to_vec(),
         tool_use_id,
         tool_input: tool_input.clone(),
     };
-    let hooks = sess.hooks();
+    let hooks = context.session.hooks();
     let preview_runs = hooks.preview_pre_tool_use(&request);
-    emit_hook_started_events(sess, turn_context, preview_runs).await;
+    emit_hook_started_events(context.session, context.turn, preview_runs).await;
 
     let PreToolUseOutcome {
         hook_events,
@@ -209,8 +238,8 @@ pub(crate) async fn run_pre_tool_use_hooks(
         additional_contexts,
         updated_input,
     } = hooks.run_pre_tool_use(request).await;
-    emit_hook_completed_events(sess, turn_context, hook_events).await;
-    record_additional_contexts(sess, turn_context, additional_contexts).await;
+    emit_hook_completed_events(context.session, context.turn, hook_events).await;
+    record_additional_contexts(context.session, context.turn, additional_contexts).await;
 
     if !should_block {
         return PreToolUseHookResult::Continue { updated_input };
@@ -240,30 +269,29 @@ pub(crate) async fn run_pre_tool_use_hooks(
 // other hook types, but they return an optional decision instead of mutating
 // tool input or post-run state.
 pub(crate) async fn run_permission_request_hooks(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
+    context: &ToolHookContext<'_>,
     run_id_suffix: &str,
     payload: PermissionRequestPayload,
     event_mode: PermissionRequestHookEventMode,
 ) -> Option<PermissionRequestDecision> {
     let request = PermissionRequestRequest {
-        session_id: sess.session_id().into(),
-        turn_id: turn_context.sub_id.clone(),
-        subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+        session_id: context.session.session_id().into(),
+        turn_id: context.turn.sub_id.clone(),
+        subagent: thread_spawn_subagent_hook_context(context.session, context.turn),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.to_path_buf(),
-        transcript_path: sess.hook_transcript_path().await,
-        model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
+        cwd: context.effective_cwd.to_path_buf(),
+        transcript_path: context.session.hook_transcript_path().await,
+        model: context.turn.model_info.slug.clone(),
+        permission_mode: hook_permission_mode(context.turn),
         tool_name: payload.tool_name.name().to_string(),
         matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
         run_id_suffix: run_id_suffix.to_string(),
         tool_input: payload.tool_input,
     };
-    let hooks = sess.hooks();
+    let hooks = context.session.hooks();
     let preview_runs = hooks.preview_permission_request(&request);
     if event_mode == PermissionRequestHookEventMode::Emit {
-        emit_hook_started_events(sess, turn_context, preview_runs).await;
+        emit_hook_started_events(context.session, context.turn, preview_runs).await;
     }
 
     let PermissionRequestOutcome {
@@ -271,10 +299,10 @@ pub(crate) async fn run_permission_request_hooks(
         decision,
     } = hooks.run_permission_request(request).await;
     if event_mode == PermissionRequestHookEventMode::Emit {
-        emit_hook_completed_events(sess, turn_context, hook_events).await;
+        emit_hook_completed_events(context.session, context.turn, hook_events).await;
     } else {
         for completed in &hook_events {
-            record_hook_completed_event(sess, turn_context, completed);
+            record_hook_completed_event(context.session, context.turn, completed);
         }
     }
 
@@ -288,8 +316,7 @@ pub(crate) async fn run_permission_request_hooks(
 /// raw internal tool data here would leak implementation details into user hook
 /// matchers and hook logs.
 pub(crate) async fn run_post_tool_use_hooks(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
+    context: &ToolHookContext<'_>,
     tool_use_id: String,
     tool_name: String,
     matcher_aliases: Vec<String>,
@@ -297,26 +324,26 @@ pub(crate) async fn run_post_tool_use_hooks(
     tool_response: Value,
 ) -> PostToolUseOutcome {
     let request = PostToolUseRequest {
-        session_id: sess.session_id().into(),
-        turn_id: turn_context.sub_id.clone(),
-        subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+        session_id: context.session.session_id().into(),
+        turn_id: context.turn.sub_id.clone(),
+        subagent: thread_spawn_subagent_hook_context(context.session, context.turn),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
-        transcript_path: sess.hook_transcript_path().await,
-        model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
+        cwd: context.effective_cwd.clone(),
+        transcript_path: context.session.hook_transcript_path().await,
+        model: context.turn.model_info.slug.clone(),
+        permission_mode: hook_permission_mode(context.turn),
         tool_name,
         matcher_aliases,
         tool_use_id,
         tool_input,
         tool_response,
     };
-    let hooks = sess.hooks();
+    let hooks = context.session.hooks();
     let preview_runs = hooks.preview_post_tool_use(&request);
-    emit_hook_started_events(sess, turn_context, preview_runs).await;
+    emit_hook_started_events(context.session, context.turn, preview_runs).await;
 
     let outcome = hooks.run_post_tool_use(request).await;
-    emit_hook_completed_events(sess, turn_context, outcome.hook_events.clone()).await;
+    emit_hook_completed_events(context.session, context.turn, outcome.hook_events.clone()).await;
     outcome
 }
 
@@ -388,7 +415,7 @@ pub(crate) async fn run_turn_stop_hooks(
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
+        cwd: current_hook_cwd(sess, turn_context).await,
         transcript_path,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
@@ -430,7 +457,7 @@ pub(crate) async fn run_session_end_hooks(sess: &Arc<Session>) {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
+        cwd: current_hook_cwd(sess, &turn_context).await,
         transcript_path: sess.hook_transcript_path().await,
     };
     if let Err(err) = sess.flush_rollout().await {
@@ -452,7 +479,7 @@ pub(crate) async fn run_pre_compact_hooks(
         turn_id: turn_context.sub_id.clone(),
         subagent: thread_spawn_subagent_hook_context(sess, turn_context),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
+        cwd: current_hook_cwd(sess, turn_context).await,
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         trigger: compaction_trigger_label(trigger).to_string(),
@@ -489,7 +516,7 @@ pub(crate) async fn run_post_compact_hooks(
         turn_id: turn_context.sub_id.clone(),
         subagent: thread_spawn_subagent_hook_context(sess, turn_context),
         #[allow(deprecated)]
-        cwd: turn_context.cwd.clone(),
+        cwd: current_hook_cwd(sess, turn_context).await,
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         trigger: compaction_trigger_label(trigger).to_string(),
@@ -526,7 +553,7 @@ pub(crate) async fn run_legacy_after_agent_hook(
         .dispatch(codex_hooks::HookPayload {
             session_id: sess.session_id().into(),
             #[allow(deprecated)]
-            cwd: turn_context.cwd.clone(),
+            cwd: current_hook_cwd(sess, turn_context).await,
             client: turn_context.app_server_client_name.clone(),
             triggered_at: chrono::Utc::now(),
             hook_event: codex_hooks::HookEvent::AfterAgent {
@@ -586,7 +613,7 @@ pub(crate) async fn inspect_pending_input(
                 turn_id: turn_context.sub_id.clone(),
                 subagent: thread_spawn_subagent_hook_context(sess, turn_context),
                 #[allow(deprecated)]
-                cwd: turn_context.cwd.clone(),
+                cwd: current_hook_cwd(sess, turn_context).await,
                 transcript_path: sess.hook_transcript_path().await,
                 model: turn_context.model_info.slug.clone(),
                 permission_mode: hook_permission_mode(turn_context),

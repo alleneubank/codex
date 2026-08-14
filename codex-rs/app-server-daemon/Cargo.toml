@@ -3,6 +3,7 @@ name = "codex-app-server-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [lib]
 name = "codex_app_server_daemon"
@@ -38,3 +39,6 @@ tokio-tungstenite = { workspace = true }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
+
+[build-dependencies]
+semver = { workspace = true }

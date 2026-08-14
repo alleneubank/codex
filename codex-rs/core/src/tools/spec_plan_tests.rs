@@ -690,10 +690,7 @@ async fn worktree_tools_stay_visible_without_ready_local_primary_environment() {
 #[tokio::test]
 async fn worktree_tools_stay_visible_for_remote_primary_environment() {
     let plan = probe(|turn| {
-        let primary_environment = turn
-            .environments
-            .primary()
-            .expect("primary environment");
+        let primary_environment = turn.environments.primary().expect("primary environment");
         let cwd = primary_environment.cwd().clone();
         let environment_config = primary_environment.config().clone();
         turn.environments.environments = vec![TurnEnvironmentState::Ready(
@@ -724,7 +721,7 @@ async fn worktree_tools_stay_visible_for_remote_primary_environment() {
 #[tokio::test]
 async fn worktree_tools_stay_direct_in_model_selected_code_mode_only() {
     let plan = probe(|turn| {
-        turn.model_info.tool_mode = Some(ToolMode::CodeModeOnly);
+        Arc::make_mut(&mut turn.model_info).tool_mode = Some(ToolMode::CodeModeOnly);
     })
     .await;
 

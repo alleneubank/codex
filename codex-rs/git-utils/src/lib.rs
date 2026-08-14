@@ -56,5 +56,6 @@ pub use worktree::create_or_reuse_managed_worktree;
 pub use worktree::inspect_worktree;
 pub use worktree::managed_worktree_path;
 pub use worktree::managed_worktrees_dir;
+pub use worktree::remove_created_managed_worktree;
 pub use worktree::remove_managed_worktree;
 pub use worktree::validate_managed_same_repository_worktree_with_info;

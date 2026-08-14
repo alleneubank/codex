@@ -846,7 +846,9 @@ impl TurnEnvironmentSnapshot {
             .iter()
             .map(|environment| match environment {
                 TurnEnvironmentState::Ready(environment) => environment.selection(),
-                TurnEnvironmentState::Starting(environment) => environment.selection.clone(),
+                TurnEnvironmentState::Starting(environment) => environment
+                    .config_origin
+                    .into_input_selection(environment.selection.clone()),
             })
             .collect()
     }
