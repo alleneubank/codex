@@ -2,13 +2,35 @@
 
 - Maintain the fork product and release source only on local `main` and `origin/main`.
 - Rebase `main` onto `upstream/main`; do not recreate or maintain `origin/fork`.
+- Classify every fork commit before creating it. Upstream-bound work has an unprefixed conventional
+  subject and contains only code suitable for an upstream PR. Fork-only release, distribution, or
+  standing-law maintenance on `main` uses a `[fork]` prefix before its conventional subject (for
+  example, `[fork] chore(release): refresh fork metadata`) and is excluded from upstream PRs.
+- Amend, do not accrete, while iterating on unmerged work: review feedback, dogfood fixes, and
+  rebase resolution rewrite the existing feature commit with `git commit --amend` or a deliberate
+  history rewrite instead of stacking work-in-progress `fix:` commits. Use `fix:` only for a real
+  defect in code that has already merged upstream.
+- Before replaying fork commits during an upstream sync, inspect the upstream log and diff since
+  the prior merge base. Classify each fork commit as **drop** (upstream supersedes it), **adopt**
+  (use upstream's implementation and retain only fork policy), or **adapt** (rewrite it against
+  upstream's current extension points, types, permission/environment models, lifecycle APIs, and
+  release/build conventions). Make that classification before resolving conflicts; never preserve
+  a stale compatibility projection because it compiles. Verify each adaptation under the minimal
+  verification rule below.
 - After every upstream sync, run `just update-fork-version`, commit the changed pin, and run
-  `just test-fork-maintenance` plus `just check-fork-version`.
+  `just check-fork-version`. Run `just test-fork-maintenance` only when fork maintenance or release
+  scripts change.
 - Install the repository-owned pre-push policy with `just install-fork-hooks`. It checks the exact
   pushed commit and fails closed when the stable version pin is stale.
 - Build and verify fork releases locally. Do not add fork-specific GitHub Actions checks.
 - Use `bash .github/scripts/fork-release.sh roll` for the dry-run release plan. Tags, release assets,
   and publication remain immutable and require explicit human authorization.
+- This personal fork prioritizes minimal verification. For fork pruning and upstream adaptations,
+  remove tests and snapshots owned only by removed features. Keep unrelated upstream tests in place.
+  Compile affected crates with `cargo check`, then do one live smoke with the cheapest suitable
+  model and reasoning settings for behavior the compiler cannot show. Run focused tests only for
+  a specific remaining risk; do not run crate or workspace suites by default. This rule supersedes
+  other test-execution, test-authoring, and snapshot guidance here for fork-only maintenance.
 
 # Rust/codex-rs
 
@@ -73,13 +95,7 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `just test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
-Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
-
-1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.
-2. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
-3. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `just test`. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
-
-Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. For fork-only maintenance, use the minimal verification rule above. For other work that requires tests, use `just test` rather than `cargo test` directly and scope it to the affected project. Run `just fix -p <project>` only when lint findings or a named risk justify it; do not run workspace-wide Clippy by default.
 
 ## The `codex-core` crate
 
