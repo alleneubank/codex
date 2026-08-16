@@ -3415,6 +3415,266 @@ async fn model_reasoning_selection_popup_applies_custom_effort() {
     );
 }
 
+#[tokio::test]
+async fn model_only_selection_uses_configured_supported_effort() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.id = "codex-auto-configured-default".to_string();
+    preset.model = "codex-auto-configured-default".to_string();
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "Balanced reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::XHigh,
+            description: "Extra high reasoning".to_string(),
+        },
+    ];
+    chat.open_model_popup_with_presets(vec![preset]);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(
+        &events,
+        "codex-auto-configured-default",
+        ReasoningEffortConfig::XHigh,
+    );
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_uses_configured_supported_effort_for_new_model() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let preset = get_available_model(&chat, "gpt-5.6-terra");
+    chat.open_reasoning_popup(preset);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(&events, "gpt-5.6-terra", ReasoningEffortConfig::XHigh);
+}
+
+#[tokio::test]
+async fn model_only_selection_uses_catalog_default_without_advertised_efforts() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.id = "codex-auto-empty-efforts".to_string();
+    preset.model = "codex-auto-empty-efforts".to_string();
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = Vec::new();
+    chat.open_model_popup_with_presets(vec![preset]);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(
+        &events,
+        "codex-auto-empty-efforts",
+        ReasoningEffortConfig::Medium,
+    );
+}
+
+#[tokio::test]
+async fn model_only_selection_uses_first_supported_nonadvanced_fallback() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.id = "codex-auto-missing-default".to_string();
+    preset.model = "codex-auto-missing-default".to_string();
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Low,
+            description: "Low reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: "High reasoning".to_string(),
+        },
+    ];
+    chat.open_model_popup_with_presets(vec![preset]);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(
+        &events,
+        "codex-auto-missing-default",
+        ReasoningEffortConfig::Low,
+    );
+}
+
+#[tokio::test]
+async fn model_only_selection_uses_most_recent_configured_effort() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+    chat.set_configured_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+    while rx.try_recv().is_ok() {}
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.id = "codex-auto-most-recent-effort".to_string();
+    preset.model = "codex-auto-most-recent-effort".to_string();
+    preset.default_reasoning_effort = ReasoningEffortConfig::High;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "Balanced reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::XHigh,
+            description: "Extra high reasoning".to_string(),
+        },
+    ];
+    chat.open_model_popup_with_presets(vec![preset]);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(
+        &events,
+        "codex-auto-most-recent-effort",
+        ReasoningEffortConfig::Medium,
+    );
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_keeps_configured_default_after_conversation_ultra() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::Medium);
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Ultra));
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "Balanced reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Ultra,
+            description: "Ultra reasoning".to_string(),
+        },
+    ];
+    chat.open_reasoning_popup(preset);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(&events, "gpt-5.6-terra", ReasoningEffortConfig::Medium);
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_preserves_configured_advanced_effort() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::Max);
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "Balanced reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Max,
+            description: "Maximum reasoning".to_string(),
+        },
+    ];
+    chat.open_reasoning_popup(preset);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let advanced_preset = std::iter::from_fn(|| rx.try_recv().ok()).find_map(|event| {
+        if let AppEvent::OpenAdvancedReasoningPopup { model } = event {
+            Some(model)
+        } else {
+            None
+        }
+    });
+    chat.open_advanced_reasoning_popup(advanced_preset.expect("advanced reasoning popup"));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(&events, "gpt-5.6-terra", ReasoningEffortConfig::Max);
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_configured_default_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let preset = get_available_model(&chat, "gpt-5.6-terra");
+    chat.open_reasoning_popup(preset);
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("model_reasoning_selection_popup_configured_default", popup);
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_falls_back_when_configured_effort_is_unsupported() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let mut preset = get_available_model(&chat, "gpt-5.6-terra");
+    preset.default_reasoning_effort = ReasoningEffortConfig::Medium;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "Balanced reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: "High reasoning".to_string(),
+        },
+    ];
+    chat.open_reasoning_popup(preset);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(&events, "gpt-5.6-terra", ReasoningEffortConfig::Medium);
+}
+
+#[tokio::test]
+async fn model_reasoning_popup_persists_explicit_effort_over_configured_default() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::XHigh);
+
+    let preset = get_available_model(&chat, "gpt-5.6-terra");
+    chat.open_reasoning_popup(preset);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_model_selection_events(&events, "gpt-5.6-terra", ReasoningEffortConfig::High);
+}
+
+fn assert_model_selection_events(
+    events: &[AppEvent],
+    expected_model: &str,
+    expected_effort: ReasoningEffortConfig,
+) {
+    let selection_events = events
+        .iter()
+        .filter_map(|event| match event {
+            AppEvent::UpdateReasoningEffort(effort) => Some((None, effort.clone())),
+            AppEvent::PersistModelSelection { model, effort } => {
+                Some((Some(model.clone()), effort.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        selection_events,
+        vec![
+            (None, Some(expected_effort.clone())),
+            (Some(expected_model.to_string()), Some(expected_effort)),
+        ]
+    );
+}
+
 async fn select_ultra_with_multi_agent_thread_limit(max_threads: usize) -> (bool, Vec<String>) {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.config

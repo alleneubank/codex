@@ -114,14 +114,15 @@ impl ChatWidget {
                         });
                     })]
                 } else {
+                    let effort = self.model_selection_default_reasoning_effort(&preset);
                     let should_prompt_plan_mode_scope = self
                         .should_prompt_plan_mode_reasoning_scope(
                             model.as_str(),
-                            Some(preset.default_reasoning_effort.clone()),
+                            Some(effort.clone()),
                         );
                     self.model_selection_actions(
                         model.clone(),
-                        Some(preset.default_reasoning_effort.clone()),
+                        Some(effort),
                         should_prompt_plan_mode_scope,
                     )
                 };
@@ -398,7 +399,7 @@ impl ChatWidget {
     /// Max and Ultra require an explicit second step so expensive efforts cannot
     /// be selected accidentally while moving through the normal effort scale.
     pub(crate) fn open_reasoning_popup(&mut self, preset: ModelPreset) {
-        let default_effort = preset.default_reasoning_effort.clone();
+        let default_effort = self.model_selection_default_reasoning_effort(&preset);
         let supported = &preset.supported_reasoning_efforts;
         let in_plan_mode =
             self.collaboration_modes_enabled() && self.active_mode_kind() == ModeKind::Plan;
@@ -471,7 +472,7 @@ impl ChatWidget {
             default_choice.clone().or_else(|| choices.first().cloned())
         };
         let selection_choice = highlight_choice.clone().or_else(|| default_choice.clone());
-        let initial_selected_idx = choices
+        let mut initial_selected_idx = choices
             .iter()
             .position(|choice| Some(choice) == selection_choice.as_ref());
         let mut items: Vec<SelectionItem> = Vec::new();
@@ -550,6 +551,9 @@ impl ChatWidget {
                 dismiss_parent_on_child_accept: true,
                 ..Default::default()
             });
+            if !is_current_model && advanced_choices.contains(&default_effort) {
+                initial_selected_idx = Some(items.len() - 1);
+            }
         }
 
         let mut header = ColumnRenderable::new();
@@ -564,6 +568,40 @@ impl ChatWidget {
             initial_selected_idx,
             ..Default::default()
         });
+    }
+
+    /// Resolve the effort for a model-only selection without overriding an
+    /// effort the user configured for every compatible model.
+    fn model_selection_default_reasoning_effort(
+        &self,
+        preset: &ModelPreset,
+    ) -> ReasoningEffortConfig {
+        let supported = &preset.supported_reasoning_efforts;
+        let supports_effort = |effort: &ReasoningEffortConfig| {
+            supported.iter().any(|option| option.effort == *effort)
+        };
+
+        match self
+            .config
+            .model_reasoning_effort
+            .as_ref()
+            .filter(|effort| supports_effort(effort))
+            .cloned()
+            .or_else(|| {
+                (supported.is_empty() || supports_effort(&preset.default_reasoning_effort))
+                    .then(|| preset.default_reasoning_effort.clone())
+            })
+            .or_else(|| {
+                supported
+                    .iter()
+                    .find(|option| !Self::is_advanced_reasoning_effort(&option.effort))
+                    .map(|option| option.effort.clone())
+            })
+            .or_else(|| supported.first().map(|option| option.effort.clone()))
+        {
+            Some(effort) => effort,
+            None => preset.default_reasoning_effort.clone(),
+        }
     }
 
     /// Open the explicit Max/Ultra effort picker for the given model.
@@ -589,6 +627,9 @@ impl ChatWidget {
         let highlight_choice = is_current_model
             .then(|| self.effective_reasoning_effort())
             .flatten();
+        let initial_selected_idx = (!is_current_model)
+            .then(|| self.model_selection_default_reasoning_effort(&preset))
+            .and_then(|default_effort| choices.iter().position(|choice| choice == &default_effort));
         let mut items = Vec::new();
         for effort in choices {
             let description = match &effort {
@@ -625,6 +666,7 @@ impl ChatWidget {
             header: Box::new(header),
             footer_hint: Some(standard_popup_hint_line()),
             items,
+            initial_selected_idx,
             ..Default::default()
         });
     }
