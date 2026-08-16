@@ -115,7 +115,7 @@ case "\${1:-}" in
 esac
 EOF
 cat >"${fake_bin}/bash" <<'EOF'
-#!/usr/bin/bash
+#!/bin/bash
 set -euo pipefail
 if [[ "${1:-}" == */verify-fork-release-bundle.sh ]]; then
   [[ "$#" -eq 4 ]]
@@ -259,7 +259,7 @@ FAKE_FILE_ARCH=arm64 "${real_bash}" \
   aarch64-apple-darwin \
   "${output_dir}/codex-aarch64-apple-darwin-bundle.tar.zst" \
   "${expected_binary_version}"
-"${real_bash}" \
+FAKE_FILE_ARCH=x86_64 "${real_bash}" \
   "${repo_root}/.github/scripts/verify-fork-release-bundle.sh" \
   x86_64-unknown-linux-musl \
   "${output_dir}/codex-x86_64-unknown-linux-musl-bundle.tar.zst" \
