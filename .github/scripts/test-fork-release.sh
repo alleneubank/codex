@@ -115,7 +115,7 @@ case "\${1:-}" in
 esac
 EOF
 cat >"${fake_bin}/bash" <<'EOF'
-#!/usr/bin/bash
+#!/bin/bash
 set -euo pipefail
 if [[ "${1:-}" == */verify-fork-release-bundle.sh ]]; then
   [[ "$#" -eq 4 ]]
@@ -133,6 +133,9 @@ cat >"${fake_bin}/file" <<'EOF'
 set -euo pipefail
 if [[ "${FAKE_FILE_ARCH:-}" == arm64 ]]; then
   printf '%s: Mach-O 64-bit arm64 executable\n' "$1"
+  exit 0
+elif [[ "${FAKE_FILE_ARCH:-}" == x86_64 ]]; then
+  printf '%s: ELF 64-bit LSB pie executable, x86-64\n' "$1"
   exit 0
 fi
 exec "${REAL_FILE}" "$@"
@@ -253,7 +256,7 @@ FAKE_FILE_ARCH=arm64 "${real_bash}" \
   aarch64-apple-darwin \
   "${output_dir}/codex-aarch64-apple-darwin-bundle.tar.zst" \
   "${expected_binary_version}"
-"${real_bash}" \
+FAKE_FILE_ARCH=x86_64 "${real_bash}" \
   "${repo_root}/.github/scripts/verify-fork-release-bundle.sh" \
   x86_64-unknown-linux-musl \
   "${output_dir}/codex-x86_64-unknown-linux-musl-bundle.tar.zst" \
