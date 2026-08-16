@@ -2,6 +2,14 @@
 
 - Maintain the fork product and release source only on local `main` and `origin/main`.
 - Rebase `main` onto `upstream/main`; do not recreate or maintain `origin/fork`.
+- Classify every fork commit before creating it. Upstream-bound work has an unprefixed conventional
+  subject and contains only code suitable for an upstream PR. Fork-only release, distribution, or
+  standing-law maintenance on `main` uses a `[fork]` prefix before its conventional subject (for
+  example, `[fork] chore(release): refresh fork metadata`) and is excluded from upstream PRs.
+- Amend, do not accrete, while iterating on unmerged work: review feedback, dogfood fixes, and
+  rebase resolution rewrite the existing feature commit with `git commit --amend` or a deliberate
+  history rewrite instead of stacking work-in-progress `fix:` commits. Use `fix:` only for a real
+  defect in code that has already merged upstream.
 - During every upstream sync, compare fork-only integrations with newly shipped upstream designs
   and adapt them to current extension points, types, permission/environment models, lifecycle APIs,
   and release/build conventions to guide conflict resolution. Add focused regression coverage for
