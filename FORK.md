@@ -9,20 +9,25 @@ freshness checks:
 ```sh
 git fetch --prune origin
 git fetch --prune --tags upstream
-git rebase upstream/main
+previous_base="$(git merge-base main upstream/main)"
+git log --oneline "$previous_base"..upstream/main
+git diff --stat "$previous_base"..upstream/main
+git rebase --update-refs upstream/main
 just update-fork-version
 git diff --quiet HEAD -- codex-rs/fork-version.txt || {
   git add codex-rs/fork-version.txt
-  git commit -m "chore: update fork version"
+  git commit -m "[fork] chore(release): update upstream version pin"
 }
 just test-fork-maintenance
 just check-fork-version
 ```
 
-During that rebase, compare fork-only integrations with upstream's current extension points,
-types, permission/environment models, lifecycle APIs, and release/build conventions. Adapt them
-as part of conflict resolution; stage the adapted files and run `git rebase --continue` before
-updating the fork version. Add focused regression coverage for each adaptation.
+Before replaying commits, classify each fork commit as **drop** when upstream supersedes it,
+**adopt** when upstream's implementation should replace it while fork policy remains, or **adapt**
+when the fork behavior must be rewritten against upstream's current extension points, types,
+permission/environment models, lifecycle APIs, and release/build conventions. Make that decision
+before resolving conflicts. Add focused regression coverage for every adaptation; do not preserve
+stale compatibility code merely because it compiles.
 
 Install the repository-owned push policy once per clone:
 
