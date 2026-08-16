@@ -1907,6 +1907,8 @@ impl App {
                 .await
                 {
                     Ok(_) => {
+                        self.chat_widget
+                            .set_configured_reasoning_effort(effort.clone());
                         let effort_label = effort
                             .as_ref()
                             .map(std::string::ToString::to_string)

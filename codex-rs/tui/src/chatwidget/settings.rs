@@ -177,6 +177,14 @@ impl ChatWidget {
         self.refresh_model_dependent_surfaces();
     }
 
+    /// Update the widget's persisted default without changing the active conversation effort.
+    pub(crate) fn set_configured_reasoning_effort(
+        &mut self,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        self.config.model_reasoning_effort = effort;
+    }
+
     /// Set the personality in the widget's config copy.
     pub(crate) fn set_personality(&mut self, personality: Personality) {
         self.config.personality = Some(personality);

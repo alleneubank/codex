@@ -238,6 +238,8 @@ impl App {
             .await?;
         self.apply_runtime_policy_overrides(&mut config);
         self.config = config;
+        self.chat_widget
+            .set_configured_reasoning_effort(self.config.model_reasoning_effort.clone());
         self.chat_widget.sync_plugin_mentions_config(&self.config);
         Ok(())
     }
@@ -802,6 +804,8 @@ impl App {
         if let Some(default_effort) = default_effort.as_ref() {
             self.config.model = Some(model.to_string());
             self.config.model_reasoning_effort = Some(default_effort.clone());
+            self.chat_widget
+                .set_configured_reasoning_effort(Some(default_effort.clone()));
         }
         self.chat_widget.set_model(model);
         self.chat_widget.set_reasoning_effort(Some(effort.clone()));
@@ -815,7 +819,8 @@ impl App {
         model: &str,
     ) -> Option<ReasoningEffortConfig> {
         let configured_effort = self
-            .config
+            .chat_widget
+            .config_ref()
             .model_reasoning_effort
             .as_ref()
             .filter(|effort| **effort != ReasoningEffortConfig::Ultra);
@@ -1199,6 +1204,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn temporary_reasoning_update_keeps_widget_config_default() {
+        let mut app = make_test_app().await;
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+
+        app.on_update_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+
+        assert_eq!(
+            app.chat_widget.current_reasoning_effort(),
+            Some(ReasoningEffortConfig::Medium)
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::XHigh)
+        );
+    }
+
+    #[tokio::test]
+    async fn advanced_reasoning_uses_persisted_default_after_temporary_update() {
+        let mut app = make_test_app().await;
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+        app.on_update_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+
+        let default_effort =
+            app.on_apply_advanced_reasoning("gpt-5.4", ReasoningEffortConfig::Ultra);
+
+        assert_eq!(default_effort, Some(ReasoningEffortConfig::XHigh));
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::XHigh)
+        );
+    }
+
+    #[tokio::test]
+    async fn persisted_model_selection_updates_widget_config() -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        app.config.codex_home = codex_home.path().to_path_buf().abs();
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+        let mut app_server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+
+        app.handle_event(
+            &mut tui,
+            &mut app_server,
+            AppEvent::UpdateReasoningEffort(Some(ReasoningEffortConfig::Medium)),
+        )
+        .await?;
+        app.handle_event(
+            &mut tui,
+            &mut app_server,
+            AppEvent::PersistModelSelection {
+                model: "gpt-5.4".to_string(),
+                effort: Some(ReasoningEffortConfig::Medium),
+            },
+        )
+        .await?;
+
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::Medium)
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn conversation_reasoning_uses_compatible_default_for_new_threads() {
         for (configured_effort, expected_default_effort) in [
             (ReasoningEffortConfig::Low, ReasoningEffortConfig::Low),
@@ -1211,6 +1285,8 @@ mod tests {
             let mut app = make_test_app().await;
             app.config.model = Some("gpt-5.4".to_string());
             app.config.model_reasoning_effort = Some(configured_effort.clone());
+            app.chat_widget
+                .set_configured_reasoning_effort(Some(configured_effort.clone()));
             app.chat_widget
                 .set_reasoning_effort(Some(configured_effort));
 
@@ -1232,6 +1308,31 @@ mod tests {
                 (Some("gpt-5.4"), Some(expected_default_effort))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn advanced_reasoning_syncs_compatible_default_to_chat_widget_config() {
+        let mut app = make_test_app().await;
+        app.on_update_reasoning_effort(Some(ReasoningEffortConfig::Custom(
+            "unsupported".to_string(),
+        )));
+
+        let default_effort =
+            app.on_apply_advanced_reasoning("gpt-5.4", ReasoningEffortConfig::Ultra);
+
+        assert_eq!(default_effort, Some(ReasoningEffortConfig::Medium));
+        assert_eq!(
+            app.config.model_reasoning_effort,
+            Some(ReasoningEffortConfig::Medium)
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::Medium)
+        );
+        assert_eq!(
+            app.chat_widget.current_reasoning_effort(),
+            Some(ReasoningEffortConfig::Ultra)
+        );
     }
 
     #[tokio::test]
@@ -1277,6 +1378,8 @@ mod tests {
     async fn conversation_reasoning_updates_active_plan_without_changing_plan_default() {
         let mut app = make_test_app().await;
         app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Low);
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::Low));
         app.config.plan_mode_reasoning_effort = Some(ReasoningEffortConfig::High);
         app.chat_widget
             .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
@@ -1346,6 +1449,8 @@ mod tests {
     async fn leaving_conversation_ultra_in_plan_clears_the_ephemeral_default_effort() {
         let mut app = make_test_app().await;
         app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Low);
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::Low));
         app.config.plan_mode_reasoning_effort = Some(ReasoningEffortConfig::High);
         app.chat_widget
             .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
@@ -1476,6 +1581,29 @@ mod tests {
         assert_eq!(
             app_enabled_in_effective_config(&app.config, &app_id),
             Some(false)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refresh_in_memory_config_from_disk_updates_picker_configured_effort() -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        app.config.codex_home = codex_home.path().to_path_buf().abs();
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+        std::fs::write(
+            codex_home.path().join("config.toml"),
+            r#"
+model_reasoning_effort = "medium"
+"#,
+        )?;
+
+        app.refresh_in_memory_config_from_disk().await?;
+
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::Medium)
         );
         Ok(())
     }
