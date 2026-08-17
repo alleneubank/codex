@@ -446,7 +446,7 @@ impl AccountRequestProcessor {
         }
 
         match login_with_api_key(
-            &self.config.codex_home,
+            &self.config.auth_home,
             &params.api_key,
             self.config.cli_auth_credentials_store_mode,
             self.config.auth_keyring_backend_kind(),
@@ -522,7 +522,7 @@ impl AccountRequestProcessor {
 
             match credentials {
                 BedrockLoginCredentials::ApiKey(api_key) => login_with_bedrock_api_key(
-                    &self.config.codex_home,
+                    &self.config.auth_home,
                     api_key.trim(),
                     region,
                     self.config.cli_auth_credentials_store_mode,
@@ -538,7 +538,7 @@ impl AccountRequestProcessor {
                         .map(str::trim)
                         .filter(|token| !token.is_empty());
                     login_with_bedrock_access_keys(
-                        &self.config.codex_home,
+                        &self.config.auth_home,
                         access_key_id.trim(),
                         secret_access_key.trim(),
                         session_token,
@@ -588,7 +588,7 @@ impl AccountRequestProcessor {
             codex_streamlined_login,
             login_success_page,
             ..LoginServerOptions::new(
-                config.codex_home.to_path_buf(),
+                config.auth_home.to_path_buf(),
                 oauth_client_id(),
                 self.auth_manager.effective_chatgpt_workspaces(),
                 config.cli_auth_credentials_store_mode,
