@@ -890,6 +890,10 @@ pub struct Config {
     /// overridden by the `CODEX_HOME` environment variable).
     pub codex_home: AbsolutePathBuf,
 
+    /// Directory containing local CLI credentials. Defaults to `codex_home`
+    /// and can be overridden by the `CODEX_AUTH_HOME` environment variable.
+    pub auth_home: AbsolutePathBuf,
+
     /// Resolved configuration shared by all Codex SQLite databases.
     pub sqlite: codex_state::SqliteConfig,
 
@@ -1316,6 +1320,10 @@ pub struct TerminalResizeReflowConfig {
 impl AuthManagerConfig for Config {
     fn codex_home(&self) -> PathBuf {
         self.codex_home.to_path_buf()
+    }
+
+    fn auth_home(&self) -> PathBuf {
+        self.auth_home.to_path_buf()
     }
 
     fn cli_auth_credentials_store_mode(&self) -> AuthCredentialsStoreMode {
@@ -4098,6 +4106,7 @@ impl Config {
             profile_workspace_roots,
         )
         .map_err(std::io::Error::from)?;
+        let auth_home = codex_utils_home_dir::find_auth_home(&codex_home)?;
         let otel = otel::resolve_config(cfg.otel.unwrap_or_default(), &mut startup_warnings);
         let config = Self {
             model,
@@ -4200,6 +4209,7 @@ impl Config {
             memories: memories_config,
             agent_interrupt_message_enabled,
             codex_home,
+            auth_home,
             sqlite: codex_state::SqliteConfig::from_sqlite_home(sqlite_home),
             log_dir,
             config_layer_stack,
@@ -4715,6 +4725,14 @@ fn normalize_guardian_policy_config(value: Option<&str>) -> Option<String> {
 ///   directory exists.
 pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
     codex_utils_home_dir::find_codex_home()
+}
+
+/// Returns the directory used exclusively for local CLI credentials.
+///
+/// When `CODEX_AUTH_HOME` is unset, this is the resolved `CODEX_HOME`. A set
+/// value must identify an existing directory and is canonicalized before use.
+pub fn find_auth_home(codex_home: &AbsolutePathBuf) -> std::io::Result<AbsolutePathBuf> {
+    codex_utils_home_dir::find_auth_home(codex_home)
 }
 
 /// Returns the path to the folder where Codex logs are stored. Does not verify

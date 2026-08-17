@@ -61,6 +61,7 @@ use codex_core_api::WebSearchMode;
 use codex_core_api::arg0_dispatch_or_else;
 use codex_core_api::build_models_manager;
 use codex_core_api::built_in_model_providers;
+use codex_core_api::find_auth_home;
 use codex_core_api::find_codex_home;
 use codex_core_api::init_state_db;
 use codex_core_api::install_image_generation_extension;
@@ -176,6 +177,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
 
 fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<Config> {
     let codex_home = find_codex_home().context("find Codex home")?;
+    let auth_home = find_auth_home(&codex_home).context("find Codex auth home")?;
     let cwd = AbsolutePathBuf::current_dir().context("resolve current directory")?;
     let model_provider_id = OPENAI_PROVIDER_ID.to_string();
     let model_providers = built_in_model_providers(/*openai_base_url*/ None);
@@ -263,6 +265,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         sqlite: SqliteConfig::from_sqlite_home(codex_home.clone()),
         log_dir: codex_home.join("log").to_path_buf(),
         codex_home,
+        auth_home,
         history: History::default(),
         ephemeral: true,
         extra_config: None,
