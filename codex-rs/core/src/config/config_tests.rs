@@ -545,6 +545,27 @@ async fn load_config_resolves_non_prefixed_mcp_tool_servers() -> std::io::Result
 }
 
 #[tokio::test]
+async fn mcp_oauth_uses_codex_home_when_auth_home_differs() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let auth_home = tempdir()?;
+    let mut config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    config.auth_home = auth_home.abs();
+
+    let plugins_manager =
+        plugins_manager_for_config(&config, auth_manager_from_optional_auth(/*auth*/ None));
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert_eq!(mcp_config.codex_home, codex_home.path());
+    assert_ne!(mcp_config.codex_home, config.auth_home.to_path_buf());
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_resolves_update_plan_enabled() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     let config_toml = toml::from_str(
