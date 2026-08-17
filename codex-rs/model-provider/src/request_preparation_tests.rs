@@ -21,7 +21,10 @@ async fn explicit_provider_token_survives_a_workspace_switch_during_setup() {
         /*chatgpt_plan_type*/ None,
     )
     .unwrap();
-    let manager = AuthManager::from_auth_for_testing_with_home(initial, home.path().to_path_buf());
+    let manager = AuthManager::from_auth_for_testing_with_home(
+        initial,
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
+    );
     let mut info = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
     info.experimental_bearer_token = Some("provider-token".into());
     let provider = create_model_provider(info, Some(manager.clone()));
@@ -35,7 +38,7 @@ async fn explicit_provider_token_survives_a_workspace_switch_during_setup() {
             async {
                 let (_, resolved) = provider.request_provider_and_auth(/*scope*/ None).await?;
                 codex_login::auth::login_with_chatgpt_auth_tokens(
-                    home.path(),
+                    &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
                     &token,
                     "workspace-b",
                     /*chatgpt_plan_type*/ None,

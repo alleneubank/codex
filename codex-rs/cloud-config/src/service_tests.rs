@@ -71,7 +71,7 @@ async fn auth_manager_with_api_key() -> Arc<AuthManager> {
     write_auth_json(tmp.path(), auth_json).expect("write auth");
     Arc::new(
         AuthManager::new(
-            tmp.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(tmp.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -102,7 +102,7 @@ async fn auth_manager_with_plan_and_identity(
     .expect("write auth");
     Arc::new(
         AuthManager::new(
-            tmp.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(tmp.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -969,7 +969,7 @@ async fn get_bundle_recovers_after_unauthorized_reload() {
     .expect("write initial auth");
     let auth_manager = Arc::new(
         AuthManager::new(
-            auth_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(auth_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -1026,7 +1026,7 @@ async fn get_bundle_recovers_after_unauthorized_reload_updates_cache_identity() 
     .expect("write initial auth");
     let auth_manager = Arc::new(
         AuthManager::new(
-            auth_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(auth_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -1091,7 +1091,7 @@ async fn get_bundle_surfaces_auth_recovery_message() {
     .expect("write auth");
     let auth_manager = Arc::new(
         AuthManager::new(
-            auth_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(auth_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -1145,7 +1145,7 @@ async fn external_auth_recovers_once_per_bundle_fetch() {
     let auth_home = tempdir().expect("tempdir");
     let auth_manager = Arc::new(
         AuthManager::new(
-            auth_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(auth_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::Ephemeral,
             /*forced_chatgpt_workspace_id*/ None,

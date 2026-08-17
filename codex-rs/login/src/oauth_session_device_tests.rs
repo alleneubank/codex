@@ -94,7 +94,7 @@ async fn device_login_reports_network_policy_denial_for_either_endpoint() {
         let home = tempfile::tempdir().unwrap();
         let client = OAuthSessionManager::new(
             config.clone(),
-            home.path().to_path_buf(),
+            crate::AuthHome::from_directory(home.path().to_path_buf()),
             &factory,
             Arc::new(MockKeyringStore::default()),
         )
@@ -141,7 +141,7 @@ async fn device_login_can_be_canceled_while_waiting_for_approval() {
     let (device, home) = client(device_config(&server), keyring.clone());
     let browser = OAuthSessionManager::new(
         config(&server),
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring,
     )
@@ -160,9 +160,11 @@ async fn device_login_can_be_canceled_while_waiting_for_approval() {
             Some(&crate::OAuthSessionError::LoginInProgress),
         );
         // Another Codex process can use the credential store while the user decides.
-        let _store = super::super::storage::lock_credentials(home.path())
-            .await
-            .unwrap();
+        let _store = super::super::storage::lock_credentials(&crate::AuthHome::from_directory(
+            (home.path()).to_path_buf(),
+        ))
+        .await
+        .unwrap();
     };
     let result = tokio::time::timeout(
         Duration::from_secs(15),

@@ -41,7 +41,7 @@ async fn analytics_does_not_follow_runtime_redirects() -> Result<()> {
         for mode in [RuntimeAuthMode::DualHeader, RuntimeAuthMode::AssertionOnly] {
             let home = tempfile::tempdir()?;
             codex_login::auth::login_with_chatgpt_auth_tokens(
-                home.path(),
+                &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
                 &token,
                 "account-analytics",
                 Some("plus"),

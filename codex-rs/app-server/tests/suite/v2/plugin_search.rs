@@ -474,7 +474,7 @@ async fn plugin_search_returns_local_matches_for_api_key_auth() -> Result<()> {
         )?;
         write_remote_plugin_search_config(codex_home.path(), &server, remote_plugin_enabled)?;
         login_with_api_key(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             "sk-test-key",
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),

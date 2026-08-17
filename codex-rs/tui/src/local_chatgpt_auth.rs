@@ -20,7 +20,7 @@ pub(crate) fn load_local_chatgpt_auth(
     forced_chatgpt_workspace_id: Option<&[String]>,
 ) -> Result<LocalChatgptAuth, String> {
     let auth = load_auth_dot_json(
-        codex_home,
+        &codex_login::AuthHome::from_directory((codex_home).to_path_buf()),
         auth_credentials_store_mode,
         AuthKeyringBackendKind::default(),
     )
@@ -121,7 +121,7 @@ mod tests {
             bedrock_access_keys: None,
         };
         save_auth(
-            codex_home,
+            &codex_login::AuthHome::from_directory((codex_home).to_path_buf()),
             &auth,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -164,7 +164,7 @@ mod tests {
     fn rejects_api_key_auth() {
         let codex_home = TempDir::new().expect("tempdir");
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &AuthDotJson {
                 auth_mode: Some(AuthMode::ApiKey),
                 openai_api_key: Some("sk-test".to_string()),
@@ -195,7 +195,7 @@ mod tests {
         let codex_home = TempDir::new().expect("tempdir");
         write_chatgpt_auth(codex_home.path(), "business");
         login_with_chatgpt_auth_tokens(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &fake_jwt("user@example.com", "workspace-2", "enterprise"),
             "workspace-2",
             Some("enterprise"),

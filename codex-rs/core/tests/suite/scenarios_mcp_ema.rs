@@ -270,7 +270,7 @@ async fn enterprise_lifecycle_preserves_history_and_ordinary_tools(
         }))?,
     )?;
     let auth = AuthManager::shared(
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,

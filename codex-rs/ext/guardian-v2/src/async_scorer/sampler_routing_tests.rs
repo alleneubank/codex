@@ -129,7 +129,7 @@ async fn classification_retries_refreshes_but_never_switches_accounts() -> Resul
         });
         let auth = AuthManager::from_auth_for_testing_with_home(
             changes.initial.clone(),
-            home.path().to_owned(),
+            codex_login::AuthHome::from_directory(home.path().to_owned()),
         );
         auth.set_external_auth(changes.clone()).await?;
         let resolver: Arc<dyn WorkspaceRoutingResolver> = changes;
@@ -321,7 +321,7 @@ async fn account_switch_cancels_request_opening_and_first_token_waits() -> Resul
         let home = tempfile::tempdir()?;
         let auth = AuthManager::from_auth_for_testing_with_home(
             changes.initial.clone(),
-            home.path().to_owned(),
+            codex_login::AuthHome::from_directory(home.path().to_owned()),
         );
         auth.set_external_auth(changes.clone()).await?;
         let base_url = if transport == "http" {

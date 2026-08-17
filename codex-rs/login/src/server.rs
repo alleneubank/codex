@@ -11,13 +11,14 @@
 //! This module therefore keeps the user-facing error path and the structured-log path separate.
 //! Returned `io::Error` values still carry the detail needed by CLI/browser callers, while
 //! structured logs only emit explicitly reviewed fields plus redacted URL/error values.
+
+use codex_utils_home_dir::AuthHome;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
 use std::io::{self};
 use std::net::SocketAddr;
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::AtomicBool;
@@ -87,7 +88,7 @@ static LOGIN_ERROR_PAGE_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
 /// Options for launching the local login callback server.
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
-    pub codex_home: PathBuf,
+    pub auth_home: AuthHome,
     pub client_id: String,
     pub issuer: String,
     pub port: u16,
@@ -105,7 +106,7 @@ pub struct ServerOptions {
 impl ServerOptions {
     /// Creates a server configuration with the default issuer and port.
     pub fn new(
-        codex_home: PathBuf,
+        auth_home: AuthHome,
         client_id: String,
         forced_chatgpt_workspace_id: Option<Vec<String>>,
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
@@ -113,7 +114,7 @@ impl ServerOptions {
         auth_route_config: AuthRouteConfig,
     ) -> Self {
         Self {
-            codex_home,
+            auth_home,
             client_id,
             issuer: DEFAULT_ISSUER.to_string(),
             port: DEFAULT_PORT,
@@ -838,7 +839,7 @@ pub(crate) async fn persist_tokens_async(
     exchanged: &ExchangedTokens,
 ) -> io::Result<()> {
     // Reuse existing synchronous logic but run it off the async runtime.
-    let codex_home = opts.codex_home.clone();
+    let auth_home = opts.auth_home.clone();
     let auth_credentials_store_mode = opts.cli_auth_credentials_store_mode;
     let keyring_backend_kind = opts.auth_keyring_backend_kind;
     let id_token = exchanged.id_token.clone();
@@ -883,7 +884,7 @@ pub(crate) async fn persist_tokens_async(
                 return login.save(auth);
             }
             save_auth(
-                &codex_home,
+                &auth_home,
                 &auth,
                 auth_credentials_store_mode,
                 keyring_backend_kind,

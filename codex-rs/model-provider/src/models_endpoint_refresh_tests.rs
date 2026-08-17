@@ -85,7 +85,7 @@ async fn check_timeout_preserves_refreshed_tokens(caller: Caller) {
         }))
         .unwrap();
         codex_login::save_auth(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             &stored,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::Direct,
@@ -141,7 +141,7 @@ async fn check_timeout_preserves_refreshed_tokens(caller: Caller) {
         let factory = HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault);
         let credentials = Arc::new(
             AuthManager::new(
-                home.path().to_path_buf(),
+                codex_login::AuthHome::from_directory(home.path().to_path_buf()),
                 /*enable_codex_api_key_env*/ false,
                 AuthCredentialsStoreMode::File,
                 /*forced_chatgpt_workspace_id*/ None,
@@ -250,7 +250,7 @@ async fn check_timeout_preserves_refreshed_tokens(caller: Caller) {
         let current = credentials.auth().await.unwrap();
         assert_eq!(current.get_token().unwrap(), new_token);
         let saved = codex_login::load_auth_dot_json(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::Direct,
         )

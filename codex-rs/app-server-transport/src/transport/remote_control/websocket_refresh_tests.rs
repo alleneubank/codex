@@ -442,14 +442,14 @@ async fn pairing_auth_recovery_respects_concurrent_handshake_overload() {
             normalize_remote_control_url(&remote_control_url).expect("target should parse");
         let codex_home = TempDir::new().expect("temp dir should create");
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("stale-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
         )
         .expect("stale auth should save");
         let auth_manager = AuthManager::shared(
-            codex_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -517,7 +517,7 @@ async fn pairing_auth_recovery_respects_concurrent_handshake_overload() {
         let retry_at = remote_control_retry_at(&connect_error)
             .expect("the handshake should preserve its retry deadline");
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("fresh-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),

@@ -4,13 +4,16 @@ use super::*;
 use crate::ConfigServerLoginMethod;
 use crate::bundle_loader::ensure_config_server_login_with_manager;
 use crate::bundle_loader::managed_config_bundle_loader_for_service;
+use crate::cache::CloudConfigBundleCache;
 use crate::service::CLOUD_CONFIG_BUNDLE_TIMEOUT;
 use crate::service::CloudConfigBundleService;
+use codex_config::AbsolutePathBuf;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigServer;
 use codex_config::test_support::CloudConfigBundleFixture;
 use codex_keyring_store::tests::MockKeyringStore;
 use codex_login::test_support::transport_default_auth_route_config;
+use codex_model_provider_info::OAuthCredentialsStore;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::atomic::AtomicUsize;
@@ -29,7 +32,13 @@ fn remote_loader(url: String, codex_home: PathBuf) -> CloudConfigBundleLoader {
     let factory = transport_default_auth_route_config()
         .http_client_factory()
         .clone();
-    let source = ConfigServerSource::new(url, /*oauth*/ None, codex_home.clone(), factory).unwrap();
+    let source = ConfigServerSource::new(
+        url,
+        /*oauth*/ None,
+        codex_login::AuthHome::from_directory(codex_home.clone()),
+        factory,
+    )
+    .unwrap();
     managed_config_bundle_loader_for_service(CloudConfigBundleService::from_source(
         source,
         codex_home,
@@ -99,7 +108,7 @@ async fn device_endpoint_failure_points_to_config_server_oauth() {
     };
     let manager = OAuthSessionManager::new(
         oauth,
-        home.path().to_path_buf(),
+        AuthHome::from_directory(home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         Arc::new(MockKeyringStore::default()),
     )
@@ -116,6 +125,89 @@ async fn device_endpoint_failure_points_to_config_server_oauth() {
         error.to_string(),
         "Config server sign-in failed. Check config_server.oauth and the credential store."
     );
+}
+
+#[tokio::test]
+async fn config_server_startup_and_retry_use_the_isolated_grant() {
+    let codex_home = tempdir().unwrap();
+    let auth_dir = tempdir().unwrap();
+    let auth_home = AuthHome::from_directory(auth_dir.path().to_path_buf());
+    let routes = transport_default_auth_route_config();
+    let endpoint = "https://127.0.0.1:9";
+    let config = ConfigServer {
+        base_url: endpoint.to_string(),
+        oauth: Some(Box::new(OAuthSessionConfig {
+            credentials_store: OAuthCredentialsStore::File,
+            ..oauth_config(endpoint)
+        })),
+    };
+    let factory = config_server_http_client_factory(&config, &routes);
+    let source =
+        ConfigServerSource::from_config_server(config.clone(), auth_home.clone(), factory).unwrap();
+    let credential_id = source.auth.as_ref().unwrap().credential_id();
+    let authorization_id = "fixture-grant";
+    let credentials = auth_dir.path().join("secrets");
+    std::fs::create_dir(&credentials).unwrap();
+    std::fs::write(
+        credentials.join("gateway_oauth.json"),
+        json!({
+            credential_id: {
+                "access_token": "fixture-token",
+                "authorization_id": authorization_id,
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let cache = CloudConfigBundleCache::for_source(
+        AbsolutePathBuf::try_from(codex_home.path()).unwrap(),
+        &source.cache_namespace,
+    );
+    let bundle =
+        CloudConfigBundleFixture::enterprise_requirement("allowed_approval_policies = ['never']")
+            .into_bundle();
+    let revision = CloudConfigBundlePolicy::default()
+        .observe_remote_bundle(&bundle)
+        .unwrap();
+    cache
+        .prepare(
+            Some(authorization_id.to_string()),
+            Some(source.cache_namespace),
+            bundle.clone(),
+        )
+        .await
+        .unwrap()
+        .publish_if_current(revision)
+        .await
+        .unwrap();
+
+    let loader = config_server_bundle_loader(
+        config.clone(),
+        codex_home.path().to_path_buf(),
+        auth_home.clone(),
+        &routes,
+    )
+    .await;
+    assert_eq!(loader.get().await.unwrap(), Some(bundle.clone()));
+
+    let startup_error = CloudConfigBundleLoadError::new(
+        CloudConfigBundleLoadErrorCode::Internal,
+        /*status_code*/ None,
+        "fixture startup failure".to_string(),
+    );
+    let loader = config_server_loader_after_failure(
+        config,
+        codex_home.path().to_path_buf(),
+        auth_home,
+        routes,
+        startup_error,
+    );
+    assert_eq!(
+        loader.get().await.unwrap_err().to_string(),
+        "fixture startup failure"
+    );
+    assert_eq!(loader.get().await.unwrap(), Some(bundle));
 }
 
 #[tokio::test]
@@ -175,7 +267,7 @@ async fn policy_fetch_uses_replacement_config_server_credentials() {
     let manager = || {
         OAuthSessionManager::new(
             oauth.clone(),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             &factory,
             keyring.clone(),
         )

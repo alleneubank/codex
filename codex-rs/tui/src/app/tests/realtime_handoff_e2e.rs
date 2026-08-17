@@ -98,7 +98,7 @@ async fn delegated_core_events_keep_private_output_hidden_and_deliver_final_spee
         .with_extra_config("[realtime]\nversion = \"v3\"\ntype = \"conversational\"")
         .write(codex_home.path())?;
     codex_login::login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

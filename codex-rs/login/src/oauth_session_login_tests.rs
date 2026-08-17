@@ -1,5 +1,6 @@
 //! Explicit browser login shares credentials with request consumers and remains cancellable.
 
+use super::super::storage;
 use super::*;
 use crate::OAuthSessionError;
 use crate::OAuthSessionStatus;
@@ -41,15 +42,30 @@ async fn logout_removes_saved_and_cached_credentials() {
 async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home() {
     let server = MockServer::start().await;
     let home = tempfile::tempdir().unwrap();
+    let auth_home = tempfile::tempdir().unwrap();
+    let other_auth_home = tempfile::tempdir().unwrap();
     let runtime = crate::AuthRuntimeConfig {
         codex_home: home.path().to_path_buf(),
+        auth_home: crate::AuthHome::from_directory(auth_home.path().to_path_buf()),
         auth_route_config: transport_default_auth_route_config(),
     };
     // Subscribe before any manager exists, as app-server does without gateway configuration.
     let mut events = crate::subscribe_oauth_session_status(&runtime);
     crate::OAuthLoginControl::for_runtime(&runtime).require_explicit_login();
     let keyring = Arc::new(MockKeyringStore::default());
-    let (other_manager, _other_home) = client(config(&server), keyring.clone());
+    let other_runtime = crate::AuthRuntimeConfig {
+        auth_home: crate::AuthHome::from_directory(other_auth_home.path().to_path_buf()),
+        ..runtime.clone()
+    };
+    let other_control = crate::OAuthLoginControl::for_runtime(&other_runtime);
+    other_control.require_explicit_login();
+    let other_manager = OAuthSessionManager::new(
+        config(&server),
+        other_runtime.auth_home,
+        other_runtime.auth_route_config.http_client_factory(),
+        keyring.clone(),
+    )
+    .unwrap();
     other_manager.resolve_access_token().await.unwrap_err();
     assert!(matches!(
         events.try_recv(),
@@ -61,7 +77,7 @@ async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home()
         gateway.client_id = client_id.to_string();
         let manager = OAuthSessionManager::new(
             gateway.clone(),
-            home.path().to_path_buf(),
+            runtime.auth_home.clone(),
             runtime.auth_route_config.http_client_factory(),
             keyring.clone(),
         )
@@ -78,7 +94,65 @@ async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home()
         // The next gateway must reach the same subscriber after the last manager is dropped.
         drop(manager);
     }
+    assert!(auth_home.path().join("secrets/gateway_oauth.lock").exists());
+    assert!(
+        other_auth_home
+            .path()
+            .join("secrets/gateway_oauth.lock")
+            .exists()
+    );
+    assert!(!home.path().join("secrets").exists());
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn oauth_sign_in_and_store_locks_are_scoped_to_auth_home() {
+    let server = MockServer::start().await;
+    let keyring = Arc::new(MockKeyringStore::default());
+    let (first, first_home) = client(config(&server), keyring.clone());
+    let (second, _second_home) = client(config(&server), keyring.clone());
+    let same_home = OAuthSessionManager::new(
+        config(&server),
+        crate::AuthHome::from_directory(first_home.path().to_path_buf()),
+        transport_default_auth_route_config().http_client_factory(),
+        keyring,
+    )
+    .unwrap();
+
+    let first_login = first.try_start_login().unwrap();
+    assert!(matches!(
+        same_home.try_start_login(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    let second_login = second.try_start_login().unwrap();
+    drop((first_login, second_login));
+
+    let first_store = storage::lock_credentials(&first.state.auth_home)
+        .await
+        .unwrap();
+    let pending_same_home = storage::lock_credentials(&same_home.state.auth_home);
+    tokio::pin!(pending_same_home);
+    let same_home_poll =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(pending_same_home.as_mut().poll(cx)))
+            .await;
+    assert!(same_home_poll.is_pending());
+    let second_store = tokio::time::timeout(
+        Duration::from_secs(/*secs*/ 2),
+        storage::lock_credentials(&second.state.auth_home),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    drop((first_store, second_store));
+
+    save_token(
+        &first,
+        "fixture-token",
+        /*refresh_token*/ None,
+        i64::MAX,
+    );
+    assert!(same_home.load_token().unwrap().is_some());
+    assert!(second.load_token().unwrap().is_none());
 }
 
 #[tokio::test]
@@ -341,9 +415,11 @@ async fn expired_readiness_stays_not_ready_while_refresh_is_blocked() {
             );
         }
         // Block the real refresh on the cross-process store lock after it takes the cache lock.
-        let store_lock = super::super::storage::lock_credentials(home.path())
-            .await
-            .unwrap();
+        let store_lock = super::super::storage::lock_credentials(&crate::AuthHome::from_directory(
+            (home.path()).to_path_buf(),
+        ))
+        .await
+        .unwrap();
         let refresh = manager.resolve_access_token();
         tokio::pin!(refresh);
         tokio::select! {

@@ -66,7 +66,7 @@ fn blocking_client(
     });
     let manager = OAuthSessionManager::new(
         configuration,
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring.clone(),
     )

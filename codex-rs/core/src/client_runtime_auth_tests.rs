@@ -37,7 +37,7 @@ async fn selected_runtime_transport_stays_revoked(mode: RuntimeAuthMode) {
         .with_network_policy(policy.clone());
     let home = TempDir::new().unwrap();
     codex_login::login_with_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "key-a",
         AuthCredentialsStoreMode::Ephemeral,
         AuthKeyringBackendKind::Direct,
@@ -45,7 +45,7 @@ async fn selected_runtime_transport_stays_revoked(mode: RuntimeAuthMode) {
     .unwrap();
     let manager = Arc::new(
         AuthManager::new(
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::Ephemeral,
             /*forced_chatgpt_workspace_id*/ None,

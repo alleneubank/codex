@@ -20,7 +20,7 @@ fn file_storage_creates_dangling_symlink_target_and_rejects_cycles() -> anyhow::
     use std::os::unix::fs::symlink;
     let home = tempdir()?;
     let auth = serde_json::from_value(json!({"OPENAI_API_KEY":"fake-key"}))?;
-    let storage = FileAuthStorage::new(home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()));
     symlink("intermediate", home.path().join("auth.json"))?;
     symlink("new-target.json", home.path().join("intermediate"))?;
     storage.save(&auth)?;
@@ -45,7 +45,7 @@ fn file_storage_does_not_replace_read_only_or_hard_linked_credentials() -> anyho
     use std::os::unix::fs::PermissionsExt;
     let home = tempdir()?;
     let path = home.path().join("auth.json");
-    let storage = FileAuthStorage::new(home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()));
     let first = serde_json::from_value(json!({"OPENAI_API_KEY":"first"}))?;
     let second = serde_json::from_value(json!({"OPENAI_API_KEY":"second"}))?;
     storage.save(&first)?;
@@ -71,7 +71,7 @@ fn file_storage_does_not_replace_read_only_or_hard_linked_credentials() -> anyho
 fn refresh_commit_does_not_overwrite_another_writer() -> anyhow::Result<()> {
     let home = tempdir()?;
     let storage = create_auth_storage(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -81,7 +81,7 @@ fn refresh_commit_does_not_overwrite_another_writer() -> anyhow::Result<()> {
     storage.save(&first)?;
     // An independent storage instance publishes a later generation before commit.
     let other = create_auth_storage(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -94,7 +94,9 @@ fn refresh_commit_does_not_overwrite_another_writer() -> anyhow::Result<()> {
 #[tokio::test]
 async fn file_storage_load_returns_auth_dot_json() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_dot_json = AuthDotJson {
         auth_mode: Some(AuthMode::ApiKey),
         openai_api_key: Some("test-key".to_string()),
@@ -118,7 +120,9 @@ async fn file_storage_load_returns_auth_dot_json() -> anyhow::Result<()> {
 #[tokio::test]
 async fn file_storage_save_persists_auth_dot_json() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_dot_json = AuthDotJson {
         auth_mode: Some(AuthMode::ApiKey),
         openai_api_key: Some("test-key".to_string()),
@@ -166,7 +170,10 @@ async fn file_storage_save_persists_auth_dot_json() -> anyhow::Result<()> {
         let linked_home = tempdir()?;
         let link = get_auth_file(linked_home.path());
         std::os::unix::fs::symlink(&file, &link)?;
-        FileAuthStorage::new(linked_home.path().to_path_buf()).save(&auth_dot_json)?;
+        FileAuthStorage::new(crate::AuthHome::from_directory(
+            linked_home.path().to_path_buf(),
+        ))
+        .save(&auth_dot_json)?;
         assert!(std::fs::symlink_metadata(link)?.file_type().is_symlink());
         assert_eq!(storage.load()?, Some(auth_dot_json));
     }
@@ -179,7 +186,7 @@ fn file_storage_failed_replacement_cleans_up_temporary_file() -> anyhow::Result<
     let auth_path = get_auth_file(home.path());
     // A directory cannot be replaced by an auth file on any supported platform.
     std::fs::create_dir(&auth_path)?;
-    let storage = FileAuthStorage::new(home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()));
     let auth = serde_json::from_value(json!({"OPENAI_API_KEY": "test-key"}))?;
     assert!(storage.save(&auth).is_err());
     let entries = std::fs::read_dir(home.path())?
@@ -193,7 +200,9 @@ fn file_storage_failed_replacement_cleans_up_temporary_file() -> anyhow::Result<
 #[tokio::test]
 async fn file_storage_round_trips_agent_identity_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let agent_identity = jwt_with_payload(json!({
         "agent_runtime_id": "agent-runtime-id",
         "agent_private_key": "private-key",
@@ -224,7 +233,9 @@ async fn file_storage_round_trips_agent_identity_auth() -> anyhow::Result<()> {
 #[tokio::test]
 async fn file_storage_round_trips_registered_agent_identity_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let record = AgentIdentityAuthRecord {
         agent_runtime_id: "agent-runtime-id".to_string(),
         agent_private_key: "private-key".to_string(),
@@ -256,7 +267,9 @@ async fn file_storage_round_trips_registered_agent_identity_auth() -> anyhow::Re
 #[tokio::test]
 async fn file_storage_loads_empty_agent_identity_email_as_none() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_file = get_auth_file(codex_home.path());
     std::fs::write(
         &auth_file,
@@ -304,7 +317,9 @@ async fn file_storage_loads_empty_agent_identity_email_as_none() -> anyhow::Resu
 #[tokio::test]
 async fn file_storage_writes_missing_agent_identity_email_as_empty_string() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_dot_json = AuthDotJson {
         auth_mode: Some(AuthMode::Chatgpt),
         openai_api_key: None,
@@ -337,7 +352,9 @@ async fn file_storage_writes_missing_agent_identity_email_as_empty_string() -> a
 #[tokio::test]
 async fn file_storage_round_trips_personal_access_token_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_dot_json = AuthDotJson {
         auth_mode: Some(AuthMode::PersonalAccessToken),
         openai_api_key: None,
@@ -359,7 +376,9 @@ async fn file_storage_round_trips_personal_access_token_auth() -> anyhow::Result
 #[tokio::test]
 async fn file_storage_loads_agent_identity_as_jwt() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let agent_identity_jwt = jwt_with_payload(json!({
         "agent_runtime_id": "agent-runtime-id",
         "agent_private_key": "private-key",
@@ -401,13 +420,13 @@ fn file_storage_delete_removes_auth_file() -> anyhow::Result<()> {
         bedrock_access_keys: None,
     };
     let storage = create_auth_storage(
-        dir.path().to_path_buf(),
+        crate::AuthHome::from_directory(dir.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
     storage.save(&auth_dot_json)?;
     assert!(dir.path().join("auth.json").exists());
-    let storage = FileAuthStorage::new(dir.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(dir.path().to_path_buf()));
     let removed = storage.delete()?;
     assert!(removed);
     assert!(!dir.path().join("auth.json").exists());
@@ -418,7 +437,7 @@ fn file_storage_delete_removes_auth_file() -> anyhow::Result<()> {
 fn ephemeral_storage_save_load_delete_is_in_memory_only() -> anyhow::Result<()> {
     let dir = tempdir()?;
     let storage = create_auth_storage(
-        dir.path().to_path_buf(),
+        crate::AuthHome::from_directory(dir.path().to_path_buf()),
         AuthCredentialsStoreMode::Ephemeral,
         AuthKeyringBackendKind::default(),
     );
@@ -501,7 +520,7 @@ fn assert_keyring_saved_auth_and_removed_fallback(
         .context("encrypted auth entry should exist")?;
     let expected_serialized = serde_json::to_string(expected)?;
     assert_eq!(saved_value, expected_serialized);
-    let old_key = compute_store_key(codex_home)?;
+    let old_key = compute_store_key(&crate::AuthHome::from_directory((codex_home).to_path_buf()))?;
     assert!(
         mock_keyring.saved_value(&old_key).is_none(),
         "legacy keyring auth entry should not be used"
@@ -583,7 +602,7 @@ fn secrets_keyring_auth_storage_load_returns_deserialized_auth() -> anyhow::Resu
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = SecretsKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
@@ -608,7 +627,9 @@ fn secrets_keyring_auth_storage_load_returns_deserialized_auth() -> anyhow::Resu
 fn keyring_auth_storage_compute_store_key_for_home_directory() -> anyhow::Result<()> {
     let codex_home = PathBuf::from("~/.codex");
 
-    let key = compute_store_key(codex_home.as_path())?;
+    let key = compute_store_key(&crate::AuthHome::from_directory(
+        (codex_home.as_path()).to_path_buf(),
+    ))?;
 
     assert_eq!(key, "cli|940db7b1d0e4eb40");
     Ok(())
@@ -619,7 +640,7 @@ fn direct_keyring_auth_storage_delete_removes_keyring_and_file() -> anyhow::Resu
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = DirectKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
@@ -634,7 +655,9 @@ fn direct_keyring_auth_storage_delete_removes_keyring_and_file() -> anyhow::Resu
     assert_eq!(storage.load()?, None, "keyring auth should be removed");
     assert!(
         mock_keyring
-            .saved_value(&compute_store_key(codex_home.path())?)
+            .saved_value(&compute_store_key(&crate::AuthHome::from_directory(
+                (codex_home.path()).to_path_buf()
+            ))?)
             .is_none(),
         "legacy keyring auth entry should be removed"
     );
@@ -651,7 +674,7 @@ fn factory_uses_secrets_backend_only_when_requested() -> anyhow::Result<()> {
     let direct_home = tempdir()?;
     let direct_keyring = MockKeyringStore::default();
     let direct_storage = create_auth_storage_with_store(
-        direct_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(direct_home.path().to_path_buf()),
         AuthCredentialsStoreMode::Keyring,
         Arc::new(direct_keyring.clone()),
         AuthKeyringBackendKind::Direct,
@@ -660,7 +683,9 @@ fn factory_uses_secrets_backend_only_when_requested() -> anyhow::Result<()> {
     direct_storage.save(&direct_auth)?;
     assert!(
         direct_keyring
-            .saved_value(&compute_store_key(direct_home.path())?)
+            .saved_value(&compute_store_key(&crate::AuthHome::from_directory(
+                (direct_home.path()).to_path_buf()
+            ))?)
             .is_some()
     );
     assert!(!encrypted_auth_file(direct_home.path()).exists());
@@ -668,7 +693,7 @@ fn factory_uses_secrets_backend_only_when_requested() -> anyhow::Result<()> {
     let secrets_home = tempdir()?;
     let secrets_keyring = MockKeyringStore::default();
     let secrets_storage = create_auth_storage_with_store(
-        secrets_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(secrets_home.path().to_path_buf()),
         AuthCredentialsStoreMode::Keyring,
         Arc::new(secrets_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
@@ -692,7 +717,7 @@ fn secrets_keyring_auth_storage_delete_removes_keyring_and_file() -> anyhow::Res
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = SecretsKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
@@ -719,13 +744,13 @@ fn secrets_keyring_auth_storage_delete_removes_legacy_direct_keyring_entry() -> 
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let direct_storage = DirectKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
     direct_storage.save(&auth_with_prefix("legacy-direct"))?;
     let storage = SecretsKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
