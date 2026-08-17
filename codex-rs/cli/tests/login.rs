@@ -135,6 +135,63 @@ fn api_key_auth_commands_work_when_log_dir_is_unavailable() -> Result<()> {
 }
 
 #[test]
+fn auth_home_isolates_login_status_and_logout_from_shared_codex_home() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let auth_home = TempDir::new()?;
+    write_file_auth_config(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("auth.json"),
+        serde_json::to_vec(&json!({
+            "auth_mode": "api_key",
+            "OPENAI_API_KEY": "sk-shared",
+        }))?,
+    )?;
+
+    let mut login = codex_command(codex_home.path())?;
+    login
+        .env("CODEX_AUTH_HOME", auth_home.path())
+        .args([
+            "-c",
+            "forced_login_method=\"api\"",
+            "login",
+            "--with-api-key",
+        ])
+        .write_stdin("sk-isolated\n")
+        .assert()
+        .success();
+
+    assert_eq!(
+        read_auth_json(auth_home.path())?["OPENAI_API_KEY"],
+        "sk-isolated"
+    );
+    assert_eq!(
+        read_auth_json(codex_home.path())?["OPENAI_API_KEY"],
+        "sk-shared"
+    );
+
+    codex_command(codex_home.path())?
+        .env("CODEX_AUTH_HOME", auth_home.path())
+        .args(["login", "status"])
+        .assert()
+        .success()
+        .stderr(contains("API key configured"));
+
+    codex_command(codex_home.path())?
+        .env("CODEX_AUTH_HOME", auth_home.path())
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(contains("Successfully logged out"));
+
+    assert!(!auth_home.path().join("auth.json").exists());
+    assert_eq!(
+        read_auth_json(codex_home.path())?["OPENAI_API_KEY"],
+        "sk-shared"
+    );
+    Ok(())
+}
+
+#[test]
 fn login_status_reports_auth_storage_errors() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_file_auth_config(codex_home.path())?;
@@ -202,7 +259,7 @@ fn logout_clears_only_the_selected_bedrock_provider() -> Result<()> {
         )?;
         if managed_bedrock_auth {
             login_with_bedrock_access_keys(
-                codex_home.path(),
+                &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
                 "managed-access-key-id",
                 "managed-secret-access-key",
                 Some("managed-session-token"),

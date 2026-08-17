@@ -1,4 +1,4 @@
-use std::path::Path;
+use codex_utils_home_dir::AuthHome;
 
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_protocol::auth::AuthMode;
@@ -33,7 +33,7 @@ impl std::fmt::Debug for BedrockAccessKeysAuth {
 
 /// Writes auth storage containing only Amazon Bedrock AWS access keys.
 pub fn login_with_bedrock_access_keys(
-    codex_home: &Path,
+    auth_home: &AuthHome,
     access_key_id: &str,
     secret_access_key: &str,
     session_token: Option<&str>,
@@ -55,7 +55,7 @@ pub fn login_with_bedrock_access_keys(
         }),
     };
     save_auth(
-        codex_home,
+        auth_home,
         &auth_dot_json,
         auth_credentials_store_mode,
         keyring_backend_kind,

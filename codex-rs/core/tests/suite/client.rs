@@ -2056,7 +2056,7 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
     config.model_provider = model_provider;
 
     let auth = CodexAuth::from_auth_storage(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         /*chatgpt_base_url*/ None,
         AuthKeyringBackendKind::default(),

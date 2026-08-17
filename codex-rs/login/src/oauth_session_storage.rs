@@ -1,12 +1,12 @@
 //! Persists configured OAuth grants and serializes exchanges in one encrypted store.
 //! Gateway storage paths and namespace are retained so existing credentials remain usable.
 
+use codex_utils_home_dir::AuthHome;
+
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::fs::TryLockError;
 use std::io;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,8 +17,8 @@ use codex_secrets::SecretScope;
 use codex_secrets::SecretsBackendKind;
 use codex_secrets::SecretsManager;
 
-pub(super) async fn lock_credentials(codex_home: &Path) -> io::Result<File> {
-    let directory = codex_home.join("secrets");
+pub(super) async fn lock_credentials(auth_home: &AuthHome) -> io::Result<File> {
+    let directory = auth_home.join("secrets");
     std::fs::create_dir_all(&directory)?;
     // Configurations have separate credential entries but rewrite the same encrypted file.
     // Keep one stable sidecar locked from the initial read through token exchange and save.
@@ -53,9 +53,9 @@ pub(super) async fn lock_credentials(codex_home: &Path) -> io::Result<File> {
 pub(super) struct OAuthSessionStorage(SecretsManager);
 
 impl OAuthSessionStorage {
-    pub(super) fn new(codex_home: PathBuf, keyring: Arc<dyn KeyringStore>) -> Self {
+    pub(super) fn new(auth_home: AuthHome, keyring: Arc<dyn KeyringStore>) -> Self {
         Self(SecretsManager::new_with_keyring_store_and_namespace(
-            codex_home,
+            auth_home.to_path_buf(),
             SecretsBackendKind::Local,
             keyring,
             LocalSecretsNamespace::GatewayOAuth,

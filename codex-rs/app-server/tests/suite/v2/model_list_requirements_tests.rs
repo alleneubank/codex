@@ -125,7 +125,7 @@ requires_openai_auth = true
         ),
     )?;
     codex_login::login_with_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "sk-initial-catalog-test",
         AuthCredentialsStoreMode::File,
         codex_login::AuthKeyringBackendKind::default(),

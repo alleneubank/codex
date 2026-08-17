@@ -19,7 +19,7 @@ fn secure_storage_errors_display_the_underlying_cause() -> anyhow::Result<()> {
             let home = tempdir()?;
             let keyring = MockKeyringStore::default();
             let storage = create_auth_storage_with_store(
-                home.path().to_path_buf(),
+                crate::AuthHome::from_directory(home.path().to_path_buf()),
                 AuthCredentialsStoreMode::Keyring,
                 Arc::new(keyring.clone()),
                 kind,
@@ -27,7 +27,9 @@ fn secure_storage_errors_display_the_underlying_cause() -> anyhow::Result<()> {
             let auth = auth_with_prefix("private credential value");
             storage.save(&auth)?;
             let key = match kind {
-                AuthKeyringBackendKind::Direct => compute_store_key(home.path())?,
+                AuthKeyringBackendKind::Direct => compute_store_key(
+                    &crate::AuthHome::from_directory((home.path()).to_path_buf()),
+                )?,
                 AuthKeyringBackendKind::Secrets => {
                     compute_keyring_account(home.path(), LocalSecretsNamespace::CodexAuth)
                 }

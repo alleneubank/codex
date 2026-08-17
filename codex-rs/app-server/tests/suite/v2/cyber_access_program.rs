@@ -657,7 +657,7 @@ async fn start_api_key_app(home: &Path, server: &MockServer) -> Result<TestAppSe
         ),
     )?;
     login_with_api_key(
-        home,
+        &codex_login::AuthHome::from_directory((home).to_path_buf()),
         "test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

@@ -171,7 +171,7 @@ client_id = "client"
     ))?;
     let primary = AuthManager::from_auth_for_testing_with_home(
         primary_auth.clone(),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let _gateway = seed_gateway_auth(
         &provider,

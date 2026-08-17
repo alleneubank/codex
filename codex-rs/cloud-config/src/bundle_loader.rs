@@ -22,7 +22,7 @@ pub fn managed_config_auth_manager(
         return Ok(None);
     };
     let factory = config_server_http_client_factory(service_config, &auth.auth_route_config);
-    crate::config_server_auth_manager(service_config, auth.codex_home, &factory)
+    crate::config_server_auth_manager(service_config, auth.auth_home, &factory)
 }
 
 /// Existing grants are left to the loader's normal cache and refresh handling.
@@ -58,7 +58,12 @@ pub fn managed_config_bundle_loader(
             service_config,
             &codex_login::AuthRouteConfig::from_http_client_factory(factory),
         );
-        return crate::config_server_bundle_loader(service_config.clone(), codex_home, factory);
+        return crate::config_server_bundle_loader(
+            service_config.clone(),
+            codex_home,
+            auth_manager.runtime_config().auth_home,
+            factory,
+        );
     }
     let endpoint = codex_backend_client::Client::new(chatgpt_base_url.clone(), factory.clone())
         .config_bundle_url();
@@ -85,6 +90,7 @@ pub async fn managed_config_bundle_loader_for_storage(
         return Ok(crate::config_server_bundle_loader(
             service_config.clone(),
             auth_config.codex_home,
+            auth_config.auth_home,
             factory,
         ));
     }

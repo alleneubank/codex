@@ -40,7 +40,7 @@ async fn assert_overload_retry_after(status: &str, reject_enrollment: bool) {
         .expect("fixture should contain tokens")
         .access_token = "Initial Access Token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &initial_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -102,7 +102,7 @@ async fn assert_overload_retry_after(status: &str, reject_enrollment: bool) {
 
     let auth_changes = auth_manager.auth_change_receiver();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("account_id")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

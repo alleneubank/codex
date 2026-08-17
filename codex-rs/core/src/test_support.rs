@@ -151,7 +151,10 @@ pub fn auth_manager_from_auth(auth: CodexAuth) -> Arc<AuthManager> {
 }
 
 pub fn auth_manager_from_auth_with_home(auth: CodexAuth, codex_home: PathBuf) -> Arc<AuthManager> {
-    AuthManager::from_auth_for_testing_with_home(auth, codex_home)
+    AuthManager::from_auth_for_testing_with_home(
+        auth,
+        codex_utils_home_dir::AuthHome::from_directory(codex_home),
+    )
 }
 
 pub fn with_code_mode_host_program(

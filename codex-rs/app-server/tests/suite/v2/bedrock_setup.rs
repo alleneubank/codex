@@ -205,7 +205,7 @@ async fn setup_bedrock_profile_and_environment() -> Result<()> {
         "model_provider = 'amazon-bedrock'",
     )?;
     login_with_bedrock_api_key(
-        managed_home.path(),
+        &codex_login::AuthHome::from_directory((managed_home.path()).to_path_buf()),
         "managed-bedrock-api-key",
         "us-east-1",
         AuthCredentialsStoreMode::File,

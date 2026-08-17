@@ -2039,7 +2039,7 @@ async fn check_dynamic_tool_requests(
     .expect("write fixture auth");
     if auth_mode == codex_app_server_protocol::AuthMode::ApiKey {
         codex_login::login_with_api_key(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             "test-key",
             codex_login::AuthCredentialsStoreMode::File,
             codex_login::AuthKeyringBackendKind::default(),

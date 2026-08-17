@@ -241,7 +241,7 @@ async fn cloud_skills_reuse_cache_and_invalidate_on_connection_or_auth_change() 
                 .expect("thread MCP resource client");
             let previous_auth = client.auth_cache_key_for_server(CODEX_APPS_MCP_SERVER_NAME);
             codex_login::auth::login_with_chatgpt_auth_tokens(
-                test.codex_home_path(),
+                &codex_login::AuthHome::from_directory((test.codex_home_path()).to_path_buf()),
                 "header.e30.changed",
                 account,
                 /*chatgpt_plan_type*/ None,

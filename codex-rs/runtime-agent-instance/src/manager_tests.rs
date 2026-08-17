@@ -260,7 +260,7 @@ async fn policy_recovery_preserves_pending_registration() {
     let home = tempfile::tempdir().unwrap();
     let credentials = Arc::new(
         AuthManager::new(
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::Ephemeral,
             /*forced_chatgpt_workspace_id*/ None,

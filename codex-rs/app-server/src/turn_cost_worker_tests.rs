@@ -144,7 +144,7 @@ async fn worker_waits_for_late_api_key_login() {
         "worker exited while waiting for login"
     );
     login_with_api_key(
-        auth_home.path(),
+        &codex_login::AuthHome::from_directory((auth_home.path()).to_path_buf()),
         "sk-test",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -180,7 +180,7 @@ async fn custom_provider_auth_failure_retries_without_auth_changes() {
 
     let provider_auth_home = TempDir::new().expect("temporary provider auth home");
     login_with_api_key(
-        provider_auth_home.path(),
+        &codex_login::AuthHome::from_directory((provider_auth_home.path()).to_path_buf()),
         "sk-old",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -213,7 +213,7 @@ async fn custom_provider_auth_failure_retries_without_auth_changes() {
         BackendAvailability::RetryProbe
     );
     login_with_api_key(
-        provider_auth_home.path(),
+        &codex_login::AuthHome::from_directory((provider_auth_home.path()).to_path_buf()),
         "sk-new-token",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -412,7 +412,7 @@ async fn test_runtime(server: &MockServer, auth_manager: Arc<AuthManager>) -> Wo
 async fn auth_manager_at(codex_home: &std::path::Path) -> Arc<AuthManager> {
     Arc::new(
         AuthManager::new(
-            codex_home.to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,

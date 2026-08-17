@@ -142,7 +142,7 @@ async fn refresh_token_honors_respect_system_proxy() -> Result<()> {
         SYSTEM_PROXY_TEST_ENDPOINT.to_string(),
     );
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -166,7 +166,7 @@ async fn refresh_token_honors_respect_system_proxy() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &initial_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -209,7 +209,7 @@ async fn account_grant_tracks_refresh_replacement_and_logout() -> Result<()> {
     let mut ctx = RefreshTokenTestContext::new(&server).await?;
     let policy_controller = NetworkPolicyController::default();
     ctx.auth_manager = AuthManager::shared(
-        ctx.codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(ctx.codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -387,7 +387,7 @@ async fn account_grant_tracks_refresh_replacement_and_logout() -> Result<()> {
         .login_owner_id = Some("new-login-same-account".into());
     // A persisted replacement is visible even before the ordinary auth cache reloads.
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &replacement,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -481,7 +481,7 @@ async fn account_grant_tracks_refresh_replacement_and_logout() -> Result<()> {
             .respond_with(move |_: &wiremock::Request| {
                 // Replace the login or drop legacy metadata while refresh is in flight.
                 save_auth(
-                    &home,
+                    &codex_login::AuthHome::from_directory((&home).to_path_buf()),
                     &saved_login,
                     AuthCredentialsStoreMode::File,
                     AuthKeyringBackendKind::default(),
@@ -805,7 +805,7 @@ async fn refresh_token_skips_refresh_when_auth_changed() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -878,7 +878,7 @@ async fn refresh_token_errors_on_account_mismatch() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1059,7 +1059,7 @@ async fn auth_reloads_disk_auth_when_cached_auth_is_stale() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1129,7 +1129,7 @@ async fn auth_reloads_disk_auth_without_calling_expired_refresh_token() -> Resul
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1537,7 +1537,7 @@ async fn refresh_token_reloads_changed_auth_after_permanent_failure() -> Result<
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1691,7 +1691,7 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1793,7 +1793,7 @@ async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
         bedrock_access_keys: None,
     };
     save_auth(
-        ctx.codex_home.path(),
+        &codex_login::AuthHome::from_directory((ctx.codex_home.path()).to_path_buf()),
         &disk_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1886,7 +1886,7 @@ impl RefreshTokenTestContext {
         let env_guard = EnvGuard::set(REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR, endpoint);
 
         let auth_manager = AuthManager::shared(
-            codex_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -1905,7 +1905,7 @@ impl RefreshTokenTestContext {
 
     fn load_auth(&self) -> Result<AuthDotJson> {
         load_auth_dot_json(
-            self.codex_home.path(),
+            &codex_login::AuthHome::from_directory((self.codex_home.path()).to_path_buf()),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
         )
@@ -1915,7 +1915,7 @@ impl RefreshTokenTestContext {
 
     async fn write_auth(&self, auth_dot_json: &AuthDotJson) -> Result<()> {
         save_auth(
-            self.codex_home.path(),
+            &codex_login::AuthHome::from_directory((self.codex_home.path()).to_path_buf()),
             auth_dot_json,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),

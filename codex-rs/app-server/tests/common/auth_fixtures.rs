@@ -204,7 +204,7 @@ pub fn write_chatgpt_auth(
     };
 
     save_auth(
-        codex_home,
+        &codex_login::AuthHome::from_directory((codex_home).to_path_buf()),
         &auth,
         cli_auth_credentials_store_mode,
         AuthKeyringBackendKind::default(),

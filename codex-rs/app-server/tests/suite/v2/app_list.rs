@@ -111,7 +111,7 @@ async fn list_apps_returns_empty_with_api_key_auth() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_connectors_config(codex_home.path(), &server_url)?;
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &AuthDotJson {
             auth_mode: Some(AuthMode::ApiKey),
             openai_api_key: Some("test-api-key".to_string()),

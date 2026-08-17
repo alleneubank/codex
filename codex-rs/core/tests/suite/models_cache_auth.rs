@@ -272,7 +272,7 @@ async fn auth_and_provider_switches_do_not_reuse_chatgpt_catalog() -> Result<()>
         vec![model.clone()]
     );
     login_with_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "api-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

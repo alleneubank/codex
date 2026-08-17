@@ -39,7 +39,7 @@ fn client(
     let home = tempfile::tempdir().expect("Codex home");
     let manager = OAuthSessionManager::new(
         config,
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring,
     )
@@ -166,7 +166,7 @@ async fn expired_tokens_refresh_once_when_the_response_omits_rotation_and_expiry
 
     let other = OAuthSessionManager::new(
         client.state.config.clone(),
-        client.state.codex_home.clone(),
+        client.state.auth_home.clone(),
         transport_default_auth_route_config().http_client_factory(),
         keyring.clone(),
     )
@@ -201,7 +201,7 @@ async fn different_configurations_refresh_under_the_same_store_lock() {
     other_config.client_id = "other-client".to_string();
     let second = OAuthSessionManager::new(
         other_config,
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring,
     )
@@ -216,9 +216,11 @@ async fn different_configurations_refresh_under_the_same_store_lock() {
     }
 
     let contender = Arc::new(
-        super::storage::lock_credentials(home.path())
-            .await
-            .expect("store lock"),
+        super::storage::lock_credentials(&crate::AuthHome::from_directory(
+            (home.path()).to_path_buf(),
+        ))
+        .await
+        .expect("store lock"),
     );
     contender.unlock().expect("release store lock");
     for (client_id, refresh_token, access_token) in [
@@ -491,7 +493,7 @@ async fn gateway_credentials_use_a_dedicated_encrypted_file_and_reload_large_tok
     let config = loopback_config();
     let client = OAuthSessionManager::new(
         config.clone(),
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring.clone(),
     )
@@ -515,7 +517,7 @@ async fn gateway_credentials_use_a_dedicated_encrypted_file_and_reload_large_tok
 
     let reloaded = OAuthSessionManager::new(
         config,
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         transport_default_auth_route_config().http_client_factory(),
         keyring,
     )
@@ -535,9 +537,11 @@ async fn browser_authorization_exchanges_and_persists_under_the_store_lock() {
     let mut oauth = config(&server);
     oauth.authorization_url.push_str("?prompt=login");
     let (client, home) = client(oauth, Arc::new(MockKeyringStore::default()));
-    let contender = super::storage::lock_credentials(home.path())
-        .await
-        .expect("store lock");
+    let contender = super::storage::lock_credentials(&crate::AuthHome::from_directory(
+        (home.path()).to_path_buf(),
+    ))
+    .await
+    .expect("store lock");
     contender.unlock().expect("release store lock");
     Mock::given(method("POST"))
         .and(path("/token"))

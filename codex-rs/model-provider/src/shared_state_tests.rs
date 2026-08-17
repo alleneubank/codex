@@ -88,7 +88,7 @@ async fn gateway_credentials_accompany_primary_auth_in_models_and_responses() {
         primary_headers.insert("chatgpt-account-id", HeaderValue::from_static("account"));
         let primary = AuthManager::from_auth_for_testing_with_home(
             CodexAuth::Headers(AuthHeaders::new(primary_headers)),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         );
         let manager = seed_gateway_auth(
             &info,
@@ -200,7 +200,7 @@ async fn gateway_preserves_runtime_auth_and_rejects_header_collisions() {
             .await;
         let primary = AuthManager::from_auth_for_testing_with_home(
             CodexAuth::from_api_key("primary-token"),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         );
         let info = ModelProviderInfo {
             gateway_oauth: Some(GatewayOAuthConfig {
@@ -295,13 +295,78 @@ async fn gateway_preserves_runtime_auth_and_rejects_header_collisions() {
 }
 
 #[tokio::test]
+async fn gateway_credentials_and_managers_are_isolated_by_auth_home() {
+    let server = MockServer::start().await;
+    let codex_home = tempfile::tempdir().unwrap();
+    let first_auth_home = tempfile::tempdir().unwrap();
+    let second_auth_home = tempfile::tempdir().unwrap();
+    let info = ModelProviderInfo {
+        gateway_oauth: Some(GatewayOAuthConfig {
+            authorization_url: format!("{}/authorize", server.uri()),
+            token_url: format!("{}/token", server.uri()),
+            client_id: "client".into(),
+            resource: None,
+            scopes: vec![],
+            redirect_port: None,
+            delivery: GatewayOAuthDelivery::Header {
+                name: "x-gateway-auth".into(),
+                scheme: "Bearer".into(),
+            },
+        }),
+        ..ModelProviderInfo::create_openai_provider(Some(server.uri()))
+    };
+    let mut managers = Vec::new();
+    for (auth_home, token) in [
+        (&first_auth_home, "first-gateway-token"),
+        (&second_auth_home, "second-gateway-token"),
+    ] {
+        let primary = AuthManager::from_auth_for_testing_with_home(
+            CodexAuth::from_api_key("primary-token"),
+            codex_login::AuthHome::from_directory(auth_home.path().to_path_buf()),
+        );
+        let runtime = AuthRuntimeConfig {
+            codex_home: codex_home.path().to_path_buf(),
+            ..primary.runtime_config()
+        };
+        codex_login::GatewayLoginControl::for_runtime(&runtime).require_explicit_login();
+        let uncached = ModelProviderSharedState::default()
+            .gateway_auth(info.gateway_oauth.as_ref().unwrap(), &runtime)
+            .unwrap();
+        assert_eq!(
+            uncached
+                .resolve_access_token()
+                .await
+                .unwrap_err()
+                .to_string(),
+            codex_login::GatewayAuthError::LoginRequired.to_string()
+        );
+        assert!(auth_home.path().join("secrets/gateway_oauth.lock").exists());
+        let seeded = seed_gateway_auth(
+            &info,
+            &primary,
+            json!({"access_token": token, "expires_at": i64::MAX}),
+        );
+        let manager = process_shared_state()
+            .gateway_auth(info.gateway_oauth.as_ref().unwrap(), &runtime)
+            .unwrap();
+        assert!(Arc::ptr_eq(&manager, &seeded));
+        assert_eq!(manager.resolve_access_token().await.unwrap(), token);
+        assert!(auth_home.path().join("secrets/gateway_oauth.age").exists());
+        managers.push(manager);
+    }
+    assert!(!Arc::ptr_eq(&managers[0], &managers[1]));
+    assert!(!codex_home.path().join("secrets").exists());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn gateway_refresh_preserves_primary_auth_and_hides_issuer_errors() {
     for succeeds in [true, false] {
         let server = MockServer::start().await;
         let home = tempfile::tempdir().unwrap();
         let primary = AuthManager::from_auth_for_testing_with_home(
             CodexAuth::from_api_key("primary-token"),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         );
         let info = ModelProviderInfo {
             gateway_oauth: Some(GatewayOAuthConfig {
@@ -390,7 +455,7 @@ async fn models_cache_is_reused_only_for_matching_gateway_configuration() {
     let home = tempfile::tempdir().unwrap();
     let primary = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary-token"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut info = ModelProviderInfo {
         model_catalog_url: Some(format!("{}/models", server.uri()).into()),
@@ -474,7 +539,7 @@ async fn models_observe_gateway_rotation(instance: ProviderInstance) {
     let home = tempfile::tempdir().unwrap();
     let primary = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary-token"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let info = ModelProviderInfo {
         model_catalog_url: Some(format!("{}/models", server.uri()).into()),
@@ -655,7 +720,7 @@ async fn gateway_login_required_invalidates_the_last_successful_catalog() {
     let home = tempfile::tempdir().unwrap();
     let primary = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary-token"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let info = ModelProviderInfo {
         model_catalog_url: Some(format!("{}/models", server.uri()).into()),
@@ -740,7 +805,7 @@ async fn gateway_login_states_stop_request_retries() {
     let home = tempfile::tempdir().unwrap();
     let primary = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary-token"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let info = ModelProviderInfo {
         gateway_oauth: Some(GatewayOAuthConfig {

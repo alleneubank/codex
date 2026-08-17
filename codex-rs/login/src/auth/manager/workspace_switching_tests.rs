@@ -51,13 +51,13 @@ async fn session(server: &MockServer) -> anyhow::Result<(TempDir, AuthManager, A
         bedrock_access_keys: None,
     };
     create_auth_storage(
-        home.path().to_path_buf(),
+        AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .save(&snapshot)?;
     let manager = AuthManager::new(
-        home.path().to_path_buf(),
+        AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -92,6 +92,7 @@ async fn workspace_switch_preserves_login_and_survives_reload() -> anyhow::Resul
     manager.switch_workspace("login-1", "business").await?;
     enforce_login_restrictions(&AuthConfig {
         codex_home: home.path().to_path_buf(),
+        auth_home: AuthHome::from_directory(home.path().to_path_buf()),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::default(),
         forced_login_method: None,
@@ -282,7 +283,7 @@ async fn workspace_switch_does_not_restore_a_logged_out_session() -> anyhow::Res
     assert!(manager.auth_cached().is_none());
     assert!(
         create_auth_storage(
-            home.path().to_path_buf(),
+            AuthHome::from_directory(home.path().to_path_buf()),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default()
         )
@@ -308,7 +309,7 @@ async fn workspace_switch_rejects_a_session_from_a_previous_login() -> anyhow::R
     tokens.id_token = parse_chatgpt_jwt_claims(&jwt)?;
     tokens.access_token = jwt;
     save_auth(
-        home.path(),
+        &AuthHome::from_directory(home.path().to_path_buf()),
         &snapshot,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

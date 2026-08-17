@@ -116,7 +116,7 @@ pub async fn write_models_cache_with_models(
         .build()
         .await?;
     let auth = codex_login::CodexAuth::from_auth_storage(
-        codex_home,
+        &codex_login::AuthHome::from_directory((codex_home).to_path_buf()),
         config.cli_auth_credentials_store_mode,
         Some(&config.chatgpt_base_url),
         config.auth_keyring_backend_kind(),

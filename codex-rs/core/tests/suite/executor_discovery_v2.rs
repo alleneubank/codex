@@ -1160,7 +1160,7 @@ async fn auth_rotation_refreshes_plugin_acceptance_before_merged_skills() -> Res
             let previous = client.auth_cache_key_for_server(CODEX_APPS_MCP_SERVER_NAME);
             if revision != cases[index - 1].0 {
                 codex_login::auth::login_with_chatgpt_auth_tokens(
-                    test.codex_home_path(),
+                    &codex_login::AuthHome::from_directory((test.codex_home_path()).to_path_buf()),
                     &format!("header.e30.{revision}"),
                     "account",
                     /*chatgpt_plan_type*/ None,

@@ -42,14 +42,14 @@ async fn auth_manager_with_replacement(
         .expect("stale auth should include tokens")
         .access_token = "stale-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &stale_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .expect("stale auth should save");
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -65,7 +65,7 @@ async fn auth_manager_with_replacement(
         .expect("replacement auth should include tokens")
         .access_token = "fresh-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &replacement_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1099,14 +1099,14 @@ async fn remote_control_handle_discards_pairing_response_after_auth_change() {
     let remote_control_url = remote_control_url_for_listener(&listener);
     let codex_home = TempDir::new().expect("temp dir should create");
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("account_id")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .expect("initial auth should save");
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -1131,7 +1131,7 @@ async fn remote_control_handle_discards_pairing_response_after_auth_change() {
 
     let pairing_request = accept_http_request(&listener).await;
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("next_account_id")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

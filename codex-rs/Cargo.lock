@@ -3968,6 +3968,7 @@ dependencies = [
  "codex-secrets",
  "codex-terminal-detection",
  "codex-utils-cargo-bin",
+ "codex-utils-home-dir",
  "codex-utils-process",
  "codex-utils-template",
  "codex-workload-identity",

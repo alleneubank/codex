@@ -59,7 +59,7 @@ async fn ema_auth_statuses_do_not_wait_for_account_refresh() -> anyhow::Result<(
         }))?,
     )?;
     let manager = AuthManager::shared(
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,

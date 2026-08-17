@@ -55,7 +55,9 @@ impl ModelProviderSharedState {
         if let Some(manager) = managers
             .iter()
             .find(|(cached_config, cached_runtime, _)| {
-                cached_config == &oauth && cached_runtime == runtime
+                cached_config == &oauth
+                    && cached_runtime.auth_home == runtime.auth_home
+                    && cached_runtime.auth_route_config == runtime.auth_route_config
             })
             .and_then(|(_, _, manager)| manager.upgrade())
         {
@@ -63,7 +65,7 @@ impl ModelProviderSharedState {
         }
         let manager = Arc::new(GatewayAuthManager::new(
             oauth.clone(),
-            runtime.codex_home.clone(),
+            runtime.auth_home.clone(),
             runtime.auth_route_config.http_client_factory(),
             Arc::new(DefaultKeyringStore),
         )?);
