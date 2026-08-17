@@ -160,7 +160,7 @@ async fn expired_tokens_refresh_once_when_the_response_omits_rotation_and_expiry
 
     let other = GatewayAuthManager::new(
         client.state.config.clone(),
-        client.state.codex_home.clone(),
+        client.state.auth_home.clone(),
         transport_default_auth_route_config().http_client_factory(),
         keyring.clone(),
     )

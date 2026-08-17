@@ -1742,6 +1742,7 @@ pub(crate) async fn start_thread_with_request_handle(
 pub(crate) fn status_account_display_from_auth_mode(
     auth_mode: Option<AuthMode>,
     plan_type: Option<codex_protocol::account::PlanType>,
+    account_email: Option<String>,
 ) -> Option<StatusAccountDisplay> {
     match auth_mode {
         Some(AuthMode::ApiKey) => Some(StatusAccountDisplay::ApiKey),
@@ -1749,7 +1750,7 @@ pub(crate) fn status_account_display_from_auth_mode(
         | Some(AuthMode::ChatgptAuthTokens)
         | Some(AuthMode::AgentIdentity)
         | Some(AuthMode::PersonalAccessToken) => Some(StatusAccountDisplay::ChatGpt {
-            email: None,
+            email: account_email,
             plan: plan_type.map(plan_type_display_name),
         }),
         Some(AuthMode::Headers)
@@ -4381,6 +4382,7 @@ mod tests {
         let business = status_account_display_from_auth_mode(
             Some(AuthMode::Chatgpt),
             Some(codex_protocol::account::PlanType::EnterpriseCbpUsageBased),
+            /*account_email*/ None,
         );
         assert!(matches!(
             business,
@@ -4393,6 +4395,7 @@ mod tests {
         let team = status_account_display_from_auth_mode(
             Some(AuthMode::Chatgpt),
             Some(codex_protocol::account::PlanType::SelfServeBusinessUsageBased),
+            /*account_email*/ None,
         );
         assert!(matches!(
             team,
@@ -4405,6 +4408,7 @@ mod tests {
         let business_prolite = status_account_display_from_auth_mode(
             Some(AuthMode::Chatgpt),
             Some(codex_protocol::account::PlanType::SelfServeBusinessProLite),
+            /*account_email*/ None,
         );
         assert!(matches!(
             business_prolite,
