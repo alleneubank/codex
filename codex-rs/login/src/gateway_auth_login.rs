@@ -45,12 +45,12 @@ impl GatewayLoginControl {
     /// Returns the control shared across this runtime's provider configurations.
     pub fn for_runtime(runtime: &crate::AuthRuntimeConfig) -> Arc<Self> {
         Self::for_host(
-            &runtime.codex_home,
+            &runtime.auth_home,
             runtime.auth_route_config.http_client_factory(),
         )
     }
 
-    pub(super) fn for_host(codex_home: &std::path::Path, factory: &HttpClientFactory) -> Arc<Self> {
+    pub(super) fn for_host(auth_home: &std::path::Path, factory: &HttpClientFactory) -> Arc<Self> {
         type Controls = Vec<(PathBuf, HttpClientFactory, Arc<GatewayLoginControl>)>;
         static CONTROLS: OnceLock<std::sync::Mutex<Controls>> = OnceLock::new();
         let mut controls = CONTROLS
@@ -65,7 +65,7 @@ impl GatewayLoginControl {
         });
         if let Some((_, _, control)) = controls
             .iter()
-            .find(|(home, routes, _)| home == codex_home && routes == factory)
+            .find(|(home, routes, _)| home == auth_home && routes == factory)
         {
             return Arc::clone(control);
         }
@@ -74,7 +74,7 @@ impl GatewayLoginControl {
             status_tx: broadcast::channel(/*capacity*/ 16).0,
         });
         controls.push((
-            codex_home.to_path_buf(),
+            auth_home.to_path_buf(),
             factory.clone(),
             Arc::clone(&control),
         ));
@@ -103,10 +103,10 @@ pub fn subscribe_gateway_auth_status(
 }
 
 pub(super) fn status_sender_for_host(
-    codex_home: &std::path::Path,
+    auth_home: &std::path::Path,
     factory: &HttpClientFactory,
 ) -> broadcast::Sender<GatewayAuthStatusChange> {
-    GatewayLoginControl::for_host(codex_home, factory)
+    GatewayLoginControl::for_host(auth_home, factory)
         .status_tx
         .clone()
 }
