@@ -105,7 +105,7 @@ enum RefreshOutcome {
 
 struct GatewayAuthState {
     config: GatewayAuthConfig,
-    codex_home: PathBuf,
+    auth_home: PathBuf,
     storage: GatewayAuthStorage,
     http_client: HttpClient,
     cached_token: Arc<Mutex<GatewayAuthCache>>,
@@ -130,7 +130,7 @@ impl GatewayAuthManager {
     /// Token grants never follow redirects or include primary-provider credentials or request logs.
     pub fn new(
         config: GatewayAuthConfig,
-        codex_home: PathBuf,
+        auth_home: PathBuf,
         http_client_factory: &HttpClientFactory,
         keyring: Arc<dyn KeyringStore>,
     ) -> io::Result<Self> {
@@ -144,12 +144,12 @@ impl GatewayAuthManager {
             )
             .map_err(|_| io::Error::other("failed to create provider OAuth HTTP client"))?;
         Ok(Self {
-            control: GatewayLoginControl::for_host(&codex_home, http_client_factory),
+            control: GatewayLoginControl::for_host(&auth_home, http_client_factory),
             state: Arc::new(GatewayAuthState {
                 config,
-                status_tx: login::status_sender_for_host(&codex_home, http_client_factory),
-                storage: GatewayAuthStorage::new(codex_home.clone(), keyring),
-                codex_home,
+                status_tx: login::status_sender_for_host(&auth_home, http_client_factory),
+                storage: GatewayAuthStorage::new(auth_home.clone(), keyring),
+                auth_home,
                 http_client,
                 cached_token: Arc::new(Mutex::new(GatewayAuthCache::default())),
                 login_attempt: Arc::new(Mutex::new(())),
@@ -292,7 +292,7 @@ impl GatewayAuthManager {
         cached: &mut GatewayAuthCache,
         policy: &RefreshPolicy,
     ) -> io::Result<RefreshOutcome> {
-        let credential_lock = Arc::new(storage::lock_credentials(&self.state.codex_home).await?);
+        let credential_lock = Arc::new(storage::lock_credentials(&self.state.auth_home).await?);
         // Recovery always rereads under the cross-process lock before choosing a token.
         // Even a replacement from storage must differ from the token rejected by this request.
         for _ in 0..2 {
@@ -373,7 +373,7 @@ impl GatewayAuthManager {
     fn credential_id(&self) -> String {
         let config = &self.state.config;
         let mut digest = Sha256::new();
-        digest.update(self.state.codex_home.to_string_lossy().as_bytes());
+        digest.update(self.state.auth_home.to_string_lossy().as_bytes());
         digest.update([0]);
         for value in [
             config.authorization_url.as_str(),
@@ -444,7 +444,7 @@ impl GatewayAuthManager {
 
         // Wait for user interaction without the store lock, then serialize issuance and
         // persistence with refreshes. Use the current stored token as the failed-save baseline.
-        let credential_lock = Arc::new(storage::lock_credentials(&self.state.codex_home).await?);
+        let credential_lock = Arc::new(storage::lock_credentials(&self.state.auth_home).await?);
         let stored = self.load_token_async().await?;
         if stored != cached.token {
             cached.token = stored;
