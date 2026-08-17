@@ -139,7 +139,7 @@ async fn end_to_end_login_flow_persists_auth_json() -> Result<()> {
     .with_local_bootstrap_factory(factory.with_network_policy(local_policy));
 
     let opts = ServerOptions {
-        codex_home: server_home,
+        auth_home: codex_login::AuthHome::from_directory(server_home),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: routes,
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -251,7 +251,7 @@ async fn hosted_login_redirects_to_configured_open_app_url() -> Result<()> {
     let issuer = format!("http://{}:{}", issuer_addr.ip(), issuer_addr.port());
     let tmp = tempdir()?;
     let server = run_login_server(ServerOptions {
-        codex_home: tmp.path().to_path_buf(),
+        auth_home: codex_login::AuthHome::from_directory(tmp.path().to_path_buf()),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -305,7 +305,7 @@ async fn creates_missing_codex_home_dir() -> Result<()> {
     // Run server in background
     let server_home = codex_home.clone();
     let opts = ServerOptions {
-        codex_home: server_home,
+        auth_home: codex_login::AuthHome::from_directory(server_home),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -349,7 +349,7 @@ async fn login_server_includes_forced_workspaces_as_one_query_param() -> Result<
     let state = "state-multi".to_string();
 
     let opts = ServerOptions {
-        codex_home,
+        auth_home: codex_login::AuthHome::from_directory(codex_home),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -394,7 +394,7 @@ async fn forced_chatgpt_workspace_id_mismatch_blocks_login() -> Result<()> {
     let state = "state-mismatch".to_string();
 
     let opts = ServerOptions {
-        codex_home: codex_home.clone(),
+        auth_home: codex_login::AuthHome::from_directory(codex_home.clone()),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -458,7 +458,7 @@ async fn oauth_access_denied_missing_entitlement_blocks_login_with_clear_error()
     let state = "state-entitlement".to_string();
 
     let opts = ServerOptions {
-        codex_home: codex_home.clone(),
+        auth_home: codex_login::AuthHome::from_directory(codex_home.clone()),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -530,7 +530,7 @@ async fn oauth_access_denied_unknown_reason_uses_generic_error_page() -> Result<
     let state = "state-generic-denial".to_string();
 
     let opts = ServerOptions {
-        codex_home: codex_home.clone(),
+        auth_home: codex_login::AuthHome::from_directory(codex_home.clone()),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -639,7 +639,7 @@ async fn falls_back_to_registered_fallback_port_when_default_port_is_in_use() ->
     let tmp = tempdir()?;
 
     let mut opts = ServerOptions::new(
-        tmp.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(tmp.path().to_path_buf()),
         codex_login::CLIENT_ID.to_string(),
         /*forced_chatgpt_workspace_id*/ None,
         AuthCredentialsStoreMode::File,
@@ -681,7 +681,7 @@ async fn cancels_previous_login_server_when_port_is_in_use() -> Result<()> {
     let first_codex_home = first_tmp.path().to_path_buf();
 
     let first_opts = ServerOptions {
-        codex_home: first_codex_home,
+        auth_home: codex_login::AuthHome::from_directory(first_codex_home),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),
@@ -706,7 +706,7 @@ async fn cancels_previous_login_server_when_port_is_in_use() -> Result<()> {
     let second_codex_home = second_tmp.path().to_path_buf();
 
     let second_opts = ServerOptions {
-        codex_home: second_codex_home,
+        auth_home: codex_login::AuthHome::from_directory(second_codex_home),
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
         client_id: codex_login::CLIENT_ID.to_string(),

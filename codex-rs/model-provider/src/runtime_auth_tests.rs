@@ -59,7 +59,7 @@ async fn explicit_keys_and_commands_use_their_own_shared_runtime() {
         let home = tempfile::tempdir().unwrap();
         let credentials = AuthManager::from_auth_for_testing_with_home(
             CodexAuth::from_api_key("ambient-key"),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         );
         let context = context(&server, credentials, mode).await;
         let literal = ModelProviderInfo {
@@ -319,7 +319,7 @@ async fn permanent_runtime_refresh_failure_preserves_sign_in_error() {
             }))
             .expect("construct stored OAuth credentials");
             codex_login::save_auth(
-                home.path(),
+                &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
                 &stored,
                 AuthCredentialsStoreMode::File,
                 AuthKeyringBackendKind::Direct,
@@ -327,7 +327,7 @@ async fn permanent_runtime_refresh_failure_preserves_sign_in_error() {
             .expect("save OAuth credentials");
             let credentials = Arc::new(
                 AuthManager::new(
-                    home.path().to_path_buf(),
+                    codex_login::AuthHome::from_directory(home.path().to_path_buf()),
                     /*enable_codex_api_key_env*/ false,
                     AuthCredentialsStoreMode::File,
                     /*forced_chatgpt_workspace_id*/ None,

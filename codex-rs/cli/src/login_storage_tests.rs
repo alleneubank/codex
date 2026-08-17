@@ -22,7 +22,7 @@ fn login_default_filter_records_sanitized_storage_fallback() -> anyhow::Result<(
         .finish();
     tracing::subscriber::with_default(subscriber, || {
         login_with_api_key(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             "private-api-key",
             AuthCredentialsStoreMode::Auto,
             AuthKeyringBackendKind::Secrets,
@@ -68,7 +68,7 @@ fn login_storage_error_displays_context_and_cause() -> anyhow::Result<()> {
         .unwrap_err()
         .to_string();
     let error = login_with_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "private-api-key",
         AuthCredentialsStoreMode::Keyring,
         AuthKeyringBackendKind::Secrets,

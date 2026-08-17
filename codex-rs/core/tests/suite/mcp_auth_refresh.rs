@@ -59,7 +59,7 @@ async fn hosted_plugin_runtime_ps_mcp_tool_calls_use_current_auth_manager_token(
     )?;
     let auth_manager = AuthManager::from_auth_for_testing_with_home(
         expected_auth.clone(),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     // Build the hosted-plugin config directly so the local test origin can
     // exercise the connection-manager auth path. Effective server resolution

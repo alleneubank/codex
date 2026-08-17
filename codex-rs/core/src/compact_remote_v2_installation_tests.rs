@@ -105,7 +105,7 @@ async fn prepared_prefix_rejection_respects_caller_intent(
             HistoryChange::Account => Some(
                 codex_login::AuthManager::from_auth_for_testing_with_home(
                     CodexAuth::from_api_key("other-account"),
-                    std::path::PathBuf::from("unused"),
+                    codex_login::AuthHome::from_directory(std::path::PathBuf::from("unused")),
                 )
                 .auth_owner(),
             ),

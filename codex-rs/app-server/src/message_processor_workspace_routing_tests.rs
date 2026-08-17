@@ -21,7 +21,7 @@ async fn background_routing_call_sites_skip_config(api_key: Option<&str>) -> any
     let home = tempfile::tempdir()?;
     if let Some(api_key) = api_key {
         codex_login::login_with_api_key(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             api_key,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -36,7 +36,7 @@ async fn background_routing_call_sites_skip_config(api_key: Option<&str>) -> any
     );
     let auth_manager = Arc::new(
         AuthManager::new(
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,

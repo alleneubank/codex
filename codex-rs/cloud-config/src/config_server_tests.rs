@@ -26,7 +26,13 @@ fn remote_loader(url: String, codex_home: PathBuf) -> CloudConfigBundleLoader {
     let factory = transport_default_auth_route_config()
         .http_client_factory()
         .clone();
-    let source = ConfigServerSource::new(url, /*oauth*/ None, codex_home.clone(), factory).unwrap();
+    let source = ConfigServerSource::new(
+        url,
+        /*oauth*/ None,
+        codex_login::AuthHome::from_directory(codex_home.clone()),
+        factory,
+    )
+    .unwrap();
     managed_config_bundle_loader_for_service(CloudConfigBundleService::from_source(
         source,
         codex_home,
@@ -121,7 +127,7 @@ async fn policy_fetch_uses_replacement_config_server_credentials() {
     let manager = || {
         OAuthSessionManager::new(
             oauth.clone(),
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             &factory,
             keyring.clone(),
         )

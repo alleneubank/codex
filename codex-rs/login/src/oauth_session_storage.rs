@@ -18,12 +18,13 @@ use codex_secrets::SecretName;
 use codex_secrets::SecretScope;
 use codex_secrets::SecretsBackendKind;
 use codex_secrets::SecretsManager;
+use codex_utils_home_dir::AuthHome;
 use codex_utils_path::write_atomically;
 
 use super::StoredToken;
 
-pub(super) async fn lock_credentials(codex_home: &Path) -> io::Result<File> {
-    let directory = codex_home.join("secrets");
+pub(super) async fn lock_credentials(auth_home: &AuthHome) -> io::Result<File> {
+    let directory = auth_home.join("secrets");
     std::fs::create_dir_all(&directory)?;
     // Configurations have separate credential entries but rewrite the same store file.
     // Keep one stable sidecar locked from the initial read through token exchange and save.
@@ -62,21 +63,21 @@ pub(super) enum OAuthSessionStorage {
 
 impl OAuthSessionStorage {
     pub(super) fn new(
-        codex_home: PathBuf,
+        auth_home: AuthHome,
         mode: OAuthCredentialsStore,
         keyring: Arc<dyn KeyringStore>,
     ) -> Self {
         match mode {
             OAuthCredentialsStore::Keyring => {
                 Self::Keyring(SecretsManager::new_with_keyring_store_and_namespace(
-                    codex_home,
+                    auth_home.to_path_buf(),
                     SecretsBackendKind::Local,
                     keyring,
                     LocalSecretsNamespace::GatewayOAuth,
                 ))
             }
             OAuthCredentialsStore::File => {
-                Self::File(codex_home.join("secrets").join("gateway_oauth.json"))
+                Self::File(auth_home.join("secrets").join("gateway_oauth.json"))
             }
         }
     }

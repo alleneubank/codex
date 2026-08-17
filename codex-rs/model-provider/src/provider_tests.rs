@@ -279,7 +279,7 @@ async fn configured_provider_resolves_default_and_explicit_endpoints() {
     let home = tempfile::tempdir().unwrap();
     let auth = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("initial-key"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let provider = create_model_provider(
         ModelProviderInfo::create_openai_provider(/*base_url*/ None),
@@ -294,7 +294,7 @@ async fn configured_provider_resolves_default_and_explicit_endpoints() {
         ("commercial-key", "https://api.openai.com/v1"),
     ] {
         codex_login::login_with_api_key(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             api_key,
             codex_login::AuthCredentialsStoreMode::File,
             codex_login::AuthKeyringBackendKind::default(),

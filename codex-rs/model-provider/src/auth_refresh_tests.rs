@@ -138,7 +138,7 @@ async fn check_concurrent_refresh(trigger: RefreshTrigger) {
     .unwrap();
     let manager = Arc::new(
         AuthManager::new(
-            home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,

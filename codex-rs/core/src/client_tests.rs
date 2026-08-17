@@ -331,7 +331,10 @@ impl ModelProvider for SetupRefreshProvider {
                     workspace,
                 } => {
                     codex_login::auth::login_with_chatgpt_auth_tokens(
-                        home, token, workspace, /*chatgpt_plan_type*/ None,
+                        &codex_login::AuthHome::from_directory((home).to_path_buf()),
+                        token,
+                        workspace,
+                        /*chatgpt_plan_type*/ None,
                     )?;
                     manager.reload().await;
                 }
@@ -425,8 +428,10 @@ async fn client_setup_rebuilds_chatgpt_refresh_but_rejects_account_switches() {
             /*chatgpt_plan_type*/ None,
         )
         .unwrap();
-        let manager =
-            AuthManager::from_auth_for_testing_with_home(initial, home.path().to_path_buf());
+        let manager = AuthManager::from_auth_for_testing_with_home(
+            initial,
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
+        );
         let refreshed_token = token(user, "refreshed");
         let mut info = test_model_provider().info().clone();
         info.requires_openai_auth = true;
@@ -2290,7 +2295,7 @@ async fn realtime_call_preserves_captured_account_binding(change: RealtimeCreden
         ) -> GenerateAttestationFuture<'_> {
             Box::pin(async move {
                 login_with_chatgpt_auth_tokens(
-                    &self.home,
+                    &codex_login::AuthHome::from_directory((&self.home).to_path_buf()),
                     &self.token,
                     "workspace-a",
                     /*chatgpt_plan_type*/ None,
@@ -2323,7 +2328,7 @@ async fn realtime_call_preserves_captured_account_binding(change: RealtimeCreden
     let login = |workspace: &str| {
         let token = token(workspace, "initial");
         login_with_chatgpt_auth_tokens(
-            home.path(),
+            &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
             &token,
             workspace,
             /*chatgpt_plan_type*/ None,
@@ -2333,7 +2338,7 @@ async fn realtime_call_preserves_captured_account_binding(change: RealtimeCreden
     };
     let access_token = login("workspace-a");
     let credentials = AuthManager::shared(
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::Ephemeral,
         /*forced_chatgpt_workspace_id*/ None,
@@ -2516,7 +2521,7 @@ async fn realtime_auth_uses_request_scope_on_reconnect(mode: RuntimeAuthMode, ga
     let home = TempDir::new().unwrap();
     let credentials = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("realtime-key"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut info = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
     if gateway {
@@ -2676,7 +2681,7 @@ async fn realtime_custom_call_keeps_selected_key_for_openai_sideband(mode: Runti
     let home = TempDir::new().unwrap();
     let credentials = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("saved-key"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut info = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
     info.experimental_bearer_token = Some("realtime-key".into());

@@ -119,7 +119,7 @@ fn api_workload_identity_changes_retire_previous_owner() {
 #[serial_test::serial(codex_auth_env)]
 async fn auth_reload_and_refresh_read_failure_preserves_network_permit() {
     let home = tempfile::tempdir().unwrap();
-    let storage = FileAuthStorage::new(home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()));
     let initial = chatgpt_auth("user-a", "workspace-a", "token-1");
     let stored = crate::AuthDotJson {
         auth_mode: Some(codex_protocol::auth::AuthMode::Chatgpt),
@@ -135,7 +135,7 @@ async fn auth_reload_and_refresh_read_failure_preserves_network_permit() {
     let controller = NetworkPolicyController::default();
     let policy = controller.policy();
     let manager = AuthManager::new(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         crate::AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ Some(vec!["workspace-a".to_string()]),
@@ -194,8 +194,10 @@ async fn auth_reload_and_refresh_read_failure_preserves_network_permit() {
 async fn auth_owner_generation_preserves_logout_and_switches_when_coalesced() {
     let home = tempfile::tempdir().unwrap();
     let initial = chatgpt_auth("user-a", "workspace-a", "token-1");
-    let manager =
-        AuthManager::from_auth_for_testing_with_home(initial.clone(), home.path().to_path_buf());
+    let manager = AuthManager::from_auth_for_testing_with_home(
+        initial.clone(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
+    );
     let mut changes = manager.auth_change_state_receiver();
 
     let generation = changes.borrow().generation;

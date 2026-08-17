@@ -72,7 +72,7 @@ async fn exercise_callback(expected: CallbackOutcome) -> Result<()> {
 
     let tmp = tempdir()?;
     let mut opts = ServerOptions::new(
-        tmp.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(tmp.path().to_path_buf()),
         codex_login::CLIENT_ID.to_string(),
         /*forced_chatgpt_workspace_id*/ None,
         AuthCredentialsStoreMode::File,

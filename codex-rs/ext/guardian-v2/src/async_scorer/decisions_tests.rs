@@ -120,7 +120,7 @@ async fn decisions_key_lookup_honors_override_or_reloaded_login() {
     let home = tempfile::tempdir().unwrap();
     let manager = codex_login::AuthManager::from_auth_for_testing_with_home(
         codex_login::CodexAuth::from_api_key("old-account-key"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut config = core_test_support::load_default_config_for_test(&home).await;
     config.features.enable(RuntimeAgentInstances).unwrap();
@@ -135,7 +135,7 @@ async fn decisions_key_lookup_honors_override_or_reloaded_login() {
     context.runtime_auth = None;
     let live = select_api_key("openai", /*base_url*/ None, Some(&context), &harness);
     codex_login::login_with_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "synthetic-key",
         codex_login::AuthCredentialsStoreMode::File,
         codex_login::AuthKeyringBackendKind::default(),

@@ -2312,7 +2312,7 @@ mod tests {
         let enroll_url = remote_control_target.enroll_url.clone();
         let codex_home = TempDir::new().expect("temp dir should create");
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("stale-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -2320,7 +2320,7 @@ mod tests {
         .expect("stale auth should save");
         let state_db = remote_control_state_runtime(&codex_home).await;
         let auth_manager = AuthManager::shared(
-            codex_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -2336,7 +2336,7 @@ mod tests {
         let current_enrollment = test_current_enrollment(/*enrollment*/ None);
         let (status_publisher, status_rx) = remote_control_status_channel();
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("fresh-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -2414,7 +2414,7 @@ mod tests {
         let refresh_url = remote_control_target.refresh_url.clone();
         let codex_home = TempDir::new().expect("temp dir should create");
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("stale-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -2422,7 +2422,7 @@ mod tests {
         .expect("stale auth should save");
         let state_db = remote_control_state_runtime(&codex_home).await;
         let auth_manager = AuthManager::shared(
-            codex_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -2443,7 +2443,7 @@ mod tests {
         let current_enrollment = test_current_enrollment(Some(expected_enrollment.clone()));
         let (status_publisher, status_rx) = remote_control_status_channel();
         save_auth(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &remote_control_auth_dot_json("fresh-token"),
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -2563,7 +2563,7 @@ mod tests {
         let codex_home = TempDir::new().expect("temp dir should create");
         let state_db = remote_control_state_runtime(&codex_home).await;
         let auth_manager = AuthManager::shared(
-            codex_home.path().to_path_buf(),
+            codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,

@@ -470,6 +470,15 @@ pub(super) async fn run_main_inner(
     } else {
         None
     };
+    if let Some(provider_id) = model_provider_override.as_ref() {
+        // The embedded app server reloads configuration from CLI layers for account/read. Keep
+        // the resolved OSS provider in that layer so a fresh local-only home does not fall back to
+        // OpenAI auth during onboarding.
+        cli_kv_overrides.push((
+            "model_provider".to_string(),
+            toml::Value::String(provider_id.clone()),
+        ));
+    }
 
     // Pass the --oss provider to the embedded app-server so catalog reloads keep
     // the launch choice after workspace requirements are removed.

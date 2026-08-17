@@ -21,7 +21,7 @@ fn keyring_commits_ignore_unusable_fallback_symlink_targets() -> anyhow::Result<
             std::fs::write(home.path().join("not-a-directory"), "")?;
             let auth_file = get_auth_file(home.path());
             let storage = create_auth_storage_with_store(
-                home.path().to_path_buf(),
+                crate::AuthHome::from_directory(home.path().to_path_buf()),
                 AuthCredentialsStoreMode::Keyring,
                 Arc::new(MockKeyringStore::default()),
                 kind,
@@ -59,7 +59,7 @@ fn deleting_absent_file_store_does_not_create_home() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let home = root.path().join("missing");
     let storage = create_auth_storage(
-        home.clone(),
+        crate::AuthHome::from_directory(home.clone()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -72,7 +72,7 @@ fn deleting_absent_file_store_does_not_create_home() -> anyhow::Result<()> {
 fn write_lock_coordinates_with_existing_auth_lock() -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     let storage = create_auth_storage(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -94,7 +94,9 @@ fn commits_respect_another_process_lock() -> anyhow::Result<()> {
     if let Some(home) = std::env::var_os(CHILD_HOME) {
         let home = PathBuf::from(home);
         let storage = CommittedStorage {
-            inner: Arc::new(FileAuthStorage::new(home.clone())),
+            inner: Arc::new(FileAuthStorage::new(crate::AuthHome::from_directory(
+                home.clone(),
+            ))),
             home,
             mode: AuthCredentialsStoreMode::File,
         };
@@ -106,7 +108,7 @@ fn commits_respect_another_process_lock() -> anyhow::Result<()> {
     }
     let home = tempfile::tempdir()?;
     let storage = create_auth_storage(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -158,7 +160,9 @@ fn keyring_logout_coordinates_with_refresh_through_chained_symlinks() -> anyhow:
     if let Some(home) = std::env::var_os(CHILD_HOME) {
         let home = PathBuf::from(home);
         let storage = CommittedStorage {
-            inner: Arc::new(FileAuthStorage::new(home.clone())),
+            inner: Arc::new(FileAuthStorage::new(crate::AuthHome::from_directory(
+                home.clone(),
+            ))),
             home,
             mode: AuthCredentialsStoreMode::File,
         };
@@ -180,13 +184,14 @@ fn keyring_logout_coordinates_with_refresh_through_chained_symlinks() -> anyhow:
         let shared = tempfile::tempdir()?;
         let keyring_home = tempfile::tempdir()?;
         let writer_home = tempfile::tempdir()?;
-        let shared_storage = FileAuthStorage::new(shared.path().to_path_buf());
+        let shared_storage =
+            FileAuthStorage::new(crate::AuthHome::from_directory(shared.path().to_path_buf()));
         shared_storage.save(&old)?;
         let middle = get_auth_file(keyring_home.path());
         symlink(get_auth_file(shared.path()), &middle)?;
         symlink(&middle, get_auth_file(writer_home.path()))?;
         let storage = create_auth_storage_with_store(
-            keyring_home.path().to_path_buf(),
+            crate::AuthHome::from_directory(keyring_home.path().to_path_buf()),
             AuthCredentialsStoreMode::Keyring,
             Arc::new(MockKeyringStore::default()),
             kind,

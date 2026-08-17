@@ -91,7 +91,7 @@ delivery = {{ kind = "header", name = "X-Gateway-Authorization" }}
     );
     let auth_manager = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let observer = seed_gateway_auth(
         &config.model_provider,
@@ -236,7 +236,7 @@ delivery = {{ kind = "header", name = "X-Gateway-Authorization" }}
     ))?;
     let auth_manager = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let _gateway = seed_gateway_auth(
         &config.model_provider,
@@ -334,7 +334,7 @@ delivery = {{ kind = "header", name = "X-Gateway-Authorization" }}
     );
     let auth = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("primary"),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut changes = codex_login::subscribe_gateway_auth_status(&auth.runtime_config());
     let (processor, _outgoing) = build_test_processor(config, auth).await;

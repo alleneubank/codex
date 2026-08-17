@@ -95,7 +95,7 @@ async fn chatgpt_auth_manager(
     let codex_home = test_codex_home();
     write_chatgpt_auth_json(&codex_home);
     let auth_manager = AuthManager::shared(
-        codex_home.clone(),
+        codex_login::AuthHome::from_directory(codex_home.clone()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -314,7 +314,7 @@ fn openai_provider_rejects_bedrock_api_key_auth() {
 async fn auth_manager_provider_follows_refreshes_but_not_account_switches() {
     let codex_home = test_codex_home();
     login_with_chatgpt_auth_tokens(
-        &codex_home,
+        &codex_login::AuthHome::from_directory((&codex_home).to_path_buf()),
         "header.e30.first",
         "test-account",
         /*chatgpt_plan_type*/ None,
@@ -322,7 +322,7 @@ async fn auth_manager_provider_follows_refreshes_but_not_account_switches() {
     .expect("save initial auth");
     let auth_manager = Arc::new(
         AuthManager::new(
-            codex_home.clone(),
+            codex_login::AuthHome::from_directory(codex_home.clone()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::Ephemeral,
             /*forced_chatgpt_workspace_id*/ None,
@@ -347,7 +347,7 @@ async fn auth_manager_provider_follows_refreshes_but_not_account_switches() {
     );
 
     login_with_chatgpt_auth_tokens(
-        &codex_home,
+        &codex_login::AuthHome::from_directory((&codex_home).to_path_buf()),
         "header.e30.reloaded",
         "test-account",
         /*chatgpt_plan_type*/ None,
@@ -380,7 +380,7 @@ async fn auth_manager_provider_follows_refreshes_but_not_account_switches() {
     );
 
     login_with_chatgpt_auth_tokens(
-        &codex_home,
+        &codex_login::AuthHome::from_directory((&codex_home).to_path_buf()),
         "header.e30.other-account",
         "other-account",
         /*chatgpt_plan_type*/ None,

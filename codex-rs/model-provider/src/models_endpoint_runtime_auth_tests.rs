@@ -234,6 +234,7 @@ async fn runtime_registration_environment_matches_inference_and_catalog() {
                 "ambient-key",
                 codex_login::AuthRuntimeConfig {
                     codex_home: home.path().to_path_buf(),
+                    auth_home: codex_login::AuthHome::from_directory(home.path().to_path_buf()),
                     auth_route_config: codex_login::AuthRouteConfig::from_http_client_factory(
                         factory.clone(),
                     ),

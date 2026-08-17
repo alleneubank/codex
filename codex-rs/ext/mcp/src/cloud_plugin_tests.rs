@@ -694,7 +694,7 @@ async fn run_cloud_catalog_refresh_lifecycle() -> anyhow::Result<()> {
             let previous_auth =
                 resources.auth_cache_key_for_server(codex_mcp::CODEX_APPS_MCP_SERVER_NAME);
             codex_login::auth::login_with_chatgpt_auth_tokens(
-                test.codex_home_path(),
+                &codex_login::AuthHome::from_directory((test.codex_home_path()).to_path_buf()),
                 "header.e30.changed",
                 account,
                 /*chatgpt_plan_type*/ None,
@@ -769,7 +769,9 @@ async fn run_cloud_catalog_refresh_lifecycle() -> anyhow::Result<()> {
                             .auth_cache_key_for_server(codex_mcp::CODEX_APPS_MCP_SERVER_NAME);
                         // Rotate credentials without replacing the captured runtime/client.
                         codex_login::auth::login_with_chatgpt_auth_tokens(
-                            test.codex_home_path(),
+                            &codex_login::AuthHome::from_directory(
+                                (test.codex_home_path()).to_path_buf(),
+                            ),
                             "header.e30.rotated",
                             "account-b",
                             /*chatgpt_plan_type*/ None,

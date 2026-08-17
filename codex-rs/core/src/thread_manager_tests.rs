@@ -472,7 +472,7 @@ async fn resumed_analytics_validates_openai_destination(
         proxy.uri(),
     );
     codex_login::login_with_api_key(
-        &config.codex_home,
+        &config.auth_home,
         "resumed-key",
         codex_login::AuthCredentialsStoreMode::File,
         codex_login::AuthKeyringBackendKind::default(),
@@ -930,7 +930,7 @@ async fn child_session_inherits_resumed_parent_auth(host_child: bool) {
     manager.remove_thread(&original.thread_id).await;
     let replacement = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("key-b"),
-        config.codex_home.to_path_buf(),
+        config.auth_home.clone(),
     );
     let parent = manager
         .resume_thread_with_history(

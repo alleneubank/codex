@@ -66,7 +66,7 @@ async fn api_platform_auth_refreshes_with_a_rotated_assertion() {
         .expect("adapter");
     let manager = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("unused-fallback"),
-        temp_dir.path().to_path_buf(),
+        crate::AuthHome::from_directory(temp_dir.path().to_path_buf()),
     );
     manager
         .set_external_auth(Arc::new(adapter))
@@ -530,6 +530,7 @@ async fn resolved_product_obeys_login_and_workspace_restrictions() {
         let manager = AuthManager::shared_from_auth_config(
             AuthConfig {
                 codex_home: temp_dir.path().to_path_buf(),
+                auth_home: crate::AuthHome::from_directory(temp_dir.path().to_path_buf()),
                 auth_credentials_store_mode: AuthCredentialsStoreMode::Ephemeral,
                 keyring_backend_kind: Default::default(),
                 forced_login_method: Some(login_method),

@@ -119,14 +119,17 @@ fn storage_metrics_distinguish_explicit_file_from_secure_failure_fallback() -> a
             let home = tempdir()?;
             let keyring = MockKeyringStore::default();
             let key = match kind {
-                AuthKeyringBackendKind::Direct => compute_store_key(home.path())?,
+                AuthKeyringBackendKind::Direct => compute_store_key(
+                    &crate::AuthHome::from_directory((home.path()).to_path_buf()),
+                )?,
                 AuthKeyringBackendKind::Secrets => {
                     compute_keyring_account(home.path(), LocalSecretsNamespace::CodexAuth)
                 }
             };
             let auth = auth_with_prefix("private credential value");
             if operation == "load" || scenario == "success" {
-                FileAuthStorage::new(home.path().to_path_buf()).save(&auth)?;
+                FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()))
+                    .save(&auth)?;
             }
             if scenario == "cleanup_failed" {
                 std::fs::create_dir(get_auth_file(home.path()))?;
@@ -154,7 +157,7 @@ fn storage_metrics_distinguish_explicit_file_from_secure_failure_fallback() -> a
                 }
             }
             let storage = create_auth_storage_with_store(
-                home.path().to_path_buf(),
+                crate::AuthHome::from_directory(home.path().to_path_buf()),
                 mode,
                 Arc::new(keyring),
                 kind,
@@ -246,7 +249,7 @@ fn auto_auth_storage_load_prefers_keyring_value() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
     );
@@ -266,7 +269,7 @@ fn auto_auth_storage_load_uses_file_when_keyring_empty() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring),
         AuthKeyringBackendKind::Secrets,
     );
@@ -284,7 +287,7 @@ fn auto_auth_storage_load_falls_back_when_keyring_errors() -> anyhow::Result<()>
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
     );
@@ -389,17 +392,19 @@ fn auto_auth_storage_refresh_preserves_fallback_when_keyring_stays_unreadable() 
 {
     let home = tempdir()?;
     let keyring = MockKeyringStore::default();
-    let key = compute_store_key(home.path())?;
+    let key = compute_store_key(&crate::AuthHome::from_directory(
+        (home.path()).to_path_buf(),
+    ))?;
     // A malformed entry keeps every keyring read failing, while writes would
     // succeed. Reuse the keyring mock without a one-shot failure that recovers.
     keyring.save(KEYRING_SERVICE, &key, "unreadable credential document")?;
     let storage = create_auth_storage_with_store(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::Auto,
         Arc::new(keyring.clone()),
         AuthKeyringBackendKind::Direct,
     );
-    let file = FileAuthStorage::new(home.path().to_path_buf());
+    let file = FileAuthStorage::new(crate::AuthHome::from_directory(home.path().to_path_buf()));
     let mut previous = auth_with_prefix("fallback");
     previous.auth_mode = Some(AuthMode::Chatgpt);
     previous.openai_api_key = None;
@@ -442,7 +447,7 @@ fn auto_auth_storage_save_prefers_keyring() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
     );
@@ -461,7 +466,7 @@ fn auto_auth_storage_save_falls_back_when_keyring_errors() -> anyhow::Result<()>
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
     );
@@ -493,7 +498,7 @@ fn auto_auth_storage_delete_removes_keyring_and_file() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = AutoAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthKeyringBackendKind::Secrets,
     );
@@ -520,7 +525,7 @@ fn direct_keyring_auth_storage_saves_legacy_keyring_entry() -> anyhow::Result<()
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = DirectKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
@@ -530,7 +535,9 @@ fn direct_keyring_auth_storage_saves_legacy_keyring_entry() -> anyhow::Result<()
 
     storage.save(&auth)?;
 
-    let legacy_key = compute_store_key(codex_home.path())?;
+    let legacy_key = compute_store_key(&crate::AuthHome::from_directory(
+        (codex_home.path()).to_path_buf(),
+    ))?;
     let saved_value = mock_keyring
         .saved_value(&legacy_key)
         .context("direct keyring auth entry should exist")?;
@@ -549,7 +556,7 @@ fn secrets_keyring_auth_storage_save_persists_and_removes_fallback_file() -> any
     let codex_home = tempdir()?;
     let mock_keyring = MockKeyringStore::default();
     let storage = SecretsKeyringAuthStorage::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         Arc::new(mock_keyring.clone()),
         AuthCredentialsStoreMode::Keyring,
     );
