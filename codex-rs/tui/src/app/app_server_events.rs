@@ -10,10 +10,16 @@ use crate::app_info::app_info_from_api;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::status_account_display_from_auth_mode;
 use codex_app_server_client::AppServerEvent;
+use codex_app_server_protocol::Account as AppServerAccount;
 use codex_app_server_protocol::AuthMode;
+use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::GetAccountParams;
+use codex_app_server_protocol::GetAccountResponse;
 use codex_app_server_protocol::RateLimitReachedType;
+use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
+use uuid::Uuid;
 
 impl App {
     pub(super) fn refresh_mcp_startup_expected_servers_from_config(&mut self) {
@@ -127,10 +133,49 @@ impl App {
                             | AuthMode::PersonalAccessToken
                     )
                 );
+                let account_email = if notification
+                    .auth_mode
+                    .is_some_and(AuthMode::has_chatgpt_account)
+                {
+                    let request_id =
+                        RequestId::String(format!("account-updated-read-{}", Uuid::new_v4()));
+                    match app_server_client
+                        .request_handle()
+                        .request_typed::<GetAccountResponse>(ClientRequest::GetAccount {
+                            request_id,
+                            params: GetAccountParams {
+                                refresh_token: false,
+                            },
+                        })
+                        .await
+                    {
+                        Ok(GetAccountResponse {
+                            account: Some(AppServerAccount::Chatgpt { email, .. }),
+                            ..
+                        }) => email,
+                        Ok(response) => {
+                            tracing::warn!(
+                                account = ?response.account,
+                                "account/read did not return the ChatGPT account from account/updated"
+                            );
+                            None
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "failed to refresh account identity after account/updated"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 self.chat_widget.update_account_state(
                     status_account_display_from_auth_mode(
                         notification.auth_mode,
                         notification.plan_type,
+                        account_email,
                     ),
                     notification.plan_type,
                     notification

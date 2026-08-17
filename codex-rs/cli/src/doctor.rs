@@ -1114,6 +1114,7 @@ where
 fn config_check(config: &Config) -> DoctorCheck {
     let mut details = Vec::new();
     details.push(format!("CODEX_HOME: {}", config.codex_home.display()));
+    details.push(format!("CODEX_AUTH_HOME: {}", config.auth_home.display()));
     details.push(format!("cwd: {}", config.cwd.display()));
     details.push(format!(
         "model: {}",
@@ -1209,7 +1210,7 @@ fn config_toml_details(config: &Config, details: &mut Vec<String>) {
 
 fn auth_check(config: &Config) -> DoctorCheck {
     let mut details = Vec::new();
-    let auth_path = config.codex_home.join("auth.json");
+    let auth_path = config.auth_home.join("auth.json");
     details.push(format!(
         "auth storage mode: {:?}",
         config.cli_auth_credentials_store_mode
@@ -1240,11 +1241,7 @@ fn auth_check(config: &Config) -> DoctorCheck {
         return check;
     }
 
-    match load_auth_dot_json(
-        &config.codex_home,
-        config.cli_auth_credentials_store_mode,
-        config.auth_keyring_backend_kind(),
-    ) {
+    match load_stored_auth(config) {
         Ok(Some(auth)) => {
             details.push(format!("stored auth mode: {}", stored_auth_mode(&auth)));
             details.push(format!("stored API key: {}", auth.openai_api_key.is_some()));
@@ -1305,9 +1302,18 @@ fn auth_check(config: &Config) -> DoctorCheck {
             CheckStatus::Fail,
             "stored credentials could not be read",
         )
+        .details(details)
         .detail(err.to_string())
         .remediation("Fix auth storage access or run codex login again."),
     }
+}
+
+fn load_stored_auth(config: &Config) -> std::io::Result<Option<AuthDotJson>> {
+    load_auth_dot_json(
+        &config.auth_home,
+        config.cli_auth_credentials_store_mode,
+        config.auth_keyring_backend_kind(),
+    )
 }
 
 fn provider_specific_auth_check(
@@ -2606,13 +2612,7 @@ impl ProviderAuthReachabilityMode {
 }
 
 fn provider_reachability_plan(config: &Config) -> ReachabilityPlan {
-    let stored_auth = load_auth_dot_json(
-        &config.codex_home,
-        config.cli_auth_credentials_store_mode,
-        config.auth_keyring_backend_kind(),
-    )
-    .ok()
-    .flatten();
+    let stored_auth = load_stored_auth(config).ok().flatten();
     let mode = provider_auth_reachability_mode_from_auth(
         config.model_provider.requires_openai_auth,
         env_var_present,
@@ -3133,7 +3133,9 @@ mod tests {
     use std::sync::Mutex;
 
     use clap::Parser;
+    use codex_config::types::AuthCredentialsStoreMode;
     use codex_protocol::config_types::SandboxMode;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -3274,6 +3276,62 @@ mod tests {
                 "startup warning plugins: 1",
                 "startup warning MCP: 1",
                 "startup warning deprecated: 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_checks_use_configured_auth_home() {
+        let codex_home = tempfile::tempdir().expect("create Codex home");
+        let auth_home = tempfile::tempdir().expect("create auth home");
+        std::fs::write(codex_home.path().join("auth.json"), "{invalid json")
+            .expect("write invalid shared auth");
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .build()
+            .await
+            .expect("build config");
+        config.auth_home =
+            AbsolutePathBuf::from_absolute_path(auth_home.path()).expect("absolute auth home");
+        config.cli_auth_credentials_store_mode = AuthCredentialsStoreMode::File;
+        codex_login::login_with_api_key(
+            auth_home.path(),
+            "sk-isolated",
+            config.cli_auth_credentials_store_mode,
+            config.auth_keyring_backend_kind(),
+        )
+        .expect("write isolated auth");
+
+        let auth = auth_check(&config);
+        let auth_details = auth
+            .details
+            .iter()
+            .filter(|detail| {
+                detail.starts_with("auth file:") || detail.starts_with("stored auth mode:")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            auth_details,
+            vec![
+                format!(
+                    "auth file: {}",
+                    auth_home.path().join("auth.json").display()
+                ),
+                "stored auth mode: api_key".to_string(),
+            ]
+        );
+
+        let config_details = config_check(&config)
+            .details
+            .into_iter()
+            .filter(|detail| detail.starts_with("CODEX_"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            config_details,
+            vec![
+                format!("CODEX_HOME: {}", codex_home.path().display()),
+                format!("CODEX_AUTH_HOME: {}", auth_home.path().display()),
             ]
         );
     }
