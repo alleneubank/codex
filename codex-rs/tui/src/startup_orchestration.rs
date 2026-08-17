@@ -63,7 +63,7 @@ pub(super) async fn run_main_inner(
     let raw_overrides = cli.config_overrides.raw_overrides.clone();
     // `oss` model provider.
     let overrides_cli = codex_utils_cli::CliConfigOverrides { raw_overrides };
-    let cli_kv_overrides = match overrides_cli.parse_overrides() {
+    let mut cli_kv_overrides = match overrides_cli.parse_overrides() {
         // Parse `-c` overrides from the CLI.
         Ok(v) => v,
         #[allow(clippy::print_stderr)]
@@ -408,6 +408,15 @@ pub(super) async fn run_main_inner(
     } else {
         None
     };
+    if let Some(provider_id) = model_provider_override.as_ref() {
+        // The embedded app server reloads configuration from CLI layers for account/read. Keep
+        // the resolved OSS provider in that layer so a fresh local-only home does not fall back to
+        // OpenAI auth during onboarding.
+        cli_kv_overrides.push((
+            "model_provider".to_string(),
+            toml::Value::String(provider_id.clone()),
+        ));
+    }
 
     // When using `--oss`, let the bootstrapper pick the model based on selected provider
     let model = if let Some(model) = &cli.model {
