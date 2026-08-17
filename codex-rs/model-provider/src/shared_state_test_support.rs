@@ -79,19 +79,19 @@ pub fn seed_gateway_auth(
         scopes: config.scopes,
         redirect_port: config.redirect_port,
     };
-    // Repeated fixtures sharing a Codex home must use the same encryption key.
+    // Repeated fixtures sharing an auth home must use the same encryption key.
     let keyring = Arc::new(TestKeyring(Mutex::new(Some(
         "gateway-test-passphrase".to_string(),
     ))));
     let secrets = SecretsManager::new_with_keyring_store_and_namespace(
-        runtime.codex_home.clone(),
+        runtime.auth_home.clone(),
         SecretsBackendKind::Local,
         keyring.clone(),
         LocalSecretsNamespace::GatewayOAuth,
     );
     // Match the credential identity used by GatewayAuthManager's encrypted store.
     let mut digest = Sha256::new();
-    digest.update(runtime.codex_home.to_string_lossy().as_bytes());
+    digest.update(runtime.auth_home.to_string_lossy().as_bytes());
     digest.update([0]);
     for value in [
         oauth.authorization_url.as_str(),
@@ -114,7 +114,7 @@ pub fn seed_gateway_auth(
     let manager = Arc::new(
         GatewayAuthManager::new(
             oauth.clone(),
-            runtime.codex_home.clone(),
+            runtime.auth_home.clone(),
             runtime.auth_route_config.http_client_factory(),
             keyring,
         )

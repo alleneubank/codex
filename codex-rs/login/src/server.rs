@@ -86,7 +86,7 @@ static LOGIN_ERROR_PAGE_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
 /// Options for launching the local login callback server.
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
-    pub codex_home: PathBuf,
+    pub auth_home: PathBuf,
     pub client_id: String,
     pub issuer: String,
     pub port: u16,
@@ -103,7 +103,7 @@ pub struct ServerOptions {
 impl ServerOptions {
     /// Creates a server configuration with the default issuer and port.
     pub fn new(
-        codex_home: PathBuf,
+        auth_home: PathBuf,
         client_id: String,
         forced_chatgpt_workspace_id: Option<Vec<String>>,
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
@@ -111,7 +111,7 @@ impl ServerOptions {
         auth_route_config: AuthRouteConfig,
     ) -> Self {
         Self {
-            codex_home,
+            auth_home,
             client_id,
             issuer: DEFAULT_ISSUER.to_string(),
             port: DEFAULT_PORT,
@@ -445,7 +445,7 @@ async fn process_request(
                             .await
                             .ok();
                     if let Err(err) = persist_tokens_async(
-                        &opts.codex_home,
+                        &opts.auth_home,
                         api_key.clone(),
                         tokens.id_token.clone(),
                         tokens.access_token.clone(),
@@ -831,7 +831,7 @@ async fn send_code_exchange_request(
 
 /// Persists exchanged credentials using the configured local auth store.
 pub(crate) async fn persist_tokens_async(
-    codex_home: &Path,
+    auth_home: &Path,
     api_key: Option<String>,
     id_token: String,
     access_token: String,
@@ -840,7 +840,7 @@ pub(crate) async fn persist_tokens_async(
     keyring_backend_kind: AuthKeyringBackendKind,
 ) -> io::Result<()> {
     // Reuse existing synchronous logic but run it off the async runtime.
-    let codex_home = codex_home.to_path_buf();
+    let auth_home = auth_home.to_path_buf();
     // Blocking tasks don't inherit task-local context.
     // Preserve the initiating client for credential-storage metrics.
     let originator = AuthStorageOriginator::current();
@@ -870,7 +870,7 @@ pub(crate) async fn persist_tokens_async(
                 bedrock_access_keys: None,
             };
             save_auth(
-                &codex_home,
+                &auth_home,
                 &auth,
                 auth_credentials_store_mode,
                 keyring_backend_kind,

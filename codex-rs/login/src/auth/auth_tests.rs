@@ -1822,6 +1822,7 @@ async fn build_config(
 ) -> AuthConfig {
     AuthConfig {
         codex_home: codex_home.to_path_buf(),
+        auth_home: codex_home.to_path_buf(),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method,
@@ -1830,6 +1831,28 @@ async fn build_config(
         chatgpt_base_url: None,
         auth_route_config: crate::test_support::transport_default_auth_route_config(),
     }
+}
+
+#[tokio::test]
+async fn runtime_config_preserves_operational_and_credential_homes() {
+    let codex_home = tempdir().unwrap();
+    let auth_home = tempdir().unwrap();
+    let mut config = build_config(
+        codex_home.path(),
+        /*forced_login_method*/ None,
+        /*forced_chatgpt_workspace_id*/ None,
+    )
+    .await;
+    config.auth_home = auth_home.path().to_path_buf();
+    let expected = AuthRuntimeConfig {
+        codex_home: config.codex_home.clone(),
+        auth_home: config.auth_home.clone(),
+        auth_route_config: config.auth_route_config.clone(),
+    };
+    let manager =
+        AuthManager::new_from_auth_config(config, /*enable_codex_api_key_env*/ false).await;
+
+    assert_eq!(manager.runtime_config(), expected);
 }
 
 /// Use sparingly.
@@ -1882,6 +1905,10 @@ impl AuthManagerConfig for TestAuthManagerConfig {
         self.0.codex_home.clone()
     }
 
+    fn auth_home(&self) -> PathBuf {
+        self.0.auth_home.clone()
+    }
+
     fn cli_auth_credentials_store_mode(&self) -> AuthCredentialsStoreMode {
         self.0.auth_credentials_store_mode
     }
@@ -1917,6 +1944,7 @@ impl AuthManagerConfig for TestAuthManagerConfig {
 fn test_auth_manager_config(codex_home: &Path) -> TestAuthManagerConfig {
     TestAuthManagerConfig(AuthConfig {
         codex_home: codex_home.to_path_buf(),
+        auth_home: codex_home.to_path_buf(),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method: Some(ForcedLoginMethod::Chatgpt),
@@ -2494,6 +2522,7 @@ async fn enforce_login_restrictions_logs_out_for_personal_access_token_workspace
 
     let config = AuthConfig {
         codex_home: codex_home.path().to_path_buf(),
+        auth_home: codex_home.path().to_path_buf(),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::default(),
         forced_login_method: None,
@@ -2620,6 +2649,7 @@ async fn enforce_login_restrictions_logs_out_for_agent_identity_workspace_mismat
 
     let config = AuthConfig {
         codex_home: codex_home.path().to_path_buf(),
+        auth_home: codex_home.path().to_path_buf(),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method: None,
