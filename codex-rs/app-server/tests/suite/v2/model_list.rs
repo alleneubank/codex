@@ -92,7 +92,7 @@ requires_openai_auth = true
         ),
     )?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -402,7 +402,7 @@ model_catalog_url = "{server_uri}/v1/models"
     )?;
     if let Some(api_key) = api_key {
         login_with_api_key(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             api_key,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),

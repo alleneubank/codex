@@ -40,7 +40,7 @@ async fn checks_current_provider_after_login_without_restart() -> Result<()> {
     let home = TempDir::new()?;
     std::fs::write(home.path().join("config.toml"), "")?;
     login_with_bedrock_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "test-key",
         "us-gov-west-1",
         AuthCredentialsStoreMode::File,
@@ -96,7 +96,7 @@ async fn checks_required_policy_fields_and_endpoint(
         format!("model_provider = '{provider}'\n{provider_config}\n"),
     )?;
     login_with_bedrock_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "test-key",
         "us-gov-west-1",
         AuthCredentialsStoreMode::File,
@@ -150,7 +150,7 @@ async fn check_preserves_current_login_when_saved_credentials_are_unreadable() -
         "model_provider = 'amazon-bedrock'\ncli_auth_credentials_store = 'file'\n",
     )?;
     login_with_bedrock_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "test-key",
         "us-gov-west-1",
         AuthCredentialsStoreMode::File,
@@ -197,7 +197,7 @@ async fn official_endpoint_takes_precedence_over_auth_region(
         ),
     )?;
     login_with_bedrock_api_key(
-        home.path(),
+        &codex_login::AuthHome::from_directory((home.path()).to_path_buf()),
         "test-key",
         auth_region,
         AuthCredentialsStoreMode::File,

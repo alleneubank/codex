@@ -175,7 +175,7 @@ async fn verification_without_a_connected_app_has_no_pending_callback() {
 async fn auth_manager(home: &std::path::Path) -> Arc<AuthManager> {
     let auth = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-        home.to_path_buf(),
+        codex_login::AuthHome::from_directory(home.to_path_buf()),
     );
     write_auth(home, "token-1", "account-1");
     reload_auth(&auth).await;

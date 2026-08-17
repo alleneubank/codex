@@ -9093,7 +9093,10 @@ where
     let state_db = None;
     let config = Arc::new(config);
     let thread_id = ThreadId::default();
-    let auth_manager = AuthManager::from_auth_for_testing_with_home(auth, codex_home.to_path_buf());
+    let auth_manager = AuthManager::from_auth_for_testing_with_home(
+        auth,
+        codex_login::AuthHome::from_directory(codex_home.to_path_buf()),
+    );
     let models_manager = models_manager_with_provider(
         config.codex_home.to_path_buf(),
         auth_manager.clone(),

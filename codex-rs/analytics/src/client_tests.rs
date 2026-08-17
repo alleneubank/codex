@@ -1151,12 +1151,18 @@ async fn account_switch_between_batches_does_not_send_old_credentials() {
     }))
     .unwrap();
     stored.last_refresh = Some(SystemTime::now().into());
-    codex_login::save_auth(&home, &stored, Store::File, Default::default()).unwrap();
+    codex_login::save_auth(
+        &codex_login::AuthHome::from_directory((&home).to_path_buf()),
+        &stored,
+        Store::File,
+        Default::default(),
+    )
+    .unwrap();
     let controller = NetworkPolicyController::default();
     let policy = controller.policy();
     let manager = Arc::new(
         codex_login::AuthManager::new(
-            home.clone(),
+            codex_login::AuthHome::from_directory(home.clone()),
             /*enable_codex_api_key_env*/ false,
             Store::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -1209,8 +1215,13 @@ async fn account_switch_between_batches_does_not_send_old_credentials() {
                 let tokens = stored.tokens.as_mut().unwrap();
                 tokens.account_id = Some("account-b".to_string());
                 tokens.access_token = "test-access-token-b".to_string();
-                codex_login::save_auth(&server_home, &stored, Store::File, Default::default())
-                    .unwrap();
+                codex_login::save_auth(
+                    &codex_login::AuthHome::from_directory((&server_home).to_path_buf()),
+                    &stored,
+                    Store::File,
+                    Default::default(),
+                )
+                .unwrap();
                 server_manager.reload().await;
                 assert!(controller.publish(policy.revision(), DestinationPolicy::Unrestricted));
             }

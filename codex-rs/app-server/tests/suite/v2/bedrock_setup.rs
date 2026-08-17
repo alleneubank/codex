@@ -201,7 +201,7 @@ async fn setup_bedrock_profile_and_environment() -> Result<()> {
     let managed_config_path = managed_home.path().join("config.toml");
     std::fs::write(&managed_config_path, "")?;
     login_with_bedrock_api_key(
-        managed_home.path(),
+        &codex_login::AuthHome::from_directory((managed_home.path()).to_path_buf()),
         "managed-bedrock-api-key",
         "us-east-1",
         AuthCredentialsStoreMode::File,

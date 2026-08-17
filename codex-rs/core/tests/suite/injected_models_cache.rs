@@ -303,7 +303,7 @@ async fn account_switch_during_cache_store_preserves_new_catalog_for_next_turn()
     let initial_auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
     let auth = AuthManager::from_auth_for_testing_with_home(
         initial_auth.clone(),
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
     );
     let mut provider_info = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
     provider_info.base_url = Some(format!("{}/v1", server.uri()));

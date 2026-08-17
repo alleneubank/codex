@@ -62,10 +62,12 @@ fn bedrock_api_key_debug_redacts_secret() {
 #[serial(codex_auth_env)]
 async fn login_with_bedrock_api_key_replaces_openai_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     storage.save(&api_key_auth())?;
     login_with_bedrock_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "bedrock-api-key-test",
         "us-east-1",
         AuthCredentialsStoreMode::File,
@@ -73,7 +75,7 @@ async fn login_with_bedrock_api_key_replaces_openai_auth() -> anyhow::Result<()>
     )?;
 
     let auth_manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -116,16 +118,18 @@ async fn login_with_bedrock_api_key_replaces_openai_auth() -> anyhow::Result<()>
 #[serial(codex_auth_env)]
 async fn logout_removes_bedrock_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     login_with_bedrock_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "bedrock-api-key-test",
         "us-east-1",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )?;
     let auth_manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -146,9 +150,11 @@ async fn logout_removes_bedrock_auth() -> anyhow::Result<()> {
 #[serial(codex_auth_env)]
 async fn access_keys_auth_round_trips_and_logs_out() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     crate::auth::login_with_bedrock_access_keys(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "access-key-id",
         "secret-access-key",
         Some("session-token"),
@@ -156,7 +162,7 @@ async fn access_keys_auth_round_trips_and_logs_out() -> anyhow::Result<()> {
         AuthKeyringBackendKind::default(),
     )?;
     let auth_manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         Some(vec!["allowed-workspace".to_string()]),
@@ -200,11 +206,13 @@ async fn access_keys_auth_round_trips_and_logs_out() -> anyhow::Result<()> {
 #[serial(codex_auth_env)]
 async fn bedrock_only_auth_storage_creates_primary_auth() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     storage.save(&bedrock_only_auth())?;
 
     let auth_manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -234,9 +242,11 @@ async fn bedrock_only_auth_storage_creates_primary_auth() -> anyhow::Result<()> 
 #[tokio::test]
 async fn login_with_api_key_clears_bedrock_api_key() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     login_with_bedrock_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "bedrock-api-key-test",
         "us-east-1",
         AuthCredentialsStoreMode::File,
@@ -244,7 +254,7 @@ async fn login_with_api_key_clears_bedrock_api_key() -> anyhow::Result<()> {
     )?;
 
     crate::auth::login_with_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

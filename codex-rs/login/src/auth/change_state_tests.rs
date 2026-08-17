@@ -70,8 +70,10 @@ fn auth_owner_generation_distinguishes_refreshes_from_identity_changes() {
 async fn auth_owner_generation_preserves_logout_and_switches_when_coalesced() {
     let home = tempfile::tempdir().unwrap();
     let initial = chatgpt_auth("user-a", "workspace-a", "token-1");
-    let manager =
-        AuthManager::from_auth_for_testing_with_home(initial.clone(), home.path().to_path_buf());
+    let manager = AuthManager::from_auth_for_testing_with_home(
+        initial.clone(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
+    );
     let mut changes = manager.auth_change_state_receiver();
 
     let generation = changes.borrow().generation;

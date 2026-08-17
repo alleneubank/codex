@@ -128,7 +128,7 @@ fn api_key_replacement_and_logout_retire_the_previous_source() {
 async fn legacy_identity_persistence_does_not_reload_credentials() -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     let storage = create_auth_storage(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::Direct,
     );
@@ -139,7 +139,7 @@ async fn legacy_identity_persistence_does_not_reload_credentials() -> anyhow::Re
     stored.last_refresh = Some(chrono::Utc::now());
     storage.save(&stored)?;
     let manager = AuthManager::shared(
-        home.path().to_path_buf(),
+        crate::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,

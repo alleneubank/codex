@@ -1706,7 +1706,7 @@ enabled = true
             TargetAuth::Chatgpt => Some(AuthMode::Chatgpt),
             TargetAuth::ApiKey => {
                 codex_login::login_with_api_key(
-                    codex_home.path(),
+                    &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
                     "test-api-key",
                     codex_login::AuthCredentialsStoreMode::File,
                     codex_login::AuthKeyringBackendKind::default(),
@@ -1716,7 +1716,7 @@ enabled = true
             }
             TargetAuth::BedrockApiKey => {
                 codex_login::login_with_bedrock_api_key(
-                    codex_home.path(),
+                    &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
                     "test-bedrock-api-key",
                     "us-east-1",
                     codex_login::AuthCredentialsStoreMode::File,

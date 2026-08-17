@@ -184,7 +184,7 @@ fn read_config_toml(codex_home: &Path) -> Result<toml::Value> {
 
 fn load_file_auth(codex_home: &Path) -> Result<Option<AuthDotJson>> {
     Ok(load_auth_dot_json(
-        codex_home,
+        &codex_login::AuthHome::from_directory((codex_home).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )?)
@@ -324,7 +324,7 @@ async fn logout_account_removes_auth_and_notifies(enterprise_cleanup_failure: bo
         std::fs::write(codex_home.path().join("mcp-oauth-locks"), "not a directory")?;
     } else {
         login_with_api_key(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             "sk-test-key",
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -382,7 +382,7 @@ async fn logout_account_succeeds_when_config_reload_fails() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1184,11 +1184,14 @@ async fn external_auth_refresh_invalid_access_token_fails_turn() -> Result<()> {
 #[tokio::test]
 async fn login_account_api_key_succeeds_and_notifies() -> Result<()> {
     let codex_home = TempDir::new()?;
+    let auth_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
+    let auth_home_env = auth_home.path().to_string_lossy();
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
+        .with_env_overrides(&[("CODEX_AUTH_HOME", Some(auth_home_env.as_ref()))])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -1224,7 +1227,8 @@ async fn login_account_api_key_succeeds_and_notifies() -> Result<()> {
     pretty_assertions::assert_eq!(payload.auth_mode, Some(AuthMode::ApiKey));
     pretty_assertions::assert_eq!(payload.plan_type, None);
 
-    assert!(codex_home.path().join("auth.json").exists());
+    assert!(!codex_home.path().join("auth.json").exists());
+    assert!(auth_home.path().join("auth.json").exists());
     Ok(())
 }
 
@@ -1251,7 +1255,7 @@ async fn login_amazon_bedrock_replaces_primary_auth_and_persists_provider(
         ),
     )?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1404,7 +1408,7 @@ async fn login_amazon_bedrock_rejects_non_bedrock_provider_override_without_chan
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1466,7 +1470,7 @@ async fn login_amazon_bedrock_access_keys_rejects_overridden_aws_configuration()
         let codex_home = TempDir::new()?;
         create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
         login_with_api_key(
-            codex_home.path(),
+            &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             "sk-test-key",
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -1685,7 +1689,7 @@ async fn logout_aws_managed_bedrock_clears_provider_and_restores_default_account
         std::fs::write(&aws_credentials_path, aws_credentials)?;
         if managed_bedrock_auth {
             login_with_bedrock_api_key(
-                codex_home.path(),
+                &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
                 "managed-bedrock-api-key",
                 "us-east-1",
                 AuthCredentialsStoreMode::File,
@@ -1693,7 +1697,7 @@ async fn logout_aws_managed_bedrock_clears_provider_and_restores_default_account
             )?;
         } else {
             login_with_api_key(
-                codex_home.path(),
+                &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
                 "sk-test-key",
                 AuthCredentialsStoreMode::File,
                 AuthKeyringBackendKind::default(),
@@ -1772,7 +1776,7 @@ async fn logout_managed_bedrock_preserves_changed_provider_without_experimental_
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), aws_managed_bedrock_config())?;
     login_with_bedrock_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "managed-bedrock-api-key",
         "us-west-2",
         AuthCredentialsStoreMode::File,
@@ -1877,12 +1881,17 @@ async fn managed_bedrock_login_requires_experimental_api() -> Result<()> {
 #[tokio::test]
 async fn login_managed_bedrock_updates_active_bedrock_account() -> Result<()> {
     let codex_home = TempDir::new()?;
+    let auth_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
+    let auth_home_env = auth_home.path().to_string_lossy();
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[
+            ("CODEX_AUTH_HOME", Some(auth_home_env.as_ref())),
+            ("OPENAI_API_KEY", None),
+        ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let request_id = mcp
@@ -1914,7 +1923,8 @@ async fn login_managed_bedrock_updates_active_bedrock_account() -> Result<()> {
         }
     );
 
-    assert!(codex_home.path().join("auth.json").exists());
+    assert!(!codex_home.path().join("auth.json").exists());
+    assert!(auth_home.path().join("auth.json").exists());
     Ok(())
 }
 
@@ -2193,6 +2203,7 @@ async fn login_account_chatgpt_device_code_returns_error_when_disabled() -> Resu
 #[tokio::test]
 async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()> {
     let codex_home = TempDir::new()?;
+    let auth_home = TempDir::new()?;
     let mock_server = MockServer::start().await;
     create_config_toml(
         codex_home.path(),
@@ -2216,11 +2227,13 @@ async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()>
     mock_oauth_token(&mock_server, &id_token).await;
 
     let issuer = mock_server.uri();
+    let auth_home_env = auth_home.path().to_string_lossy();
     let mut mcp = TestAppServer::builder()
         .with_mock_chatgpt_backend()
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
+            ("CODEX_AUTH_HOME", Some(auth_home_env.as_ref())),
             ("OPENAI_API_KEY", None),
             ("OTEL_METRIC_EXPORT_INTERVAL", Some("200")),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
@@ -2273,8 +2286,12 @@ async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()>
     assert_eq!(payload.auth_mode, Some(AuthMode::Chatgpt));
     assert_eq!(payload.plan_type, Some(AccountPlanType::Pro));
     assert!(
-        codex_home.path().join("auth.json").exists(),
-        "auth.json should be created when device code login succeeds"
+        !codex_home.path().join("auth.json").exists(),
+        "shared auth.json should not be created when CODEX_AUTH_HOME is set"
+    );
+    assert!(
+        auth_home.path().join("auth.json").exists(),
+        "auth.json should be created in CODEX_AUTH_HOME when device code login succeeds"
     );
     super::auth_storage_originator::assert_saved_originators(&collector, &["codex_vscode"]).await?;
     Ok(())
@@ -2850,6 +2867,7 @@ async fn login_account_chatgpt_uses_oauth_overrides() -> Result<()> {
 #[serial(login_port)]
 async fn login_account_chatgpt_redirects_to_hosted_success_page() -> Result<()> {
     let codex_home = TempDir::new()?;
+    let auth_home = TempDir::new()?;
     create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
     let mock_server = MockServer::start().await;
     let id_token = encode_id_token(
@@ -2860,11 +2878,13 @@ async fn login_account_chatgpt_redirects_to_hosted_success_page() -> Result<()> 
     )?;
     mock_oauth_token(&mock_server, &id_token).await;
     let issuer = mock_server.uri();
+    let auth_home_env = auth_home.path().to_string_lossy();
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
+            ("CODEX_AUTH_HOME", Some(auth_home_env.as_ref())),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
             (
                 LOGIN_OPEN_APP_URL_ENV_VAR,
@@ -2943,6 +2963,20 @@ async fn login_account_chatgpt_redirects_to_hosted_success_page() -> Result<()> 
             onboarding_entrypoint: Some(DesktopOnboardingEntrypoint::LifeSciences),
         }
     );
+    let account_updated: AccountUpdatedNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_notification("account/updated"),
+    )
+    .await??;
+    assert_eq!(
+        account_updated,
+        AccountUpdatedNotification {
+            auth_mode: Some(AuthMode::Chatgpt),
+            plan_type: Some(AccountPlanType::Pro),
+        }
+    );
+    assert!(!codex_home.path().join("auth.json").exists());
+    assert!(auth_home.path().join("auth.json").exists());
     Ok(())
 }
 
@@ -3340,7 +3374,7 @@ async fn get_account_with_managed_bedrock_provider() -> Result<()> {
         },
     )?;
     login_with_bedrock_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "managed-bedrock-api-key",
         "us-west-2",
         AuthCredentialsStoreMode::File,

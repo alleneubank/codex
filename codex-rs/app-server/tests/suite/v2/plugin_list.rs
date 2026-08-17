@@ -3205,7 +3205,7 @@ async fn plugin_list_skips_openai_curated_remote_collection_for_api_auth_when_re
         &format!("{}/backend-api/", server.uri()),
     )?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -3243,7 +3243,7 @@ async fn plugin_list_includes_api_curated_marketplace_for_api_auth_when_remote_p
     )?;
     write_openai_api_curated_marketplace(codex_home.path(), &["api-plugin"])?;
     login_with_api_key(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test-key",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

@@ -58,7 +58,7 @@ async fn bootstrap_discovery_survives_identity_installation_but_account_access_i
             .parse()?;
     let content_url = "https://chatgpt.com/backend-api/codex/responses".parse()?;
     let manager = AuthManager::new(
-        home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::Ephemeral,
         /*forced_chatgpt_workspace_id*/ None,

@@ -193,14 +193,14 @@ async fn list_remote_control_clients_recovers_auth_after_unauthorized() {
         .expect("stale auth should include tokens")
         .access_token = "stale-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &stale_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .expect("stale auth should save");
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -216,7 +216,7 @@ async fn list_remote_control_clients_recovers_auth_after_unauthorized() {
         .expect("fresh auth should include tokens")
         .access_token = "fresh-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &fresh_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -291,14 +291,14 @@ async fn list_remote_control_clients_retries_unauthorized_only_once() {
         .expect("stale auth should include tokens")
         .access_token = "stale-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &stale_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .expect("stale auth should save");
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -314,7 +314,7 @@ async fn list_remote_control_clients_retries_unauthorized_only_once() {
         .expect("fresh auth should include tokens")
         .access_token = "fresh-token".to_string();
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &fresh_auth,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

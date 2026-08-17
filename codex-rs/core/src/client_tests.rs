@@ -292,7 +292,10 @@ impl ModelProvider for SetupRefreshProvider {
                     workspace,
                 } => {
                     codex_login::auth::login_with_chatgpt_auth_tokens(
-                        home, token, workspace, /*chatgpt_plan_type*/ None,
+                        &codex_login::AuthHome::from_directory((home).to_path_buf()),
+                        token,
+                        workspace,
+                        /*chatgpt_plan_type*/ None,
                     )?;
                     manager.reload().await;
                 }
@@ -386,8 +389,10 @@ async fn client_setup_rebuilds_chatgpt_refresh_but_rejects_account_switches() {
             /*chatgpt_plan_type*/ None,
         )
         .unwrap();
-        let manager =
-            AuthManager::from_auth_for_testing_with_home(initial, home.path().to_path_buf());
+        let manager = AuthManager::from_auth_for_testing_with_home(
+            initial,
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
+        );
         let refreshed_token = token(user, "refreshed");
         let mut info = test_model_provider().info().clone();
         info.requires_openai_auth = true;

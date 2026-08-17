@@ -126,8 +126,10 @@ impl Fixture {
             "account",
             /*chatgpt_plan_type*/ None,
         )?;
-        let auth =
-            AuthManager::from_auth_for_testing_with_home(auth_value.clone(), home.path().into());
+        let auth = AuthManager::from_auth_for_testing_with_home(
+            auth_value.clone(),
+            codex_login::AuthHome::from_directory(home.path().to_path_buf()),
+        );
         let config = ConfigBuilder::default()
             .codex_home(home.path().into())
             .fallback_cwd(Some(home.path().into()))

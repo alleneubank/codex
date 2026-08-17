@@ -1310,7 +1310,7 @@ async fn remote_control_start_allows_missing_auth_when_enabled() {
     let remote_control_url = remote_control_url_for_listener(&listener);
     let codex_home = TempDir::new().expect("temp dir should create");
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -2163,7 +2163,7 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
     let remote_control_url = remote_control_url_for_listener(&listener);
     let codex_home = TempDir::new().expect("temp dir should create");
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(/*account_id*/ None),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2171,7 +2171,7 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
     .expect("auth without account id should save");
     let state_db = remote_control_state_runtime(&codex_home).await;
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -2218,7 +2218,7 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
         .expect_err("remote control should wait for account id before enrolling");
 
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("account_id")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2261,7 +2261,7 @@ async fn persisted_enable_does_not_follow_auth_to_an_account_without_a_preferenc
     let remote_control_url = remote_control_url_for_listener(&listener);
     let codex_home = TempDir::new().expect("temp dir should create");
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("account_a")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2269,7 +2269,7 @@ async fn persisted_enable_does_not_follow_auth_to_an_account_without_a_preferenc
     .expect("account A auth should save");
     let state_db = remote_control_state_runtime(&codex_home).await;
     let auth_manager = AuthManager::shared(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -2338,7 +2338,7 @@ async fn persisted_enable_does_not_follow_auth_to_an_account_without_a_preferenc
         accept_remote_control_backend_connection(&listener).await;
 
     save_auth(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &remote_control_auth_dot_json(Some("account_b")),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),

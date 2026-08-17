@@ -108,7 +108,7 @@ fn server_opts(
     cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
 ) -> ServerOptions {
     let mut opts = ServerOptions::new(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         "client-id".to_string(),
         /*forced_chatgpt_workspace_id*/ None,
         cli_auth_credentials_store_mode,
@@ -152,7 +152,7 @@ async fn device_code_login_integration_succeeds() -> anyhow::Result<()> {
         .expect("device code login integration should succeed");
 
     let auth = load_auth_dot_json(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
@@ -214,7 +214,7 @@ async fn device_code_login_rejects_workspace_mismatch() -> anyhow::Result<()> {
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
 
     let auth = load_auth_dot_json(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
@@ -249,7 +249,7 @@ async fn device_code_login_integration_handles_usercode_http_failure() -> anyhow
     );
 
     let auth = load_auth_dot_json(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
@@ -286,7 +286,7 @@ async fn device_code_login_integration_persists_without_api_key_on_exchange_fail
     let issuer = mock_server.uri();
 
     let mut opts = ServerOptions::new(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         "client-id".to_string(),
         /*forced_chatgpt_workspace_id*/ None,
         AuthCredentialsStoreMode::File,
@@ -301,7 +301,7 @@ async fn device_code_login_integration_persists_without_api_key_on_exchange_fail
         .expect("device login should succeed without API key exchange");
 
     let auth = load_auth_dot_json(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
@@ -342,7 +342,7 @@ async fn device_code_login_integration_handles_error_payload() -> anyhow::Result
     let issuer = mock_server.uri();
 
     let mut opts = ServerOptions::new(
-        codex_home.path().to_path_buf(),
+        codex_login::AuthHome::from_directory(codex_home.path().to_path_buf()),
         "client-id".to_string(),
         /*forced_chatgpt_workspace_id*/ None,
         AuthCredentialsStoreMode::File,
@@ -363,7 +363,7 @@ async fn device_code_login_integration_handles_error_payload() -> anyhow::Result
     );
 
     let auth = load_auth_dot_json(
-        codex_home.path(),
+        &codex_login::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )

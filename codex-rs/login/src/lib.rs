@@ -87,6 +87,7 @@ pub use oauth_session::OAuthSessionStatus as GatewayAuthStatus;
 pub use oauth_session::OAuthSessionStatusChange as GatewayAuthStatusChange;
 pub use oauth_session::subscribe_oauth_session_status as subscribe_gateway_auth_status;
 
+pub use codex_utils_home_dir::AuthHome;
 pub use oauth_session::OAuthLoginControl;
 pub use oauth_session::OAuthRequestCredentials;
 pub use oauth_session::OAuthSessionConfig;

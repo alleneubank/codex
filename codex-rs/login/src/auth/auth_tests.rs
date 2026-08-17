@@ -17,6 +17,7 @@ use codex_protocol::shell_environment::OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR;
 use pretty_assertions::assert_eq;
 use serde::Serialize;
 use serde_json::json;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -72,7 +73,7 @@ async fn refresh_without_id_token() -> anyhow::Result<()> {
     )?;
 
     let storage = create_auth_storage(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
@@ -154,14 +155,14 @@ fn login_with_api_key_overwrites_existing_auth_json() {
     .unwrap();
 
     super::login_with_api_key(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         "sk-new",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )
     .expect("login_with_api_key should succeed");
 
-    let storage = FileAuthStorage::new(dir.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(dir.path().to_path_buf()));
     let auth = storage
         .try_read_auth_json(&auth_path)
         .expect("auth.json should parse");
@@ -188,7 +189,7 @@ async fn login_with_access_token_writes_agent_identity_jwt() {
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
 
     super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         &agent_identity,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -199,7 +200,7 @@ async fn login_with_access_token_writes_agent_identity_jwt() {
     .await
     .expect("login_with_access_token should succeed");
 
-    let storage = FileAuthStorage::new(dir.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(dir.path().to_path_buf()));
     let auth = storage
         .try_read_auth_json(&auth_path)
         .expect("auth.json should parse");
@@ -224,7 +225,7 @@ async fn login_with_access_token_rejects_agent_identity_workspace_mismatch() {
     let allowed_workspaces = [WORKSPACE_ID_ALLOWED.to_string()];
 
     let err = super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         &agent_identity,
         AuthCredentialsStoreMode::File,
         Some(&allowed_workspaces),
@@ -405,7 +406,7 @@ async fn stored_agent_identity_jwt_keeps_auth_json_unchanged() -> anyhow::Result
     let authapi_base_url = server.uri();
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
     save_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &AuthDotJson {
             auth_mode: Some(AuthMode::AgentIdentity),
             openai_api_key: None,
@@ -421,7 +422,7 @@ async fn stored_agent_identity_jwt_keeps_auth_json_unchanged() -> anyhow::Result
     )?;
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -438,7 +439,9 @@ async fn stored_agent_identity_jwt_keeps_auth_json_unchanged() -> anyhow::Result
         panic!("stored JWT should load as agent identity auth");
     };
     assert_eq!(agent_identity_auth.run_task_id(), "task-id");
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth = storage
         .try_read_auth_json(&get_auth_file(codex_home.path()))
         .expect("auth.json should parse");
@@ -469,7 +472,7 @@ async fn login_with_access_token_writes_only_personal_access_token() {
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
     let allowed_workspaces = [WORKSPACE_ID_ALLOWED.to_string()];
     super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         "at-login-test",
         AuthCredentialsStoreMode::File,
         Some(&allowed_workspaces),
@@ -480,7 +483,7 @@ async fn login_with_access_token_writes_only_personal_access_token() {
     .await
     .expect("personal access token login should succeed");
 
-    let storage = FileAuthStorage::new(dir.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(dir.path().to_path_buf()));
     let auth = storage
         .try_read_auth_json(&auth_path)
         .expect("auth.json should parse");
@@ -523,7 +526,7 @@ async fn login_with_access_token_rejects_personal_access_token_workspace_mismatc
     let allowed_workspaces = [WORKSPACE_ID_ALLOWED.to_string()];
 
     let err = super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         "at-workspace-mismatch",
         AuthCredentialsStoreMode::File,
         Some(&allowed_workspaces),
@@ -556,7 +559,7 @@ async fn login_with_access_token_rejects_invalid_personal_access_token() {
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
 
     let err = super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         "at-invalid-login",
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -580,7 +583,7 @@ async fn login_with_access_token_rejects_invalid_jwt() {
     let dir = tempdir().unwrap();
 
     let err = super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         "not-a-jwt",
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -610,12 +613,14 @@ async fn chatgpt_auth_registers_agent_identity_when_enabled() -> anyhow::Result<
         },
         codex_home.path(),
     )?;
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let mut stored = storage.load()?.expect("auth should exist");
     stored.tokens.as_mut().unwrap().login_owner_id = Some("login-a".into());
     storage.save(&stored)?;
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -704,7 +709,7 @@ async fn chatgpt_auth_registers_agent_identity_when_enabled() -> anyhow::Result<
     assert_eq!(storage.load()?, Some(stored));
 
     let reloaded = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -747,7 +752,7 @@ async fn chatgpt_auth_retries_transient_agent_identity_registration() -> anyhow:
         codex_home.path(),
     )?;
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -814,7 +819,7 @@ async fn chatgpt_auth_registration_retry_exhaustion_is_fallback_eligible() -> an
         codex_home.path(),
     )?;
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -870,13 +875,15 @@ async fn chatgpt_auth_task_registration_retry_exhaustion_is_fallback_eligible() 
     let mut record = agent_identity_record("account-123");
     record.chatgpt_user_id = "user-12345".to_string();
     record.email = Some("user@example.com".to_string());
-    let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+    let storage = FileAuthStorage::new(crate::AuthHome::from_directory(
+        codex_home.path().to_path_buf(),
+    ));
     let auth_path = get_auth_file(codex_home.path());
     let mut auth_json = storage.try_read_auth_json(&auth_path)?;
     auth_json.agent_identity = Some(AgentIdentityStorage::Record(record.clone()));
     storage.save(&auth_json)?;
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -933,7 +940,7 @@ async fn chatgpt_auth_non_retryable_registration_error_is_hard_failure() -> anyh
         codex_home.path(),
     )?;
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -1028,7 +1035,7 @@ async fn login_with_access_token_rejects_unsigned_jwt() {
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
 
     super::login_with_access_token(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         &agent_identity,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -1052,7 +1059,7 @@ async fn missing_auth_json_returns_none() {
     let dir = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
     let auth = CodexAuth::from_auth_storage(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         /*chatgpt_base_url*/ None,
         AuthKeyringBackendKind::default(),
@@ -1079,7 +1086,7 @@ async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -1145,7 +1152,7 @@ async fn loads_api_key_from_auth_json() {
     .unwrap();
 
     let auth = super::load_auth(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -1178,7 +1185,7 @@ fn logout_removes_auth_file() -> Result<(), std::io::Error> {
         bedrock_access_keys: None,
     };
     super::save_auth(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         &auth_dot_json,
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -1186,7 +1193,7 @@ fn logout_removes_auth_file() -> Result<(), std::io::Error> {
     let auth_file = get_auth_file(dir.path());
     assert!(auth_file.exists());
     assert!(logout(
-        dir.path(),
+        &crate::AuthHome::from_directory((dir.path()).to_path_buf()),
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     )?);
@@ -1199,7 +1206,7 @@ fn logout_removes_auth_file() -> Result<(), std::io::Error> {
 async fn unauthorized_recovery_reports_mode_and_step_names() {
     let dir = tempdir().unwrap();
     let manager = AuthManager::shared(
-        dir.path().to_path_buf(),
+        crate::AuthHome::from_directory(dir.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -1243,7 +1250,7 @@ async fn refresh_failure_is_scoped_to_the_matching_auth_snapshot() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -1266,7 +1273,7 @@ async fn refresh_failure_is_scoped_to_the_matching_auth_snapshot() {
     updated_tokens.access_token = "new-access-token".to_string();
     updated_tokens.refresh_token = "new-refresh-token".to_string();
     let updated_auth = CodexAuth::from_auth_dot_json(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         updated_auth_dot_json,
         AuthCredentialsStoreMode::File,
         /*chatgpt_base_url*/ None,
@@ -1560,7 +1567,7 @@ async fn external_auth_provider_can_install_headers() {
     let auth = CodexAuth::Headers(AuthHeaders::new(headers));
     let codex_home = tempdir().expect("tempdir");
     let manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::Ephemeral,
         /*forced_chatgpt_workspace_id*/ None,
@@ -1636,7 +1643,7 @@ async fn workload_identity_auth_is_immutable_and_process_local() {
     let codex_home = tempdir().expect("tempdir");
     let mut manager = AuthManager::from_auth_for_testing_with_home(
         CodexAuth::from_api_key("seed"),
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
     );
     Arc::get_mut(&mut manager)
         .expect("test manager should not be shared yet")
@@ -1676,7 +1683,7 @@ async fn workload_identity_auth_is_immutable_and_process_local() {
 
     assert!(!get_auth_file(codex_home.path()).exists());
     let ephemeral_storage = create_auth_storage(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         AuthCredentialsStoreMode::Ephemeral,
         AuthKeyringBackendKind::default(),
     );
@@ -1878,6 +1885,7 @@ async fn build_config(
 ) -> AuthConfig {
     AuthConfig {
         codex_home: codex_home.to_path_buf(),
+        auth_home: crate::AuthHome::from_directory(codex_home.to_path_buf()),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method,
@@ -1886,6 +1894,60 @@ async fn build_config(
         chatgpt_base_url: None,
         auth_route_config: crate::test_support::transport_default_auth_route_config(),
     }
+}
+
+#[tokio::test]
+async fn runtime_config_preserves_operational_and_credential_homes() {
+    let codex_home = tempdir().unwrap();
+    let auth_home = tempdir().unwrap();
+    let mut config = build_config(
+        codex_home.path(),
+        /*forced_login_method*/ None,
+        /*forced_chatgpt_workspace_id*/ None,
+    )
+    .await;
+    config.auth_home = AuthHome::from_directory(auth_home.path().to_path_buf());
+    let expected = AuthRuntimeConfig {
+        codex_home: config.codex_home.clone(),
+        auth_home: config.auth_home.clone(),
+        auth_route_config: config.auth_route_config.clone(),
+    };
+    let manager =
+        AuthManager::new_from_auth_config(config, /*enable_codex_api_key_env*/ false).await;
+
+    assert_eq!(manager.runtime_config(), expected);
+}
+
+#[tokio::test]
+async fn account_grant_reads_selected_credential_home() -> anyhow::Result<()> {
+    let codex_home = tempdir()?;
+    let auth_home = tempdir()?;
+    for (directory, account_id) in [
+        (codex_home.path(), "operational-account"),
+        (auth_home.path(), "credential-account"),
+    ] {
+        write_auth_file(
+            AuthFileParams {
+                openai_api_key: None,
+                chatgpt_plan_type: Some("pro".to_string()),
+                chatgpt_account_id: Some(account_id.to_string()),
+            },
+            directory,
+        )?;
+        let path = directory.join("auth.json");
+        let mut stored: AuthDotJson = serde_json::from_slice(&std::fs::read(&path)?)?;
+        stored.tokens.as_mut().context("fixture tokens")?.account_id = Some(account_id.to_string());
+        std::fs::write(path, serde_json::to_vec(&stored)?)?;
+    }
+    let mut config = build_config(codex_home.path(), None, None).await;
+    config.auth_home = AuthHome::from_directory(auth_home.path().to_path_buf());
+    let manager = AuthManager::new_from_auth_config(config, false).await;
+    let grant = manager
+        .read_persisted_account_tokens()
+        .await?
+        .context("stored account grant")?;
+    assert_eq!(grant.account_id.as_deref(), Some("credential-account"));
+    Ok(())
 }
 
 /// Use sparingly.
@@ -1938,6 +2000,10 @@ impl AuthManagerConfig for TestAuthManagerConfig {
         self.0.codex_home.clone()
     }
 
+    fn auth_home(&self) -> crate::AuthHome {
+        self.0.auth_home.clone()
+    }
+
     fn cli_auth_credentials_store_mode(&self) -> AuthCredentialsStoreMode {
         self.0.auth_credentials_store_mode
     }
@@ -1973,6 +2039,7 @@ impl AuthManagerConfig for TestAuthManagerConfig {
 fn test_auth_manager_config(codex_home: &Path) -> TestAuthManagerConfig {
     TestAuthManagerConfig(AuthConfig {
         codex_home: codex_home.to_path_buf(),
+        auth_home: crate::AuthHome::from_directory(codex_home.to_path_buf()),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method: Some(ForcedLoginMethod::Chatgpt),
@@ -2048,7 +2115,7 @@ async fn load_auth_reads_access_token_from_env() {
     let authapi_base_url = server.uri();
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -2097,7 +2164,7 @@ async fn load_auth_reads_personal_access_token_from_env() {
         AuthCredentialsStoreMode::Ephemeral,
     ] {
         let auth = super::load_auth(
-            codex_home.path(),
+            &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             auth_credentials_store_mode,
             /*allowed_login_methods*/ None,
@@ -2153,7 +2220,7 @@ async fn auth_manager_rejects_env_personal_access_token_workspace_mismatch() {
         EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-env-workspace-mismatch");
 
     let manager = AuthManager::new(
-        codex_home.path().to_path_buf(),
+        crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
@@ -2193,7 +2260,7 @@ async fn auth_manager_rejects_stored_personal_access_token_workspace_mismatch() 
     ] {
         let codex_home = tempdir().unwrap();
         super::login_with_access_token(
-            codex_home.path(),
+            &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             "at-stored-workspace-mismatch",
             auth_credentials_store_mode,
             /*forced_chatgpt_workspace_id*/ None,
@@ -2205,7 +2272,7 @@ async fn auth_manager_rejects_stored_personal_access_token_workspace_mismatch() 
         .expect("personal access token login should succeed");
 
         let manager = AuthManager::new(
-            codex_home.path().to_path_buf(),
+            crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             auth_credentials_store_mode,
             Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
@@ -2239,7 +2306,7 @@ async fn personal_access_token_does_not_offer_unauthorized_recovery() {
         EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-no-unauthorized-recovery");
     let manager = Arc::new(
         AuthManager::new(
-            codex_home.path().to_path_buf(),
+            crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
             /*enable_codex_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             /*forced_chatgpt_workspace_id*/ None,
@@ -2271,7 +2338,7 @@ async fn load_auth_keeps_codex_api_key_env_precedence() {
     let _api_key_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-env");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ true,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -2294,7 +2361,7 @@ async fn enforce_login_restrictions_logs_out_for_method_mismatch() {
     let codex_home = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
     login_with_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2324,7 +2391,7 @@ async fn auth_manager_rejects_disallowed_stored_and_external_auth() {
     let codex_home = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
     login_with_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2416,7 +2483,7 @@ async fn workspace_policy_rejects_agent_identity_before_hydration() {
         AgentIdentityStorage::Record(record),
     ] {
         save_auth(
-            codex_home.path(),
+            &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
             &AuthDotJson {
                 auth_mode: Some(AuthMode::AgentIdentity),
                 openai_api_key: None,
@@ -2537,7 +2604,7 @@ async fn enforce_login_restrictions_logs_out_for_personal_access_token_workspace
     let _access_token_guard = remove_access_token_env_var();
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
     super::login_with_access_token(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "at-workspace-mismatch",
         AuthCredentialsStoreMode::File,
         /*forced_chatgpt_workspace_id*/ None,
@@ -2550,6 +2617,7 @@ async fn enforce_login_restrictions_logs_out_for_personal_access_token_workspace
 
     let config = AuthConfig {
         codex_home: codex_home.path().to_path_buf(),
+        auth_home: crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::default(),
         forced_login_method: None,
@@ -2658,7 +2726,7 @@ async fn enforce_login_restrictions_logs_out_for_agent_identity_workspace_mismat
     let authapi_base_url = server.uri();
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
     save_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         &AuthDotJson {
             auth_mode: Some(AuthMode::AgentIdentity),
             openai_api_key: None,
@@ -2676,6 +2744,7 @@ async fn enforce_login_restrictions_logs_out_for_agent_identity_workspace_mismat
 
     let config = AuthConfig {
         codex_home: codex_home.path().to_path_buf(),
+        auth_home: crate::AuthHome::from_directory(codex_home.path().to_path_buf()),
         auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         keyring_backend_kind: AuthKeyringBackendKind::Direct,
         forced_login_method: None,
@@ -2712,7 +2781,7 @@ async fn enforce_login_restrictions_allows_api_key_if_login_method_not_set_but_f
     let codex_home = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
     login_with_api_key(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         "sk-test",
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
@@ -2960,7 +3029,7 @@ async fn plan_type_maps_known_plan() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -2993,7 +3062,7 @@ async fn plan_type_maps_self_serve_business_usage_based_plan() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -3029,7 +3098,7 @@ async fn plan_type_maps_enterprise_cbp_usage_based_plan() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -3065,7 +3134,7 @@ async fn plan_type_maps_unknown_to_unknown() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
@@ -3098,7 +3167,7 @@ async fn missing_plan_type_maps_to_unknown() {
     .expect("failed to write auth file");
 
     let auth = super::load_auth(
-        codex_home.path(),
+        &crate::AuthHome::from_directory((codex_home.path()).to_path_buf()),
         /*enable_codex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
         /*allowed_login_methods*/ None,
