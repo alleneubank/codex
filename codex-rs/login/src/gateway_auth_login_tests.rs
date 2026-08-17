@@ -10,15 +10,29 @@ use tokio::sync::Notify;
 async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home() {
     let server = MockServer::start().await;
     let home = tempfile::tempdir().unwrap();
+    let auth_home = tempfile::tempdir().unwrap();
+    let other_auth_home = tempfile::tempdir().unwrap();
     let runtime = crate::AuthRuntimeConfig {
         codex_home: home.path().to_path_buf(),
+        auth_home: auth_home.path().to_path_buf(),
         auth_route_config: transport_default_auth_route_config(),
     };
     // Subscribe before any manager exists, as app-server does without gateway configuration.
     let mut events = crate::subscribe_gateway_auth_status(&runtime);
     crate::GatewayLoginControl::for_runtime(&runtime).require_explicit_login();
     let keyring = Arc::new(MockKeyringStore::default());
-    let (other_manager, _other_home) = client(config(&server), keyring.clone());
+    let other_runtime = crate::AuthRuntimeConfig {
+        auth_home: other_auth_home.path().to_path_buf(),
+        ..runtime.clone()
+    };
+    crate::GatewayLoginControl::for_runtime(&other_runtime).require_explicit_login();
+    let other_manager = GatewayAuthManager::new(
+        config(&server),
+        other_runtime.auth_home,
+        other_runtime.auth_route_config.http_client_factory(),
+        keyring.clone(),
+    )
+    .unwrap();
     other_manager.resolve_access_token().await.unwrap_err();
     assert!(matches!(
         events.try_recv(),
@@ -30,7 +44,7 @@ async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home()
         gateway.client_id = client_id.to_string();
         let manager = GatewayAuthManager::new(
             gateway.clone(),
-            home.path().to_path_buf(),
+            runtime.auth_home.clone(),
             runtime.auth_route_config.http_client_factory(),
             keyring.clone(),
         )
@@ -47,6 +61,14 @@ async fn status_subscriptions_survive_gateway_changes_and_are_isolated_by_home()
         // The next gateway must reach the same subscriber after the last manager is dropped.
         drop(manager);
     }
+    assert!(auth_home.path().join("secrets/gateway_oauth.lock").exists());
+    assert!(
+        other_auth_home
+            .path()
+            .join("secrets/gateway_oauth.lock")
+            .exists()
+    );
+    assert!(!home.path().join("secrets").exists());
     assert!(server.received_requests().await.unwrap().is_empty());
 }
 
