@@ -2,6 +2,8 @@
 //! Reports login progress before credential I/O and success only after persistence.
 //! Readiness I/O leaves the cache unlocked and preserves newer state.
 
+use codex_utils_home_dir::AuthHome;
+
 use super::*;
 use crate::oauth::DeviceAuthorizationOptions;
 use crate::oauth::authorize_device;
@@ -61,13 +63,13 @@ impl OAuthLoginControl {
     /// Returns the control shared across this runtime's provider configurations.
     pub fn for_runtime(runtime: &crate::AuthRuntimeConfig) -> Arc<Self> {
         Self::for_host(
-            &runtime.codex_home,
+            &runtime.auth_home,
             runtime.auth_route_config.http_client_factory(),
         )
     }
 
-    pub(super) fn for_host(codex_home: &std::path::Path, factory: &HttpClientFactory) -> Arc<Self> {
-        type Controls = Vec<(PathBuf, HttpClientFactory, Arc<OAuthLoginControl>)>;
+    pub(super) fn for_host(auth_home: &AuthHome, factory: &HttpClientFactory) -> Arc<Self> {
+        type Controls = Vec<(AuthHome, HttpClientFactory, Arc<OAuthLoginControl>)>;
         static CONTROLS: OnceLock<std::sync::Mutex<Controls>> = OnceLock::new();
         let mut controls = CONTROLS
             .get_or_init(std::sync::Mutex::default)
@@ -81,7 +83,7 @@ impl OAuthLoginControl {
         });
         if let Some((_, _, control)) = controls
             .iter()
-            .find(|(home, routes, _)| home == codex_home && routes == factory)
+            .find(|(home, routes, _)| home == auth_home && routes == factory)
         {
             return Arc::clone(control);
         }
@@ -89,11 +91,7 @@ impl OAuthLoginControl {
             explicit_login: AtomicBool::new(/*v*/ false),
             status_tx: broadcast::channel(/*capacity*/ 16).0,
         });
-        controls.push((
-            codex_home.to_path_buf(),
-            factory.clone(),
-            Arc::clone(&control),
-        ));
+        controls.push((auth_home.clone(), factory.clone(), Arc::clone(&control)));
         control
     }
 
@@ -119,10 +117,10 @@ pub fn subscribe_oauth_session_status(
 }
 
 pub(super) fn status_sender_for_host(
-    codex_home: &std::path::Path,
+    auth_home: &AuthHome,
     factory: &HttpClientFactory,
 ) -> broadcast::Sender<OAuthSessionStatusChange> {
-    OAuthLoginControl::for_host(codex_home, factory)
+    OAuthLoginControl::for_host(auth_home, factory)
         .status_tx
         .clone()
 }
@@ -131,13 +129,13 @@ impl OAuthSessionManager {
     pub(super) fn try_start_login(&self) -> io::Result<OAuthLoginAttempt<'_>> {
         Ok(OAuthLoginAttempt {
             manager: self,
-            _lock: storage::try_lock_login(&self.state.codex_home, &self.credential_id())?,
+            _lock: storage::try_lock_login(&self.state.auth_home, &self.credential_id())?,
         })
     }
 
     /// Reuse a saved sign-in, or reserve a new one before releasing the store lock.
     pub async fn start_login_if_required(&self) -> io::Result<Option<OAuthLoginAttempt<'_>>> {
-        let _store_lock = storage::lock_credentials(&self.state.codex_home).await?;
+        let _store_lock = storage::lock_credentials(&self.state.auth_home).await?;
         if self
             .load_token_async()
             .await?
@@ -151,7 +149,7 @@ impl OAuthSessionManager {
     /// Identifies the persisted sign-in without refreshing an expired access token.
     /// Refresh preserves this ID; explicit login creates a new one.
     pub async fn authorization_id(&self) -> io::Result<String> {
-        let _lock = storage::lock_credentials(&self.state.codex_home).await?;
+        let _lock = storage::lock_credentials(&self.state.auth_home).await?;
         self.load_token_async()
             .await?
             .and_then(|token| token.authorization_id)
@@ -170,7 +168,7 @@ impl OAuthSessionManager {
     /// Removes the persisted grant and its in-memory copy without contacting the issuer.
     pub async fn logout(&self) -> io::Result<bool> {
         let mut cached = self.lock_cached_token().await?;
-        let credential_lock = storage::lock_credentials(&self.state.codex_home).await?;
+        let credential_lock = storage::lock_credentials(&self.state.auth_home).await?;
         let manager = self.clone();
         tokio::task::spawn_blocking(move || {
             let _credential_lock = credential_lock;
@@ -401,7 +399,7 @@ impl OAuthSessionManager {
         cached.token = previous_token;
         // If saving fails, the next request can retry without asking the user to sign in again.
         cached.pending = Some(token);
-        let credential_lock = Arc::new(storage::lock_credentials(&self.state.codex_home).await?);
+        let credential_lock = Arc::new(storage::lock_credentials(&self.state.auth_home).await?);
         cached.token = self.load_token_async().await?;
         self.persist_pending(cached, &credential_lock).await?;
         Ok(())

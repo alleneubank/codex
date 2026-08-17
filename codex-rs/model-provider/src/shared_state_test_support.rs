@@ -81,14 +81,14 @@ pub fn seed_gateway_auth(
         redirect_port: config.redirect_port,
         credentials_store: config.credentials_store,
     };
-    // Repeated fixtures sharing a Codex home must use the same encryption key.
+    // Repeated fixtures sharing an auth home must use the same encryption key.
     let keyring = Arc::new(TestKeyring(Mutex::new(Some(
         "gateway-test-passphrase".to_string(),
     ))));
     let manager = Arc::new(
         OAuthSessionManager::new(
             oauth.clone(),
-            runtime.codex_home.clone(),
+            runtime.auth_home.clone(),
             runtime.auth_route_config.http_client_factory(),
             keyring.clone(),
         )
@@ -98,7 +98,7 @@ pub fn seed_gateway_auth(
     match oauth.credentials_store {
         OAuthCredentialsStore::Keyring => {
             let secrets = SecretsManager::new_with_keyring_store_and_namespace(
-                runtime.codex_home.clone(),
+                runtime.auth_home.to_path_buf(),
                 SecretsBackendKind::Local,
                 keyring,
                 LocalSecretsNamespace::GatewayOAuth,
@@ -113,7 +113,7 @@ pub fn seed_gateway_auth(
                 .expect("seed encrypted gateway credentials");
         }
         OAuthCredentialsStore::File => {
-            let dir = runtime.codex_home.join("secrets");
+            let dir = runtime.auth_home.join("secrets");
             std::fs::create_dir_all(&dir).expect("create test credentials directory");
             let file = dir.join("gateway_oauth.json");
             let mut tokens: std::collections::BTreeMap<String, serde_json::Value> =

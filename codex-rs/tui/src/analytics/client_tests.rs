@@ -32,7 +32,7 @@ pub(in crate::analytics) fn sign_in(home: &std::path::Path, account: &str, user:
     }))
     .unwrap();
     codex_login::save_auth(
-        home,
+        &codex_login::AuthHome::from_directory((home).to_path_buf()),
         &auth,
         codex_login::AuthCredentialsStoreMode::File,
         codex_login::AuthKeyringBackendKind::default(),

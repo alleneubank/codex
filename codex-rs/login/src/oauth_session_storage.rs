@@ -18,12 +18,13 @@ use codex_secrets::SecretName;
 use codex_secrets::SecretScope;
 use codex_secrets::SecretsBackendKind;
 use codex_secrets::SecretsManager;
+use codex_utils_home_dir::AuthHome;
 use codex_utils_path::write_atomically;
 
 use super::StoredToken;
 
-fn open_lock_file(codex_home: &Path, name: &str) -> io::Result<File> {
-    let directory = codex_home.join("secrets");
+fn open_lock_file(auth_home: &AuthHome, name: &str) -> io::Result<File> {
+    let directory = auth_home.join("secrets");
     std::fs::create_dir_all(&directory)?;
     OpenOptions::new()
         .read(true)
@@ -34,9 +35,9 @@ fn open_lock_file(codex_home: &Path, name: &str) -> io::Result<File> {
 }
 
 // Hold this lock across user approval. Other credentials have independent sign-ins.
-pub(super) fn try_lock_login(codex_home: &Path, credential_id: &str) -> io::Result<File> {
+pub(super) fn try_lock_login(auth_home: &AuthHome, credential_id: &str) -> io::Result<File> {
     let name = secret_name(credential_id)?;
-    let file = open_lock_file(codex_home, &format!("{name}.login.lock"))?;
+    let file = open_lock_file(auth_home, &format!("{name}.login.lock"))?;
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => Err(io::Error::new(
@@ -47,9 +48,9 @@ pub(super) fn try_lock_login(codex_home: &Path, credential_id: &str) -> io::Resu
     }
 }
 
-pub(super) async fn lock_credentials(codex_home: &Path) -> io::Result<File> {
+pub(super) async fn lock_credentials(auth_home: &AuthHome) -> io::Result<File> {
     // Configurations have separate credential entries but rewrite the same store file.
-    let file = open_lock_file(codex_home, "gateway_oauth.lock")?;
+    let file = open_lock_file(auth_home, "gateway_oauth.lock")?;
     tokio::time::timeout(Duration::from_secs(/*secs*/ 60), async {
         loop {
             match file.try_lock() {
@@ -78,21 +79,21 @@ pub(super) enum OAuthSessionStorage {
 
 impl OAuthSessionStorage {
     pub(super) fn new(
-        codex_home: PathBuf,
+        auth_home: AuthHome,
         mode: OAuthCredentialsStore,
         keyring: Arc<dyn KeyringStore>,
     ) -> Self {
         match mode {
             OAuthCredentialsStore::Keyring => {
                 Self::Keyring(SecretsManager::new_with_keyring_store_and_namespace(
-                    codex_home,
+                    auth_home.to_path_buf(),
                     SecretsBackendKind::Local,
                     keyring,
                     LocalSecretsNamespace::GatewayOAuth,
                 ))
             }
             OAuthCredentialsStore::File => {
-                Self::File(codex_home.join("secrets").join("gateway_oauth.json"))
+                Self::File(auth_home.join("secrets").join("gateway_oauth.json"))
             }
         }
     }

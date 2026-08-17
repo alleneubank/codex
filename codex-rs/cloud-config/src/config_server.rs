@@ -21,6 +21,7 @@ use codex_config::CloudConfigBundleSnapshot;
 use codex_config::ConfigServer;
 use codex_http_client::HttpClientFactory;
 use codex_keyring_store::DefaultKeyringStore;
+use codex_login::AuthHome;
 use codex_login::AuthRouteConfig;
 use codex_login::OAuthSessionConfig;
 use codex_login::OAuthSessionError;
@@ -37,10 +38,13 @@ use tokio::sync::OnceCell;
 pub async fn config_server_bundle_loader(
     config: ConfigServer,
     codex_home: PathBuf,
+    auth_home: AuthHome,
     routes: &AuthRouteConfig,
     discovery: ConfigServerDiscovery,
 ) -> CloudConfigBundleLoader {
-    let service = create_config_server_service(&config, &codex_home, routes, discovery).await;
+    let service =
+        create_config_server_service(&config, &codex_home, auth_home.clone(), routes, discovery)
+            .await;
 
     let loader = match service {
         Ok(service) => {
@@ -50,6 +54,7 @@ pub async fn config_server_bundle_loader(
         Err(error) => config_server_loader_after_failure(
             config.clone(),
             codex_home,
+            auth_home,
             routes.clone(),
             discovery,
             error,
@@ -62,6 +67,7 @@ pub async fn config_server_bundle_loader(
 async fn create_config_server_service(
     config: &ConfigServer,
     codex_home: &Path,
+    auth_home: AuthHome,
     routes: &AuthRouteConfig,
     discovery: ConfigServerDiscovery,
 ) -> Result<CloudConfigBundleService<ConfigServerSource>, CloudConfigBundleLoadError> {
@@ -77,7 +83,7 @@ async fn create_config_server_service(
 
     let factory = config_server_http_client_factory(&resolved, routes);
     let codex_home = codex_home.to_path_buf();
-    let source = ConfigServerSource::from_config_server(resolved, codex_home.clone(), factory)?;
+    let source = ConfigServerSource::from_config_server(resolved, auth_home, factory)?;
 
     Ok(CloudConfigBundleService::from_source(
         source,
@@ -89,6 +95,7 @@ async fn create_config_server_service(
 fn config_server_loader_after_failure(
     config: ConfigServer,
     codex_home: PathBuf,
+    auth_home: AuthHome,
     routes: AuthRouteConfig,
     discovery: ConfigServerDiscovery,
     error: CloudConfigBundleLoadError,
@@ -103,6 +110,7 @@ fn config_server_loader_after_failure(
         let initial_error = Arc::clone(&initial_error);
         let config = config.clone();
         let codex_home = codex_home.clone();
+        let auth_home = auth_home.clone();
         let routes = routes.clone();
         let policy = snapshot_policy.clone();
 
@@ -118,6 +126,7 @@ fn config_server_loader_after_failure(
                             let mut service = create_config_server_service(
                                 &config,
                                 &codex_home,
+                                auth_home,
                                 &routes,
                                 discovery,
                             )
@@ -151,13 +160,13 @@ fn config_server_loader_after_failure(
 
 pub async fn config_server_auth_manager(
     service_config: &ConfigServer,
-    codex_home: PathBuf,
+    auth_home: AuthHome,
     routes: &AuthRouteConfig,
     discovery: ConfigServerDiscovery,
 ) -> std::io::Result<Option<OAuthSessionManager>> {
     let resolved = resolve_config_server(service_config, routes, discovery).await?;
     let factory = config_server_http_client_factory(&resolved, routes);
-    oauth_session_manager(resolved.oauth.as_deref(), codex_home, &factory)
+    oauth_session_manager(resolved.oauth.as_deref(), auth_home, &factory)
 }
 
 fn config_server_http_client_factory(
@@ -190,14 +199,14 @@ struct ConfigServerSource {
 
 fn oauth_session_manager(
     oauth: Option<&OAuthSessionConfig>,
-    codex_home: PathBuf,
+    auth_home: AuthHome,
     factory: &HttpClientFactory,
 ) -> std::io::Result<Option<OAuthSessionManager>> {
     oauth
         .map(|oauth| {
             OAuthSessionManager::new(
                 oauth.clone(),
-                codex_home,
+                auth_home,
                 factory,
                 Arc::new(DefaultKeyringStore),
             )
@@ -209,7 +218,7 @@ fn oauth_session_manager(
 impl ConfigServerSource {
     fn from_config_server(
         config: ConfigServer,
-        codex_home: PathBuf,
+        auth_home: AuthHome,
         factory: HttpClientFactory,
     ) -> Result<Self, CloudConfigBundleLoadError> {
         let base_url = config.validated_base_url().map_err(|message| {
@@ -222,7 +231,7 @@ impl ConfigServerSource {
         Self::new(
             base_url,
             config.oauth.map(|oauth| *oauth),
-            codex_home,
+            auth_home,
             factory,
         )
     }
@@ -230,11 +239,11 @@ impl ConfigServerSource {
     fn new(
         base_url: String,
         oauth: Option<OAuthSessionConfig>,
-        codex_home: PathBuf,
+        auth_home: AuthHome,
         factory: HttpClientFactory,
     ) -> Result<Self, CloudConfigBundleLoadError> {
         let auth =
-            oauth_session_manager(oauth.as_ref(), codex_home, &factory).map_err(auth_io_error)?;
+            oauth_session_manager(oauth.as_ref(), auth_home, &factory).map_err(auth_io_error)?;
         let client = BackendClient::for_config_endpoint(base_url, factory);
         // Reuse the OAuth session's issuer/client/audience/scope identity; the endpoint
         // additionally separates policy authorities that share one OAuth grant.
