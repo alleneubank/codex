@@ -68,6 +68,7 @@ pub use codex_core::config::Permissions;
 pub use codex_core::config::TerminalResizeReflowConfig;
 pub use codex_core::config::ThreadStoreConfig;
 pub use codex_core::config::bootstrap_auth_config;
+pub use codex_core::config::find_auth_home;
 pub use codex_core::config::find_codex_home;
 pub use codex_core::config::load_config_toml_with_layer_stack;
 pub use codex_core::config::resolve_bootstrap_respect_system_proxy;
