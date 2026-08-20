@@ -397,6 +397,7 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
             plan_mode_reasoning_effort: chat.config.plan_mode_reasoning_effort.clone(),
             task_running: false,
             agent_turn_running: false,
+            active_turn_permissions: None,
         }),
         ThreadInputStateRestoreMode {
             preserve_in_flight_turn: true,
