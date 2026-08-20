@@ -1,9 +1,9 @@
 //! Permission-request hook execution.
 //!
-//! This event runs in the approval path, before guardian or user approval UI is
-//! shown. Unlike `pre_tool_use`, handlers do not rewrite tool input or block by
-//! stopping execution outright; instead they can return a concrete allow/deny
-//! decision, or decline to decide and let the normal approval flow continue.
+//! Synchronous handlers run as policy gates before reviewer routing and may
+//! return a concrete allow/deny decision. Asynchronous handlers are observers:
+//! callers dispatch them only when the approval path is about to wait for a
+//! person, and their output cannot affect the decision.
 //!
 //! The event also mirrors the rest of the hook system's lifecycle:
 //!
@@ -26,6 +26,7 @@ use crate::schema::SubagentCommandInputFields;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
+use codex_protocol::protocol::HookExecutionMode;
 use codex_protocol::protocol::HookOutputEntry;
 use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
@@ -75,6 +76,7 @@ pub(crate) fn preview(
         &matcher_inputs,
     )
     .into_iter()
+    .filter(ConfiguredHandler::can_apply_control_effects)
     .map(|handler| {
         common::hook_run_for_tool_use(
             dispatcher::running_summary(&handler),
@@ -84,16 +86,34 @@ pub(crate) fn preview(
     .collect()
 }
 
-pub(crate) async fn run(
+pub(crate) async fn run_policy(
     engine: &ClaudeHooksEngine,
     request: PermissionRequestRequest,
+) -> PermissionRequestOutcome {
+    run_matching(engine, request, HookExecutionMode::Sync).await
+}
+
+pub(crate) async fn run_observers(
+    engine: &ClaudeHooksEngine,
+    request: PermissionRequestRequest,
+) -> PermissionRequestOutcome {
+    run_matching(engine, request, HookExecutionMode::Async).await
+}
+
+async fn run_matching(
+    engine: &ClaudeHooksEngine,
+    request: PermissionRequestRequest,
+    execution_mode: HookExecutionMode,
 ) -> PermissionRequestOutcome {
     let matcher_inputs = common::matcher_inputs(&request.tool_name, &request.matcher_aliases);
     let matched = dispatcher::select_handlers_for_matcher_inputs(
         &engine.handlers,
         HookEventName::PermissionRequest,
         &matcher_inputs,
-    );
+    )
+    .into_iter()
+    .filter(|handler| handler.execution_mode() == execution_mode)
+    .collect::<Vec<_>>();
     if matched.is_empty() {
         return PermissionRequestOutcome {
             hook_events: Vec::new(),
