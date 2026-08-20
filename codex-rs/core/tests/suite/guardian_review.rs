@@ -43,6 +43,9 @@ use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::user_input::UserInput;
 use core_test_support::fs_wait;
+use core_test_support::hooks::PERMISSION_OBSERVER_MARKER;
+use core_test_support::hooks::trust_discovered_hooks;
+use core_test_support::hooks::write_async_permission_request_observer;
 use core_test_support::responses::assert_parent_turn;
 use core_test_support::responses::assert_root_turn;
 use core_test_support::responses::ev_assistant_message;
@@ -63,6 +66,7 @@ use core_test_support::skip_if_wine_exec;
 use core_test_support::test_codex::local_selections;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_with_timeout;
 use core_test_support::wait_for_mcp_server;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -1078,6 +1082,207 @@ async fn guardian_denial_rejects_tool_call_with_rationale() -> Result<()> {
         "Guardian-denied command unexpectedly executed"
     );
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn async_permission_observer_is_skipped_during_guardian_review() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_wine_exec!(
+        Ok(()),
+        "Guardian approval actions require host-native paths"
+    );
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_async_permission_request_observer(home)
+                .expect("write async permission observer fixture");
+        })
+        .with_config(trust_discovered_hooks);
+    let test = builder.build_with_auto_env(&server).await?;
+    let output_file = test.cwd.path().join("guardian-observer-skipped.txt");
+    let command = format!("printf approved > {}", output_file.display());
+    let tool_args = json!({
+        "cmd": command,
+        "yield_time_ms": 1_000_u64,
+        "sandbox_permissions": SandboxPermissions::RequireEscalated,
+        "justification": "Exercise Guardian observer routing.",
+    });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-parent-observer-guardian"),
+                ev_function_call(
+                    "exec-observer-guardian",
+                    "exec_command",
+                    &serde_json::to_string(&tool_args)?,
+                ),
+                ev_completed("resp-parent-observer-guardian"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-guardian-observer-review"),
+                ev_assistant_message(
+                    "msg-guardian-observer-review",
+                    &json!({
+                        "risk_level": "low",
+                        "user_authorization": "high",
+                        "outcome": "allow",
+                        "rationale": "The command writes a marker in the workspace.",
+                    })
+                    .to_string(),
+                ),
+                ev_completed("resp-guardian-observer-review"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-parent-observer-done"),
+                ev_assistant_message("msg-parent-observer-done", "done"),
+                ev_completed("resp-parent-observer-done"),
+            ]),
+        ],
+    )
+    .await;
+
+    test.codex
+        .start_or_steer_turn(
+            TurnInputRequest::user_input(vec![UserInput::Text {
+                text: "run a command that Guardian should approve".into(),
+                text_elements: Vec::new(),
+            }])
+            .with_thread_settings(ThreadSettingsOverrides {
+                approval_policy: Some(AskForApproval::OnRequest),
+                approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
+                ..Default::default()
+            }),
+        )
+        .await?;
+    wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::TurnComplete(_)),
+        Duration::from_secs(30),
+    )
+    .await;
+    test.codex.wait_for_async_hooks().await;
+
+    assert_eq!(responses.requests().len(), 3);
+    assert_eq!(fs::read_to_string(&output_file)?, "approved");
+    assert!(
+        !test
+            .codex_home_path()
+            .join(PERMISSION_OBSERVER_MARKER)
+            .exists(),
+        "an async PermissionRequest observer must not run while Guardian is the reviewer"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn async_permission_observer_runs_before_user_approval() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_wine_exec!(
+        Ok(()),
+        "permission observer fixture requires a host-native Python command"
+    );
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_async_permission_request_observer(home)
+                .expect("write async permission observer fixture");
+        })
+        .with_config(trust_discovered_hooks);
+    let test = builder.build_with_auto_env(&server).await?;
+    let output_file = test.cwd.path().join("user-observer-ran.txt");
+    let command = format!("printf approved >> {}", output_file.display());
+    let tool_args = json!({
+        "cmd": command,
+        "yield_time_ms": 1_000_u64,
+        "sandbox_permissions": SandboxPermissions::RequireEscalated,
+        "justification": "Exercise user observer routing.",
+    });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-parent-observer-user"),
+                ev_function_call(
+                    "exec-observer-user",
+                    "exec_command",
+                    &serde_json::to_string(&tool_args)?,
+                ),
+                ev_completed("resp-parent-observer-user"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-parent-user-observer-cached"),
+                ev_function_call(
+                    "exec-observer-user-cached",
+                    "exec_command",
+                    &serde_json::to_string(&tool_args)?,
+                ),
+                ev_completed("resp-parent-user-observer-cached"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-parent-user-observer-done"),
+                ev_assistant_message("msg-parent-user-observer-done", "done"),
+                ev_completed("resp-parent-user-observer-done"),
+            ]),
+        ],
+    )
+    .await;
+
+    test.codex
+        .start_or_steer_turn(
+            TurnInputRequest::user_input(vec![UserInput::Text {
+                text: "run a command after asking me".into(),
+                text_elements: Vec::new(),
+            }])
+            .with_thread_settings(ThreadSettingsOverrides {
+                approval_policy: Some(AskForApproval::OnRequest),
+                approvals_reviewer: Some(ApprovalsReviewer::User),
+                ..Default::default()
+            }),
+        )
+        .await?;
+    let approval_event = wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::ExecApprovalRequest(_)),
+        Duration::from_secs(30),
+    )
+    .await;
+    let EventMsg::ExecApprovalRequest(approval) = approval_event else {
+        panic!("expected user approval request");
+    };
+    fs_wait::wait_for_path_exists(
+        &test.codex_home_path().join(PERMISSION_OBSERVER_MARKER),
+        Duration::from_secs(5),
+    )
+    .await?;
+    test.codex
+        .submit(Op::ExecApproval {
+            id: approval.effective_approval_id(),
+            turn_id: None,
+            decision: codex_protocol::protocol::ReviewDecision::ApprovedForSession,
+        })
+        .await?;
+    wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::TurnComplete(_)),
+        Duration::from_secs(30),
+    )
+    .await;
+    test.codex.wait_for_async_hooks().await;
+
+    assert_eq!(responses.requests().len(), 3);
+    assert_eq!(fs::read_to_string(&output_file)?, "approvedapproved");
+    assert_eq!(
+        fs::read_to_string(test.codex_home_path().join(PERMISSION_OBSERVER_MARKER))?,
+        "1",
+        "a cached approval must not dispatch another PermissionRequest observer"
+    );
     Ok(())
 }
 

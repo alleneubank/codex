@@ -39,6 +39,7 @@ pub(super) struct CustomStatusLineState {
     queued: Option<CustomStatusLineRequest>,
     last_request_key: Option<CustomStatusLineRequestKey>,
     project_dir_cache: Option<CustomStatusLineProjectDirCache>,
+    active_turn_permissions: Option<Value>,
 }
 
 impl Drop for CustomStatusLineState {
@@ -272,7 +273,7 @@ impl ChatWidget {
         })
     }
 
-    fn custom_status_line_permissions_payload(&self) -> Value {
+    fn custom_status_line_permissions_snapshot(&self) -> Value {
         let approval_policy = AskForApproval::from(self.config.permissions.approval_policy.value());
         let permission_profile = self.config.permissions.effective_permission_profile();
         let active_permission_profile = self.config.permissions.active_permission_profile();
@@ -302,6 +303,57 @@ impl ChatWidget {
             "enforcement": permission_profile.enforcement(),
             "yolo": yolo,
         })
+    }
+
+    fn custom_status_line_permissions_payload(&self) -> Value {
+        let current = self.custom_status_line_permissions_snapshot();
+        let Some(mut active) = self
+            .custom_status_line_state
+            .active_turn_permissions
+            .clone()
+        else {
+            return current;
+        };
+        if active == current {
+            return active;
+        }
+        let Some(active_object) = active.as_object_mut() else {
+            return active;
+        };
+        active_object.insert("next_turn".to_string(), current);
+        active
+    }
+
+    pub(super) fn capture_custom_status_line_turn_permissions(&mut self) {
+        self.custom_status_line_state.active_turn_permissions =
+            Some(self.custom_status_line_permissions_snapshot());
+    }
+
+    pub(super) fn ensure_custom_status_line_turn_permissions(&mut self) {
+        if self
+            .custom_status_line_state
+            .active_turn_permissions
+            .is_none()
+        {
+            self.capture_custom_status_line_turn_permissions();
+        }
+    }
+
+    pub(super) fn clear_custom_status_line_turn_permissions(&mut self) {
+        self.custom_status_line_state.active_turn_permissions = None;
+    }
+
+    pub(super) fn custom_status_line_active_turn_permissions(&self) -> Option<Value> {
+        self.custom_status_line_state
+            .active_turn_permissions
+            .clone()
+    }
+
+    pub(super) fn restore_custom_status_line_active_turn_permissions(
+        &mut self,
+        permissions: Option<Value>,
+    ) {
+        self.custom_status_line_state.active_turn_permissions = permissions;
     }
 
     fn custom_status_line_project_dir(&mut self, cwd: &Path) -> PathBuf {

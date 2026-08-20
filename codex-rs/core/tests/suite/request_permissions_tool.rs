@@ -22,6 +22,9 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use core_test_support::hooks::PERMISSION_OBSERVER_MARKER;
+use core_test_support::hooks::trust_discovered_hooks;
+use core_test_support::hooks::write_async_permission_request_observer;
 use core_test_support::responses::ev_apply_patch_custom_tool_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -350,21 +353,27 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
     let permission_profile = workspace_write_excluding_tmp();
     let permission_profile_for_config = permission_profile.clone();
 
-    let mut builder = test_codex().with_config(move |config| {
-        config.permissions.approval_policy = Constrained::allow_any(approval_policy);
-        config
-            .permissions
-            .set_permission_profile(permission_profile_for_config)
-            .expect("set permission profile");
-        config
-            .features
-            .enable(Feature::ExecPermissionApprovals)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::RequestPermissionsTool)
-            .expect("test config should allow feature update");
-    });
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_async_permission_request_observer(home)
+                .expect("write async permission observer fixture");
+        })
+        .with_config(trust_discovered_hooks)
+        .with_config(move |config| {
+            config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config
+                .permissions
+                .set_permission_profile(permission_profile_for_config)
+                .expect("set permission profile");
+            config
+                .features
+                .enable(Feature::ExecPermissionApprovals)
+                .expect("test config should allow feature update");
+            config
+                .features
+                .enable(Feature::RequestPermissionsTool)
+                .expect("test config should allow feature update");
+        });
     let test = builder.build(&server).await?;
 
     let requested_dir = tempfile::tempdir()?;
@@ -512,6 +521,14 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
     assert_eq!(
         fs::read_to_string(&requested_file)?,
         format!("{patch_content}\n")
+    );
+    test.codex.wait_for_async_hooks().await;
+    assert!(
+        !test
+            .codex_home_path()
+            .join(PERMISSION_OBSERVER_MARKER)
+            .exists(),
+        "a preapproved apply_patch must not dispatch a PermissionRequest observer"
     );
 
     test.codex.shutdown_and_wait().await?;

@@ -226,6 +226,11 @@ impl CodexThread {
         self.io.shutdown_and_wait().await
     }
 
+    /// Wait for every async hook that had been scheduled before this call.
+    pub async fn wait_for_async_hooks(&self) {
+        self.session.hooks().wait_for_async_hooks().await;
+    }
+
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.io.session_loop_termination.clone().await;

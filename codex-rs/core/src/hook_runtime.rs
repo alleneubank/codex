@@ -262,16 +262,12 @@ pub(crate) async fn run_pre_tool_use_hooks(
     }
 }
 
-// PermissionRequest hooks share the same preview/start/completed event flow as
-// other hook types, but they return an optional decision instead of mutating
-// tool input or post-run state.
-pub(crate) async fn run_permission_request_hooks(
+async fn permission_request_hook_request(
     context: &ToolHookContext<'_>,
     run_id_suffix: &str,
     payload: PermissionRequestPayload,
-    event_mode: PermissionRequestHookEventMode,
-) -> Option<PermissionRequestDecision> {
-    let request = PermissionRequestRequest {
+) -> PermissionRequestRequest {
+    PermissionRequestRequest {
         session_id: context.session.session_id().into(),
         turn_id: context.turn.sub_id.clone(),
         subagent: thread_spawn_subagent_hook_context(context.session, context.turn),
@@ -284,7 +280,18 @@ pub(crate) async fn run_permission_request_hooks(
         matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
         run_id_suffix: run_id_suffix.to_string(),
         tool_input: payload.tool_input,
-    };
+    }
+}
+
+// Synchronous PermissionRequest hooks are policy gates. They run before either
+// reviewer and can resolve the request without involving Guardian or a person.
+pub(crate) async fn run_permission_request_policy_hooks(
+    context: &ToolHookContext<'_>,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+    event_mode: PermissionRequestHookEventMode,
+) -> Option<PermissionRequestDecision> {
+    let request = permission_request_hook_request(context, run_id_suffix, payload).await;
     let hooks = context.session.hooks();
     let preview_runs = hooks.preview_permission_request(&request);
     if event_mode == PermissionRequestHookEventMode::Emit {
@@ -294,7 +301,7 @@ pub(crate) async fn run_permission_request_hooks(
     let PermissionRequestOutcome {
         hook_events,
         decision,
-    } = hooks.run_permission_request(request).await;
+    } = hooks.run_permission_request_policy(request).await;
     if event_mode == PermissionRequestHookEventMode::Emit {
         emit_hook_completed_events(context.session, context.turn, hook_events).await;
     } else {
@@ -304,6 +311,29 @@ pub(crate) async fn run_permission_request_hooks(
     }
 
     decision
+}
+
+// Asynchronous PermissionRequest hooks are human-wait observers. Dispatch them
+// only once the policy gates have declined to decide and the user reviewer is
+// about to receive an approval prompt.
+pub(crate) async fn run_permission_request_observer_hooks(
+    context: &ToolHookContext<'_>,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+) {
+    let request = permission_request_hook_request(context, run_id_suffix, payload).await;
+    let PermissionRequestOutcome {
+        hook_events,
+        decision,
+    } = context
+        .session
+        .hooks()
+        .run_permission_request_observers(request)
+        .await;
+    debug_assert!(decision.is_none());
+    for completed in &hook_events {
+        record_hook_completed_event(context.session, context.turn, completed);
+    }
 }
 
 /// Runs matching `PostToolUse` hooks after a tool has produced a successful output.

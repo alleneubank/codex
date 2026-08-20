@@ -66,6 +66,7 @@ impl ChatWidget {
     pub(crate) fn prepare_safety_buffered_retry_submission(&mut self, prompt: UserMessage) {
         self.last_rendered_user_message_display = None;
         self.finalize_turn();
+        self.capture_custom_status_line_turn_permissions();
         self.safety_buffering_prompt = Some(prompt);
         self.input_queue.user_turn_pending_start = true;
     }

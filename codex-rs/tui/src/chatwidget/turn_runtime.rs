@@ -71,6 +71,7 @@ impl ChatWidget {
     pub(super) fn on_task_started(&mut self) {
         self.input_queue.user_turn_pending_start = false;
         self.reset_safety_buffering_for_turn_start();
+        self.ensure_custom_status_line_turn_permissions();
         self.turn_lifecycle.start(Instant::now());
         self.transcript.reset_turn_flags();
         self.adaptive_chunking.reset();
@@ -181,6 +182,7 @@ impl ChatWidget {
         self.clear_active_hook_cell();
         self.clear_guardian_review_status();
         self.turn_lifecycle.finish();
+        self.clear_custom_status_line_turn_permissions();
         self.clear_safety_buffering();
         self.update_task_running_state();
         if !from_replay {
@@ -339,6 +341,7 @@ impl ChatWidget {
         self.input_queue.user_turn_pending_start = false;
         self.clear_guardian_review_status();
         self.turn_lifecycle.finish();
+        self.clear_custom_status_line_turn_permissions();
         self.update_task_running_state();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();

@@ -132,6 +132,11 @@ impl Hooks {
         self.engine.command_runtime.shutdown().await;
     }
 
+    /// Wait for every async hook that had been scheduled before this call.
+    pub async fn wait_for_async_hooks(&self) {
+        self.engine.command_runtime.wait_for_async_hooks().await;
+    }
+
     pub fn startup_warnings(&self) -> &[String] {
         self.engine.warnings()
     }
@@ -204,11 +209,27 @@ impl Hooks {
         self.engine.run_pre_tool_use(request).await
     }
 
+    pub async fn run_permission_request_policy(
+        &self,
+        request: PermissionRequestRequest,
+    ) -> PermissionRequestOutcome {
+        self.engine.run_permission_request_policy(request).await
+    }
+
+    /// Compatibility alias for synchronous PermissionRequest policy evaluation.
+    /// Human-wait observers require an explicit `run_permission_request_observers` call.
     pub async fn run_permission_request(
         &self,
         request: PermissionRequestRequest,
     ) -> PermissionRequestOutcome {
-        self.engine.run_permission_request(request).await
+        self.run_permission_request_policy(request).await
+    }
+
+    pub async fn run_permission_request_observers(
+        &self,
+        request: PermissionRequestRequest,
+    ) -> PermissionRequestOutcome {
+        self.engine.run_permission_request_observers(request).await
     }
 
     pub async fn run_post_tool_use(&self, request: PostToolUseRequest) -> PostToolUseOutcome {
