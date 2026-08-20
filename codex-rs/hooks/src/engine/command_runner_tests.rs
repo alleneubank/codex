@@ -441,6 +441,41 @@ print(os.environ["CODEX_HOOK_CAPTURED_ENV"])
 }
 
 #[tokio::test]
+async fn wait_for_async_hooks_joins_scheduled_hooks() {
+    let temp = TempDir::new().expect("async test directory");
+    let (runtime, results) = runtime();
+    let marker_path = temp.path().join("finished");
+    let handler = write_handler(
+        &temp,
+        &format!(
+            r#"import json
+from pathlib import Path
+import sys
+
+json.load(sys.stdin)
+Path(r"{}").write_text("finished", encoding="utf-8")
+"#,
+            marker_path.display()
+        ),
+    );
+
+    schedule(&runtime, handler, temp.path()).await;
+    timeout(ASYNC_HOOK_TEST_TIMEOUT, runtime.wait_for_async_hooks())
+        .await
+        .expect("async hook barrier should finish");
+
+    assert_eq!(
+        std::fs::read_to_string(marker_path).expect("async hook marker"),
+        "finished"
+    );
+    assert!(
+        results.try_recv().is_ok(),
+        "hook result should be delivered"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn async_hooks_limit_concurrent_processes_without_dropping_waiting_jobs() {
     let temp = TempDir::new().expect("async test directory");
     let (runtime, results) = runtime();
