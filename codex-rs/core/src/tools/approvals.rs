@@ -9,7 +9,8 @@ use crate::guardian::GuardianReviewOptions;
 use crate::guardian::decide_approval;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::spawn_approval_decision;
-use crate::hook_runtime::run_permission_request_hooks;
+use crate::hook_runtime::run_permission_request_observer_hooks;
+use crate::hook_runtime::run_permission_request_policy_hooks;
 use crate::mcp_tool_call::request_mcp_tool_user_approval;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::NetworkApprovalTurn;
@@ -46,6 +47,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -520,6 +522,14 @@ impl ApprovalResolution {
     }
 }
 
+fn permission_request_run_id(action: &ApprovalAction, ctx: &ApprovalContext) -> String {
+    match action {
+        ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
+        _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
+        _ => ctx.call_id.clone(),
+    }
+}
+
 impl Session {
     async fn check_approval_requirement(&self, ctx: &ApprovalContext) -> Result<(), ToolError> {
         if ctx.requires_human_approval() {
@@ -589,15 +599,11 @@ impl Session {
         }
         let is_mcp_tool_call = matches!(action, ApprovalAction::McpToolCall { .. });
         let is_network_approval = matches!(action, ApprovalAction::NetworkAccess { .. });
-        let permission_request_run_id = match action {
-            ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
-            _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
-            _ => ctx.call_id.clone(),
-        };
+        let permission_request_run_id = permission_request_run_id(action, ctx);
 
         // Hook denials always win. Managed checkpoints require a person even
         // when a hook allows the action or the session uses automatic review.
-        let mut resolution = match run_permission_request_hooks(
+        let mut resolution = match run_permission_request_policy_hooks(
             self,
             &ctx.review_context,
             &permission_request_run_id,
@@ -783,10 +789,11 @@ impl Session {
     }
 
     pub(super) async fn request_user_approval(
-        &self,
+        self: &Arc<Self>,
         action: &ApprovalAction,
         ctx: &ApprovalContext,
     ) -> ApprovalResolution {
+        let permission_request_run_id = permission_request_run_id(action, ctx);
         let decision = match action {
             ApprovalAction::ExecCommand {
                 environment_id,
@@ -804,42 +811,47 @@ impl Session {
                     .or_else(|| justification.clone());
                 let human_once = ctx.requires_human_approval();
                 let request = || async {
-                    self.request_command_approval(
-                        ctx.review_context.turn(),
-                        if human_once {
-                            ExecApprovalKind::HumanCommand
-                        } else {
-                            ExecApprovalKind::Command
-                        },
-                        ctx.review_context.model_context(),
-                        ctx.call_id.clone(),
-                        Some(&ctx.call_id),
-                        human_once.then(|| uuid::Uuid::new_v4().to_string()),
-                        Some(environment_id.clone()),
-                        command.clone(),
-                        cwd.clone(),
-                        reason,
-                        if human_once {
-                            None
-                        } else {
-                            ctx.network_approval_context
-                                .clone()
-                                .map(|context| (context, NetworkApprovalTurn::AnyActive))
-                        },
-                        if human_once {
-                            None
-                        } else {
-                            proposed_execpolicy_amendment.clone()
-                        },
-                        additional_permissions.clone(),
-                        human_once.then(|| {
-                            vec![
-                                ReviewDecision::Approved,
-                                ReviewDecision::denied("rejected by user"),
-                                ReviewDecision::Abort,
-                            ]
-                        }),
-                        /*plugin_attribution_override*/ None,
+                    self.observe_permission_request_user_wait(
+                        action,
+                        ctx,
+                        &permission_request_run_id,
+                        self.request_command_approval(
+                            ctx.review_context.turn(),
+                            if human_once {
+                                ExecApprovalKind::HumanCommand
+                            } else {
+                                ExecApprovalKind::Command
+                            },
+                            ctx.review_context.model_context(),
+                            ctx.call_id.clone(),
+                            Some(&ctx.call_id),
+                            human_once.then(|| uuid::Uuid::new_v4().to_string()),
+                            Some(environment_id.clone()),
+                            command.clone(),
+                            cwd.clone(),
+                            reason,
+                            if human_once {
+                                None
+                            } else {
+                                ctx.network_approval_context
+                                    .clone()
+                                    .map(|context| (context, NetworkApprovalTurn::AnyActive))
+                            },
+                            if human_once {
+                                None
+                            } else {
+                                proposed_execpolicy_amendment.clone()
+                            },
+                            additional_permissions.clone(),
+                            human_once.then(|| {
+                                vec![
+                                    ReviewDecision::Approved,
+                                    ReviewDecision::denied("rejected by user"),
+                                    ReviewDecision::Abort,
+                                ]
+                            }),
+                            /*plugin_attribution_override*/ None,
+                        ),
                     )
                     .await
                 };
@@ -872,27 +884,32 @@ impl Session {
                 additional_permissions,
                 ..
             } => {
-                self.request_command_approval(
-                    ctx.review_context.turn(),
-                    ExecApprovalKind::WriteStdin,
-                    ctx.review_context.model_context(),
-                    id.clone(),
-                    Some(&ctx.call_id),
-                    Some(approval_id.clone()),
-                    Some(environment_id.clone()),
-                    vec![
-                        "write_stdin".to_string(),
-                        "--session-id".to_string(),
-                        process_id.to_string(),
-                        input.clone(),
-                    ],
-                    cwd.clone(),
-                    ctx.approval_reason.clone(),
-                    /*network_approval*/ None,
-                    /*proposed_execpolicy_amendment*/ None,
-                    additional_permissions.clone(),
-                    Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
-                    /*plugin_attribution_override*/ None,
+                self.observe_permission_request_user_wait(
+                    action,
+                    ctx,
+                    &permission_request_run_id,
+                    self.request_command_approval(
+                        ctx.review_context.turn(),
+                        ExecApprovalKind::WriteStdin,
+                        ctx.review_context.model_context(),
+                        id.clone(),
+                        Some(&ctx.call_id),
+                        Some(approval_id.clone()),
+                        Some(environment_id.clone()),
+                        vec![
+                            "write_stdin".to_string(),
+                            "--session-id".to_string(),
+                            process_id.to_string(),
+                            input.clone(),
+                        ],
+                        cwd.clone(),
+                        ctx.approval_reason.clone(),
+                        /*network_approval_context*/ None,
+                        /*proposed_execpolicy_amendment*/ None,
+                        additional_permissions.clone(),
+                        Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
+                        /*plugin_attribution_override*/ None,
+                    ),
                 )
                 .await
             }
@@ -908,12 +925,17 @@ impl Session {
                 if *permissions_preapproved && reason.is_none() {
                     ReviewDecision::Approved
                 } else if reason.is_some() {
-                    self.request_patch_approval(
-                        ctx.review_context.turn(),
-                        ctx.call_id.clone(),
-                        changes.as_ref().clone(),
-                        reason,
-                        /*grant_root*/ None,
+                    self.observe_permission_request_user_wait(
+                        action,
+                        ctx,
+                        &permission_request_run_id,
+                        self.request_patch_approval(
+                            ctx.review_context.turn(),
+                            ctx.call_id.clone(),
+                            changes.as_ref().clone(),
+                            reason,
+                            /*grant_root*/ None,
+                        ),
                     )
                     .await
                 } else {
@@ -922,12 +944,17 @@ impl Session {
                         "apply_patch",
                         action.cache_keys(),
                         || async {
-                            self.request_patch_approval(
-                                ctx.review_context.turn(),
-                                ctx.call_id.clone(),
-                                changes.as_ref().clone(),
-                                /*reason*/ None,
-                                /*grant_root*/ None,
+                            self.observe_permission_request_user_wait(
+                                action,
+                                ctx,
+                                &permission_request_run_id,
+                                self.request_patch_approval(
+                                    ctx.review_context.turn(),
+                                    ctx.call_id.clone(),
+                                    changes.as_ref().clone(),
+                                    /*reason*/ None,
+                                    /*grant_root*/ None,
+                                ),
                             )
                             .await
                         },
@@ -935,14 +962,31 @@ impl Session {
                     .await
                 }
             }
-            ApprovalAction::McpToolCall { .. } => {
-                return request_mcp_tool_user_approval(
-                    self,
-                    ctx.review_context.turn(),
-                    &ctx.call_id,
-                    action,
-                )
-                .await;
+            ApprovalAction::McpToolCall {
+                approval_policy, ..
+            } => {
+                if *approval_policy == AskForApproval::Never {
+                    return request_mcp_tool_user_approval(
+                        self,
+                        ctx.review_context.turn(),
+                        &ctx.call_id,
+                        action,
+                    )
+                    .await;
+                }
+                return self
+                    .observe_permission_request_user_wait(
+                        action,
+                        ctx,
+                        &permission_request_run_id,
+                        request_mcp_tool_user_approval(
+                            self,
+                            ctx.review_context.turn(),
+                            &ctx.call_id,
+                            action,
+                        ),
+                    )
+                    .await;
             }
             ApprovalAction::NetworkAccess {
                 environment_id,
@@ -951,24 +995,29 @@ impl Session {
                 trigger,
                 ..
             } => {
-                self.request_command_approval(
-                    ctx.review_context.turn(),
-                    ExecApprovalKind::Command,
-                    ctx.review_context.model_context(),
-                    ctx.call_id.clone(),
-                    trigger.as_ref().map(|trigger| trigger.call_id.as_str()),
-                    /*approval_id*/ None,
-                    Some(environment_id.clone()),
-                    command.clone(),
-                    cwd.clone().into(),
-                    ctx.approval_reason.clone(),
-                    ctx.network_approval_context
-                        .clone()
-                        .map(|context| (context, NetworkApprovalTurn::Originating)),
-                    /*proposed_execpolicy_amendment*/ None,
-                    /*additional_permissions*/ None,
-                    /*available_decisions*/ None,
-                    /*plugin_attribution_override*/ None,
+                self.observe_permission_request_user_wait(
+                    action,
+                    ctx,
+                    &permission_request_run_id,
+                    self.request_command_approval(
+                        ctx.review_context.turn(),
+                        ExecApprovalKind::Command,
+                        ctx.review_context.model_context(),
+                        ctx.call_id.clone(),
+                        trigger.as_ref().map(|trigger| trigger.call_id.as_str()),
+                        /*approval_id*/ None,
+                        Some(environment_id.clone()),
+                        command.clone(),
+                        cwd.clone().into(),
+                        ctx.approval_reason.clone(),
+                        ctx.network_approval_context
+                            .clone()
+                            .map(|context| (context, NetworkApprovalTurn::Originating)),
+                        /*proposed_execpolicy_amendment*/ None,
+                        /*additional_permissions*/ None,
+                        /*available_decisions*/ None,
+                        /*plugin_attribution_override*/ None,
+                    ),
                 )
                 .await
             }
@@ -977,6 +1026,24 @@ impl Session {
             }
         };
         ApprovalResolution::user(decision)
+    }
+
+    async fn observe_permission_request_user_wait<T>(
+        self: &Arc<Self>,
+        action: &ApprovalAction,
+        ctx: &ApprovalContext,
+        permission_request_run_id: &str,
+        wait: impl Future<Output = T>,
+    ) -> T {
+        run_permission_request_observer_hooks(
+            self,
+            &ctx.review_context,
+            permission_request_run_id,
+            action.permission_request_payload(),
+            action.hook_environment_id(),
+        )
+        .await;
+        wait.await
     }
 }
 
