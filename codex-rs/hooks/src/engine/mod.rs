@@ -375,11 +375,18 @@ impl ClaudeHooksEngine {
         crate::events::pre_tool_use::run(self, request).await
     }
 
-    pub(crate) async fn run_permission_request(
+    pub(crate) async fn run_permission_request_policy(
         &self,
         request: PermissionRequestRequest,
     ) -> PermissionRequestOutcome {
-        crate::events::permission_request::run(self, request).await
+        crate::events::permission_request::run_policy(self, request).await
+    }
+
+    pub(crate) async fn run_permission_request_observers(
+        &self,
+        request: PermissionRequestRequest,
+    ) -> PermissionRequestOutcome {
+        crate::events::permission_request::run_observers(self, request).await
     }
 
     pub(crate) async fn run_post_tool_use(

@@ -1742,6 +1742,7 @@ async fn restore_thread_input_state_applies_running_state_policy() {
         active_collaboration_mask: chat.active_collaboration_mask.clone(),
         task_running: true,
         agent_turn_running: true,
+        active_turn_permissions: None,
     };
     chat.restore_thread_input_state(
         Some(input_state.clone()),
