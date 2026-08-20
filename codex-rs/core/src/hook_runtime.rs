@@ -78,6 +78,12 @@ pub(crate) struct HookRuntimeOutcome {
     pub additional_contexts: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PermissionRequestHookEventMode {
+    Emit,
+    Suppress,
+}
+
 pub(crate) enum PreToolUseHookResult {
     Continue { updated_input: Option<Value> },
     Blocked(String),
@@ -132,7 +138,7 @@ pub(crate) async fn run_pending_session_start_hooks(
     while let Some(session_start_source) = sess.take_pending_session_start_source().await {
         // Spawned subagents can start fresh or fork their parent's history, so both
         // sources dispatch SubagentStart. Internal/system subagents skip start hooks.
-        let target = match &turn_context.session_source {
+        let target = match &turn_sess_source {
             SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. })
                 if matches!(
                     session_start_source,
@@ -192,7 +198,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
     tool_name: &HookToolName,
     tool_input: &Value,
 ) -> PreToolUseHookResult {
-    let turn_context = &step_context.turn;
+    let turn_context = &step_review_context.turn();
     let request = PreToolUseRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
@@ -252,17 +258,14 @@ fn tool_hook_cwd(environments: &TurnEnvironmentSnapshot, turn: &TurnContext) -> 
         .unwrap_or_else(|| turn.cwd.clone())
 }
 
-// PermissionRequest hooks share the same preview/start/completed event flow as
-// other hook types, but they return an optional decision instead of mutating
-// tool input or post-run state.
-pub(crate) async fn run_permission_request_hooks(
+async fn permission_request_hook_request(
     sess: &Arc<Session>,
     review_context: &GuardianReviewContext,
     run_id_suffix: &str,
     payload: PermissionRequestPayload,
-) -> Option<PermissionRequestDecision> {
-    let turn_context = review_context.turn();
-    let request = PermissionRequestRequest {
+) -> PermissionRequestRequest {
+    let turn_context = review_review_context.turn()();
+    PermissionRequestRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
         subagent: thread_spawn_subagent_hook_context(sess, turn_context),
@@ -274,18 +277,61 @@ pub(crate) async fn run_permission_request_hooks(
         matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
         run_id_suffix: run_id_suffix.to_string(),
         tool_input: payload.tool_input,
-    };
+    }
+}
+
+// Synchronous PermissionRequest hooks are policy gates. They run before either
+// reviewer and can resolve the request without involving Guardian or a person.
+pub(crate) async fn run_permission_request_policy_hooks(
+    sess: &Arc<Session>,
+    review_context: &GuardianReviewContext,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+    event_mode: PermissionRequestHookEventMode,
+) -> Option<PermissionRequestDecision> {
+    let request = permission_request_hook_request(sess, review_context, run_id_suffix, payload).await;
     let hooks = sess.hooks();
     let preview_runs = hooks.preview_permission_request(&request);
-    emit_hook_started_events(sess, turn_context, preview_runs).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_started_events(sess, review_context.turn(), preview_runs).await;
+    }
 
     let PermissionRequestOutcome {
         hook_events,
         decision,
-    } = hooks.run_permission_request(request).await;
-    emit_hook_completed_events(sess, turn_context, hook_events).await;
+    } = hooks.run_permission_request_policy(request).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_completed_events(sess, review_context.turn(), hook_events).await;
+    } else {
+        for completed in &hook_events {
+            record_hook_completed_event(sess, review_context.turn(), completed);
+        }
+    }
 
     decision
+}
+
+// Asynchronous PermissionRequest hooks are human-wait observers. Dispatch them
+// only once the policy gates have declined to decide and the user reviewer is
+// about to receive an approval prompt.
+pub(crate) async fn run_permission_request_observer_hooks(
+    sess: &Arc<Session>,
+    review_context: &GuardianReviewContext,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+) {
+    let request = permission_request_hook_request(sess, review_context, run_id_suffix, payload).await;
+    let PermissionRequestOutcome {
+        hook_events,
+        decision,
+    } = sess
+        .hooks()
+        .run_permission_request_observers(request)
+        .await;
+    debug_assert!(decision.is_none());
+    for completed in &hook_events {
+        record_hook_completed_event(sess, review_context.turn(), completed);
+    }
 }
 
 /// Runs matching `PostToolUse` hooks after a tool has produced a successful output.
@@ -303,7 +349,7 @@ pub(crate) async fn run_post_tool_use_hooks(
     tool_input: Value,
     tool_response: Value,
 ) -> PostToolUseOutcome {
-    let turn_context = &step_context.turn;
+    let turn_context = &step_review_context.turn();
     let request = PostToolUseRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
@@ -395,10 +441,10 @@ pub(crate) async fn run_turn_stop_hooks(
     stop_hook_active: bool,
     last_assistant_message: Option<String>,
 ) -> StopOutcome {
-    let turn_context = &step_context.turn;
+    let turn_context = &step_review_context.turn();
     // Resolve the stop hook kind from the session source before building the
     // request. Root turns run Stop; thread-spawned child turns run SubagentStop.
-    let (target, transcript_path) = match &turn_context.session_source {
+    let (target, transcript_path) = match &turn_sess_source {
         SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             agent_role,
             parent_thread_id,
@@ -479,7 +525,7 @@ pub(crate) async fn run_session_end_hooks(sess: &Arc<Session>) {
 
     // SessionEnd is root-only; ThreadSpawn uses SubagentStart/SubagentStop and other subagents
     // are internal implementation details.
-    if matches!(&turn_context.session_source, SessionSource::SubAgent(_)) {
+    if matches!(&turn_sess_source, SessionSource::SubAgent(_)) {
         return;
     }
 
@@ -504,7 +550,7 @@ pub(crate) async fn run_turn_interrupt_hooks(
     turn_context: &Arc<TurnContext>,
     turn_state: &Mutex<TurnState>,
 ) {
-    if matches!(&turn_context.session_source, SessionSource::SubAgent(_)) {
+    if matches!(&turn_sess_source, SessionSource::SubAgent(_)) {
         return;
     }
 
@@ -919,13 +965,21 @@ pub(crate) async fn emit_hook_completed_events(
     }
 
     for completed in completed_events {
-        emit_hook_completed_metrics(turn_context, &completed);
-        track_hook_completed_analytics(sess, turn_context, &completed);
+        record_hook_completed_event(sess, turn_context, &completed);
         if should_emit_hook_notification(&completed.run) {
             sess.send_event(turn_context, EventMsg::HookCompleted(completed))
                 .await;
         }
     }
+}
+
+fn record_hook_completed_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    completed: &HookCompletedEvent,
+) {
+    emit_hook_completed_metrics(turn_context, completed);
+    track_hook_completed_analytics(sess, turn_context, completed);
 }
 
 fn emit_hook_completed_metrics(turn_context: &TurnContext, completed: &HookCompletedEvent) {
@@ -936,7 +990,7 @@ fn emit_hook_completed_metrics(turn_context: &TurnContext, completed: &HookCompl
     if let Some(duration_ms) = completed.run.duration_ms
         && let Ok(duration_ms) = u64::try_from(duration_ms)
     {
-        turn_context.session_telemetry.record_duration(
+        turn_sess_telemetry.record_duration(
             HOOK_RUN_DURATION_METRIC,
             Duration::from_millis(duration_ms),
             &tags,
@@ -1043,7 +1097,7 @@ fn thread_spawn_subagent_hook_context(
     sess: &Arc<Session>,
     turn_context: &TurnContext,
 ) -> Option<SubagentHookContext> {
-    match &turn_context.session_source {
+    match &turn_sess_source {
         SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. }) => {
             Some(subagent_hook_context(sess, agent_role))
         }
