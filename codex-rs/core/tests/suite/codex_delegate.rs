@@ -18,6 +18,9 @@ use core_test_support::apps_test_server::SEARCH_CALENDAR_CREATE_TOOL;
 use core_test_support::apps_test_server::SEARCH_CALENDAR_NAMESPACE;
 use core_test_support::apps_test_server::recorded_apps_tool_calls;
 use core_test_support::apps_test_server::search_capable_apps_builder;
+use core_test_support::hooks::PERMISSION_OBSERVER_MARKER;
+use core_test_support::hooks::trust_discovered_hooks;
+use core_test_support::hooks::write_async_permission_request_observer;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -182,6 +185,11 @@ async fn codex_delegate_rejects_legacy_mcp_approvals_without_prompting() {
     .await;
 
     let test = search_capable_apps_builder(apps_server.chatgpt_base_url)
+        .with_pre_build_hook(|home| {
+            write_async_permission_request_observer(home)
+                .expect("write async permission observer fixture");
+        })
+        .with_config(trust_discovered_hooks)
         .with_config(|config| {
             config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
             config
@@ -250,6 +258,14 @@ default_tools_approval_mode = "prompt"
     assert!(
         recorded_apps_tool_calls(&server).await.is_empty(),
         "MCP tool requiring approval should never execute"
+    );
+    test.codex.wait_for_async_hooks().await;
+    assert!(
+        !test
+            .codex_home_path()
+            .join(PERMISSION_OBSERVER_MARKER)
+            .exists(),
+        "MCP approval policy Never must not dispatch a PermissionRequest observer"
     );
 }
 

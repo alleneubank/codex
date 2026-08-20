@@ -176,6 +176,15 @@ impl CommandHookRuntime {
         });
     }
 
+    /// Join every async hook that had been scheduled before this call.
+    pub(crate) async fn wait_for_async_hooks(&self) {
+        let mut tasks = {
+            let mut state = self.lock_state();
+            std::mem::take(&mut state.tasks)
+        };
+        while tasks.join_next().await.is_some() {}
+    }
+
     pub(crate) async fn shutdown(&self) {
         let mut tasks = {
             let mut state = self.lock_state();

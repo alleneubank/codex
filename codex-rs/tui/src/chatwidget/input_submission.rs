@@ -411,6 +411,9 @@ impl ChatWidget {
         }
         self.dismiss_backend_banner_for_new_turn();
         if render_in_history {
+            self.capture_custom_status_line_turn_permissions();
+        }
+        if render_in_history {
             self.arm_prompt_stash_for_turn();
         } else if let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() {
             self.arm_prompt_stash_for_turn();
