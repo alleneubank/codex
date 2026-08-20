@@ -75,6 +75,12 @@ pub(crate) struct HookRuntimeOutcome {
     pub additional_contexts: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PermissionRequestHookEventMode {
+    Emit,
+    Suppress,
+}
+
 pub(crate) enum PreToolUseHookResult {
     Continue { updated_input: Option<Value> },
     Blocked(String),
@@ -269,15 +275,12 @@ pub(crate) async fn run_pre_tool_use_hooks(
     }
 }
 
-// PermissionRequest hooks share the same preview/start/completed event flow as
-// other hook types, but they return an optional decision instead of mutating
-// tool input or post-run state.
-pub(crate) async fn run_permission_request_hooks(
+async fn permission_request_hook_request(
     context: &ToolHookContext<'_>,
     run_id_suffix: &str,
     payload: PermissionRequestPayload,
-) -> Option<PermissionRequestDecision> {
-    let request = PermissionRequestRequest {
+) -> PermissionRequestRequest {
+    PermissionRequestRequest {
         session_id: context.session.session_id().into(),
         turn_id: context.turn.sub_id.clone(),
         subagent: thread_spawn_subagent_hook_context(context.session, context.turn),
@@ -290,18 +293,60 @@ pub(crate) async fn run_permission_request_hooks(
         matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
         run_id_suffix: run_id_suffix.to_string(),
         tool_input: payload.tool_input,
-    };
+    }
+}
+
+// Synchronous PermissionRequest hooks are policy gates. They run before either
+// reviewer and can resolve the request without involving Guardian or a person.
+pub(crate) async fn run_permission_request_policy_hooks(
+    context: &ToolHookContext<'_>,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+    event_mode: PermissionRequestHookEventMode,
+) -> Option<PermissionRequestDecision> {
+    let request = permission_request_hook_request(context, run_id_suffix, payload).await;
     let hooks = context.session.hooks();
     let preview_runs = hooks.preview_permission_request(&request);
-    emit_hook_started_events(context.session, context.turn, preview_runs).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_started_events(context.session, context.turn, preview_runs).await;
+    }
 
     let PermissionRequestOutcome {
         hook_events,
         decision,
-    } = hooks.run_permission_request(request).await;
-    emit_hook_completed_events(context.session, context.turn, hook_events).await;
+    } = hooks.run_permission_request_policy(request).await;
+    if event_mode == PermissionRequestHookEventMode::Emit {
+        emit_hook_completed_events(context.session, context.turn, hook_events).await;
+    } else {
+        for completed in &hook_events {
+            record_hook_completed_event(context.session, context.turn, completed);
+        }
+    }
 
     decision
+}
+
+// Asynchronous PermissionRequest hooks are human-wait observers. Dispatch them
+// only once the policy gates have declined to decide and the user reviewer is
+// about to receive an approval prompt.
+pub(crate) async fn run_permission_request_observer_hooks(
+    context: &ToolHookContext<'_>,
+    run_id_suffix: &str,
+    payload: PermissionRequestPayload,
+) {
+    let request = permission_request_hook_request(context, run_id_suffix, payload).await;
+    let PermissionRequestOutcome {
+        hook_events,
+        decision,
+    } = context
+        .session
+        .hooks()
+        .run_permission_request_observers(request)
+        .await;
+    debug_assert!(decision.is_none());
+    for completed in &hook_events {
+        record_hook_completed_event(context.session, context.turn, completed);
+    }
 }
 
 /// Runs matching `PostToolUse` hooks after a tool has produced a successful output.
@@ -923,13 +968,21 @@ pub(crate) async fn emit_hook_completed_events(
     }
 
     for completed in completed_events {
-        emit_hook_completed_metrics(turn_context, &completed);
-        track_hook_completed_analytics(sess, turn_context, &completed);
+        record_hook_completed_event(sess, turn_context, &completed);
         if should_emit_hook_notification(&completed.run) {
             sess.send_event(turn_context, EventMsg::HookCompleted(completed))
                 .await;
         }
     }
+}
+
+fn record_hook_completed_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    completed: &HookCompletedEvent,
+) {
+    emit_hook_completed_metrics(turn_context, completed);
+    track_hook_completed_analytics(sess, turn_context, completed);
 }
 
 fn emit_hook_completed_metrics(turn_context: &TurnContext, completed: &HookCompletedEvent) {

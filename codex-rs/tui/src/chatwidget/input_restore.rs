@@ -511,6 +511,7 @@ impl ChatWidget {
             active_collaboration_mask: self.active_collaboration_mask.clone(),
             task_running: self.bottom_pane.is_task_running(),
             agent_turn_running: self.turn_lifecycle.agent_turn_running,
+            active_turn_permissions: self.custom_status_line_active_turn_permissions(),
         })
     }
 
@@ -538,6 +539,11 @@ impl ChatWidget {
         if let Some(input_state) = input_state {
             self.bottom_pane.restore_questions(input_state.questions);
             self.input_queue.recovered_queue = input_state.recovered_queue;
+            self.restore_custom_status_line_active_turn_permissions(
+                preserve_in_flight_turn
+                    .then_some(input_state.active_turn_permissions)
+                    .flatten(),
+            );
             self.prompt_stash = input_state.prompt_stash;
             self.current_collaboration_mode = input_state.current_collaboration_mode;
             self.active_collaboration_mask = input_state.active_collaboration_mask;
@@ -582,6 +588,7 @@ impl ChatWidget {
             );
         } else {
             self.prompt_stash = None;
+            self.clear_custom_status_line_turn_permissions();
             self.turn_lifecycle
                 .restore_running(/*running*/ false, Instant::now());
             self.safety_buffering_prompt = None;
