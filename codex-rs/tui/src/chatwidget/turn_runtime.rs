@@ -92,6 +92,7 @@ impl ChatWidget {
         self.clear_context_compaction();
         self.input_queue.user_turn_pending_start = false;
         self.reset_safety_buffering_for_turn_start();
+        self.ensure_custom_status_line_turn_permissions();
         self.turn_lifecycle.start(Instant::now());
         self.transcript.reset_turn_flags();
         self.adaptive_chunking.reset();
@@ -207,6 +208,7 @@ impl ChatWidget {
         } else {
             crate::terminal_program_status::ProgramStatus::Done
         };
+        self.clear_custom_status_line_turn_permissions();
         self.clear_safety_buffering();
         // The custom statusline needs the completed turn's metrics during this refresh.
         self.update_task_running_state();
@@ -393,6 +395,7 @@ impl ChatWidget {
         } else {
             crate::terminal_program_status::ProgramStatus::Error
         };
+        self.clear_custom_status_line_turn_permissions();
         self.update_task_running_state();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();

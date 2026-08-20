@@ -1903,6 +1903,7 @@ async fn restore_thread_input_state_applies_running_state_policy() {
         status_surface_overrides: StatusSurfaceOverrides::default(),
         task_running: true,
         agent_turn_running: true,
+        active_turn_permissions: None,
     };
     chat.restore_thread_input_state(
         Some(input_state.clone()),

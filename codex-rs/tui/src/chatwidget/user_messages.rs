@@ -194,6 +194,7 @@ pub(crate) struct ThreadInputState {
     pub(super) status_surface_overrides: StatusSurfaceOverrides,
     pub(super) task_running: bool,
     pub(super) agent_turn_running: bool,
+    pub(super) active_turn_permissions: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
