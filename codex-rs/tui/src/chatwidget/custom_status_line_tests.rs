@@ -1,4 +1,5 @@
 use super::*;
+use crate::app_command::AppCommand as Op;
 use crate::test_support::PathBufExt;
 #[cfg(windows)]
 use crate::workspace_command::AppServerWorkspaceCommandRunner;
@@ -58,7 +59,7 @@ async fn refresh_event_applies_rendered_status_line() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(config);
     chat.workspace_command_runner = Some(runner);
     chat.show_welcome_banner = false;
@@ -94,7 +95,7 @@ async fn unchanged_refresh_does_not_spawn_duplicate_command() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -134,7 +135,7 @@ async fn stop_hook_completion_forces_refresh_for_external_status_state() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -190,7 +191,7 @@ async fn terminal_resize_refresh_uses_new_width() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -277,7 +278,7 @@ async fn pending_refresh_spawns_latest_queued_request_after_current_result() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -315,7 +316,7 @@ async fn queued_refresh_preserves_payload_snapshot() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -363,7 +364,7 @@ async fn payload_includes_yolo_permissions_snapshot() {
     let (mut chat, _app_event_tx, _rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.set_approval_policy(AskForApproval::Never);
     chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
         PermissionProfile::Disabled,
@@ -396,7 +397,7 @@ async fn payload_includes_named_permissions_profile_identity() {
     let (mut chat, _app_event_tx, _rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.set_approval_policy(AskForApproval::OnRequest);
     chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
         PermissionProfile::workspace_write(),
@@ -432,7 +433,7 @@ async fn payload_includes_auto_permissions_mode() {
     let (mut chat, _app_event_tx, _rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.set_approval_policy(AskForApproval::OnRequest);
     chat.set_approvals_reviewer(ApprovalsReviewer::AutoReview);
     chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
@@ -475,7 +476,7 @@ async fn service_tier_toggle_refreshes_custom_status_line_payload() {
     chat.set_model("gpt-5.4");
     crate::chatwidget::tests::set_fast_mode_test_catalog(&mut chat);
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -518,12 +519,133 @@ async fn service_tier_toggle_refreshes_custom_status_line_payload() {
 }
 
 #[tokio::test]
+async fn payload_keeps_active_turn_permissions_and_reports_next_turn_update() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let (mut chat, _app_event_tx, _rx, mut op_rx) =
+        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.config.cwd = tempdir.path().to_path_buf().abs();
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
+    chat.set_approval_policy(AskForApproval::OnRequest);
+    chat.set_approvals_reviewer(ApprovalsReviewer::AutoReview);
+    chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        PermissionProfile::workspace_write(),
+        ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+    ))
+    .expect("workspace permission profile should be accepted");
+    chat.submit_user_message(UserMessage::from("use the active permission mode"));
+    assert!(matches!(op_rx.try_recv(), Ok(Op::UserTurn { .. })));
+    let submitted_permissions = chat
+        .custom_status_line_payload(tempdir.path())
+        .get("permissions")
+        .cloned()
+        .expect("submitted permissions snapshot");
+    assert!(submitted_permissions.get("next_turn").is_none());
+
+    // Permission changes can arrive before TurnStarted, but they apply only to
+    // the next turn and must not replace the submitted turn's snapshot.
+    chat.set_approval_policy(AskForApproval::Never);
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+    chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        PermissionProfile::Disabled,
+        ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS),
+    ))
+    .expect("full-access permission profile should be accepted");
+    chat.on_task_started();
+
+    // Thread replay calls on_task_started after restoring in-flight input
+    // state. That second start must preserve the restored active snapshot.
+    let input_state = chat
+        .capture_thread_input_state()
+        .expect("thread input state should be captured");
+    chat.restore_thread_input_state(
+        None,
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: false,
+        },
+    );
+    chat.restore_thread_input_state(
+        Some(input_state),
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: true,
+        },
+    );
+    chat.on_task_started();
+
+    let active_payload = chat.custom_status_line_payload(tempdir.path());
+    let active_permissions = active_payload
+        .get("permissions")
+        .expect("active permissions snapshot");
+    let queued_permissions = active_permissions
+        .get("next_turn")
+        .cloned()
+        .expect("queued permissions snapshot");
+    let mut expected_active_permissions = submitted_permissions;
+    expected_active_permissions
+        .as_object_mut()
+        .expect("permission snapshots are objects")
+        .insert("next_turn".to_string(), queued_permissions.clone());
+    assert_eq!(active_permissions, &expected_active_permissions);
+
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ true,
+    );
+    let idle_payload = chat.custom_status_line_payload(tempdir.path());
+    let idle_permissions = idle_payload
+        .get("permissions")
+        .expect("idle permissions snapshot");
+    assert_eq!(&queued_permissions, idle_permissions);
+
+    chat.prepare_safety_buffered_retry_submission(UserMessage::from("retry safely"));
+    chat.set_approval_policy(AskForApproval::OnRequest);
+    chat.set_approvals_reviewer(ApprovalsReviewer::AutoReview);
+    chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        PermissionProfile::workspace_write(),
+        ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
+    ))
+    .expect("workspace permission profile should be accepted");
+    chat.on_task_started();
+    let retry_payload = chat.custom_status_line_payload(tempdir.path());
+    assert_eq!(
+        retry_payload.pointer("/permissions/mode"),
+        Some(&json!("yolo"))
+    );
+    assert_eq!(
+        retry_payload.pointer("/permissions/next_turn/mode"),
+        Some(&json!("auto"))
+    );
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ true,
+    );
+
+    // Cancellation must clear the submitted-turn snapshot. A later permission
+    // change should render as the active idle mode, not as a queued next turn.
+    chat.submit_user_message(UserMessage::from("cancel this turn"));
+    assert!(matches!(op_rx.try_recv(), Ok(Op::UserTurn { .. })));
+    chat.finalize_turn();
+    chat.set_approval_policy(AskForApproval::Never);
+    chat.set_approvals_reviewer(ApprovalsReviewer::User);
+    chat.set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        PermissionProfile::Disabled,
+        ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS),
+    ))
+    .expect("full-access permission profile should be accepted");
+    let cancelled_permissions = chat
+        .custom_status_line_payload(tempdir.path())
+        .get("permissions")
+        .cloned()
+        .expect("cancelled-turn permissions snapshot");
+    assert_eq!(cancelled_permissions, queued_permissions);
+    assert!(cancelled_permissions.get("next_turn").is_none());
+}
+
+#[tokio::test]
 async fn payload_includes_effective_reasoning_effort() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let (mut chat, _app_event_tx, _rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.set_reasoning_effort(Some(ReasoningEffort::XHigh));
 
     let payload = chat.custom_status_line_payload(tempdir.path());
@@ -549,7 +671,7 @@ async fn permissions_update_refreshes_custom_status_line_payload() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -610,7 +732,7 @@ async fn approvals_reviewer_update_refreshes_custom_status_line_payload() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -697,7 +819,7 @@ async fn failed_refresh_can_retry_unchanged_snapshot() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -788,7 +910,7 @@ async fn payload_includes_bounded_goal_snapshot() {
     let (mut chat, _app_event_tx, _rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.current_goal_status = Some(GoalStatusState::new(
         AppThreadGoal {
             thread_id: "thread".to_string(),
@@ -843,7 +965,7 @@ async fn goal_update_refreshes_custom_status_line_payload() {
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
@@ -906,7 +1028,7 @@ async fn completion_refresh_payload_includes_runtime_duration() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) =
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     chat.config.cwd = tempdir.path().to_path_buf().abs();
-    chat.current_cwd = Some(tempdir.path().to_path_buf());
+    chat.current_cwd = PathUri::from_abs_path(&chat.config.cwd);
     chat.config.tui_custom_status_line = Some(CustomStatusLineConfig {
         kind: CustomStatusLineType::Command,
         command: allowed_statusline_command(""),
