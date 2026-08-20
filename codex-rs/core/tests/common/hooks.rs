@@ -5,6 +5,40 @@ use codex_core::config::Config;
 use codex_features::Feature;
 use codex_hooks::HookListEntry;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::path::Path;
+
+pub const PERMISSION_OBSERVER_MARKER: &str = "permission-request-observer-ran";
+
+pub fn write_async_permission_request_observer(home: &Path) -> std::io::Result<()> {
+    let script_path = home.join("permission_request_observer.py");
+    let marker_path = home.join(PERMISSION_OBSERVER_MARKER);
+    let script = format!(
+        r#"from pathlib import Path
+import json
+import sys
+
+json.load(sys.stdin)
+marker = Path(r"{marker_path}")
+count = int(marker.read_text(encoding="utf-8")) if marker.exists() else 0
+marker.write_text(str(count + 1), encoding="utf-8")
+"#,
+        marker_path = marker_path.display(),
+    );
+    let hooks = serde_json::json!({
+        "hooks": {
+            "PermissionRequest": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                    "async": true,
+                }]
+            }]
+        }
+    });
+
+    std::fs::write(&script_path, script)?;
+    std::fs::write(home.join("hooks.json"), hooks.to_string())
+}
 
 pub fn trust_discovered_hooks(config: &mut Config) {
     config
