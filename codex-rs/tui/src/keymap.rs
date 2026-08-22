@@ -1234,7 +1234,7 @@ impl RuntimeKeymap {
                     shift(KeyCode::Up)
                 ],
                 previous_permission_mode: default_bindings![],
-                next_permission_mode: default_bindings![],
+                next_permission_mode: default_bindings![alt(KeyCode::Char('p'))],
                 edit_queued_message: default_bindings![alt(KeyCode::Up), shift(KeyCode::Left)],
                 stash_prompt: default_bindings![ctrl(KeyCode::Char('s'))],
             },
@@ -2689,6 +2689,10 @@ mod tests {
                 key_hint::alt(KeyCode::Char('.')),
                 key_hint::shift(KeyCode::Up),
             ]
+        );
+        assert_eq!(
+            runtime.chat.next_permission_mode,
+            vec![key_hint::alt(KeyCode::Char('p'))]
         );
         assert_eq!(
             runtime.chat.edit_queued_message,
