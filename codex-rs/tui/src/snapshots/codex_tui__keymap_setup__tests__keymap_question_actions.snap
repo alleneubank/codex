@@ -5,16 +5,16 @@ expression: "render_picker(params, 120)"
 
   Keymap
   All configurable shortcuts.
-  142 actions, 0 customized, 5 unbound.
+  143 actions, 0 customized, 4 unbound.
 
-  [All]  Common  Customized (0)  Unbound (5)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
+  [All]  Common  Customized (0)  Unbound (4)  App  Composer  Editor  Vim  Navigation  Agents  Approval  Debug
 
   Type to search shortcuts
   Chat           Interrupt Turn             esc
   Chat           Decrease Reasoning Effort  alt-,, shift-down
   Chat           Increase Reasoning Effort  alt-., shift-up
   Chat         - Previous Permission Mode   unbound
-  Chat         - Next Permission Mode       unbound
+  Chat           Next Permission Mode       alt-p
   Chat           Edit Queued Message        alt-up, shift-left
   Chat           Prompt Stack Back          alt-down, shift-right
 › Chat           Skip Question              ctrl-]
