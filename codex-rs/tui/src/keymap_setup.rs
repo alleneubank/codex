@@ -1095,7 +1095,6 @@ mod tests {
                 ("Open Agents", Some("unbound"), false),
                 ("Toggle Vim Mode", Some("unbound"), false),
                 ("Previous Permission Mode", Some("unbound"), false),
-                ("Next Permission Mode", Some("unbound"), false),
                 ("Kill Whole Line", Some("unbound"), false),
             ]
         );
