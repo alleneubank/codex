@@ -1259,6 +1259,11 @@ pub(crate) enum AppEvent {
         model: ModelPreset,
     },
 
+    /// Open the advanced picker for a session-only effort change.
+    OpenSessionAdvancedReasoningPopup {
+        model: ModelPreset,
+    },
+
     /// Apply an advanced reasoning effort to the active conversation without changing defaults.
     ApplyAdvancedReasoning {
         model: String,
