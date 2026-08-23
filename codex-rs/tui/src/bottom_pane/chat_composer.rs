@@ -3906,7 +3906,6 @@ impl ChatComposer {
     fn custom_status_line_replaces_footer_hint(&self, footer_props: &FooterProps) -> bool {
         self.footer.custom_status_line.is_some()
             && self.custom_footer_height().is_none()
-            && !self.footer.plan_mode_nudge_visible
             && shows_passive_footer_line(footer_props)
     }
 

@@ -524,6 +524,7 @@ impl ChatWidget {
                 .submit_pending_steers_after_interrupt,
             current_collaboration_mode: self.current_collaboration_mode.clone(),
             active_collaboration_mask: self.active_collaboration_mask.clone(),
+            session_plan_mode_reasoning_effort: self.session_plan_mode_reasoning_effort.clone(),
             task_running: self.bottom_pane.is_task_running(),
             agent_turn_running: self.turn_lifecycle.agent_turn_running,
             active_turn_permissions: self.custom_status_line_active_turn_permissions(),
@@ -547,6 +548,8 @@ impl ChatWidget {
             self.prompt_stash = input_state.prompt_stash;
             self.current_collaboration_mode = input_state.current_collaboration_mode;
             self.active_collaboration_mask = input_state.active_collaboration_mask;
+            self.session_plan_mode_reasoning_effort =
+                input_state.session_plan_mode_reasoning_effort;
             self.safety_buffering_prompt = input_state.safety_buffering_prompt;
             self.turn_lifecycle.restore_running(
                 preserve_in_flight_turn && input_state.agent_turn_running,
