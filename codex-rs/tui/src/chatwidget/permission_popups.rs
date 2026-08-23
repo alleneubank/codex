@@ -314,11 +314,19 @@ impl ChatWidget {
             approvals_reviewer == ApprovalsReviewer::User && preset.id == "full-access";
         if requires_confirmation {
             let preset = preset.clone();
+            let context = profile_selection.clone().map_or(
+                FullAccessConfirmationContext::ApprovalPreset {
+                    return_to_permissions,
+                },
+                |selection| FullAccessConfirmationContext::ProfileSelection {
+                    return_to_permissions,
+                    selection,
+                },
+            );
             return vec![Box::new(move |tx| {
                 tx.send(AppEvent::OpenFullAccessConfirmation {
                     preset: preset.clone(),
-                    return_to_permissions,
-                    profile_selection: profile_selection.clone(),
+                    context: context.clone(),
                 });
             })];
         }
@@ -406,8 +414,7 @@ impl ChatWidget {
     pub(crate) fn open_full_access_confirmation(
         &mut self,
         preset: ApprovalPreset,
-        return_to_permissions: bool,
-        profile_selection: Option<PermissionProfileSelection>,
+        context: FullAccessConfirmationContext,
     ) {
         let selected_name = preset.label.to_string();
         let approval = AskForApproval::from(preset.approval);
@@ -451,26 +458,58 @@ impl ChatWidget {
         )
         .wrap(Wrap { trim: false });
 
-        let accept_actions = profile_selection.map_or_else(
-            || {
-                Self::approval_preset_actions(
-                    approval,
-                    preset.permission_profile,
-                    preset.active_permission_profile,
-                    selected_name,
-                    ApprovalsReviewer::User,
-                )
-            },
-            Self::permission_profile_selection_actions,
-        );
+        let (accept_actions, return_to_permissions): (Vec<SelectionAction>, Option<bool>) =
+            match context {
+                FullAccessConfirmationContext::ApprovalPreset {
+                    return_to_permissions,
+                } => (
+                    Self::approval_preset_actions(
+                        approval,
+                        preset.permission_profile,
+                        preset.active_permission_profile,
+                        selected_name,
+                        ApprovalsReviewer::User,
+                    ),
+                    Some(return_to_permissions),
+                ),
+                FullAccessConfirmationContext::ProfileSelection {
+                    return_to_permissions,
+                    selection,
+                } => (
+                    Self::permission_profile_selection_actions(selection),
+                    Some(return_to_permissions),
+                ),
+                FullAccessConfirmationContext::PermissionShortcut {
+                    thread_id,
+                    selection,
+                } => {
+                    // The modal now blocks repeated shortcut input, so the pending latch can be
+                    // released for both item-based cancellation and Esc/Ctrl+C dismissal.
+                    self.complete_permission_shortcut(thread_id);
+                    (
+                        vec![Box::new(move |tx| {
+                            tx.send(AppEvent::ApplyPermissionShortcut {
+                                thread_id,
+                                selection: selection.clone(),
+                            });
+                        })],
+                        None,
+                    )
+                }
+            };
 
-        let deny_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            if return_to_permissions {
-                tx.send(AppEvent::OpenPermissionsPopup);
-            } else {
-                tx.send(AppEvent::OpenApprovalsPopup);
-            }
-        })];
+        let deny_actions = if let Some(return_to_permissions) = return_to_permissions {
+            let action: SelectionAction = Box::new(move |tx: &AppEventSender| {
+                if return_to_permissions {
+                    tx.send(AppEvent::OpenPermissionsPopup);
+                } else {
+                    tx.send(AppEvent::OpenApprovalsPopup);
+                }
+            });
+            vec![action]
+        } else {
+            Vec::new()
+        };
 
         let items = vec![
             SelectionItem {
