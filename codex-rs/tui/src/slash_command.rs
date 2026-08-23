@@ -14,6 +14,7 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     Model,
     Presets,
+    Effort,
     Daybreak,
     Ide,
     Permissions,
@@ -134,6 +135,7 @@ impl SlashCommand {
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Presets => "run or save reusable prompts and slash commands",
+            SlashCommand::Effort => "change reasoning effort for this session",
             SlashCommand::Daybreak => "turn Daybreak on or off",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
@@ -275,6 +277,7 @@ impl SlashCommand {
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Presets
+            | SlashCommand::Effort
             | SlashCommand::Daybreak
             | SlashCommand::Permissions
             | SlashCommand::Copy
@@ -365,6 +368,7 @@ mod tests {
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
+        assert!(SlashCommand::Effort.available_during_task());
     }
 
     #[test]
