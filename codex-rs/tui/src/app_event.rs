@@ -964,8 +964,7 @@ pub(crate) enum AppEvent {
     /// Open the confirmation prompt before enabling full access mode.
     OpenFullAccessConfirmation {
         preset: ApprovalPreset,
-        return_to_permissions: bool,
-        profile_selection: Option<PermissionProfileSelection>,
+        context: FullAccessConfirmationContext,
     },
 
     /// Apply a permission shortcut only while its originating thread is displayed.
@@ -1292,6 +1291,23 @@ pub(crate) struct PermissionProfileSelection {
     pub approval_policy: Option<AskForApproval>,
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub display_label: String,
+}
+
+/// Authority-preserving continuation to run after the Full Access warning is accepted.
+#[derive(Debug, Clone)]
+pub(crate) enum FullAccessConfirmationContext {
+    /// Apply the legacy preset directly, then return to the originating picker on cancellation.
+    ApprovalPreset { return_to_permissions: bool },
+    /// Resolve and apply a named profile, then return to the originating picker on cancellation.
+    ProfileSelection {
+        return_to_permissions: bool,
+        selection: PermissionProfileSelection,
+    },
+    /// Apply a session-only shortcut to the thread that originated it.
+    PermissionShortcut {
+        thread_id: ThreadId,
+        selection: PermissionProfileSelection,
+    },
 }
 
 /// The exit strategy requested by the UI layer.

@@ -1525,13 +1525,11 @@ impl App {
             }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
-                return_to_permissions,
-                profile_selection,
+                context,
             } => {
                 self.chat_widget.open_full_access_confirmation(
                     preset,
-                    return_to_permissions,
-                    profile_selection,
+                    context,
                 );
             }
             AppEvent::ApplyPermissionShortcut { thread_id, selection } => {

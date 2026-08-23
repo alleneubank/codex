@@ -264,6 +264,7 @@ fn normalize_thread_name(name: &str) -> Option<String> {
 
 use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
+use crate::app_event::FullAccessConfirmationContext;
 use crate::app_event::PermissionProfileSelection;
 use crate::app_event::RateLimitRefreshOrigin;
 #[cfg(target_os = "windows")]

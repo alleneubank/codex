@@ -283,13 +283,15 @@ async fn profile_permissions_full_access_always_opens_confirmation() {
         &events[0],
         AppEvent::OpenFullAccessConfirmation {
             preset,
-            return_to_permissions: true,
-            profile_selection: Some(PermissionProfileSelection {
-                profile_id,
-                approval_policy: Some(AskForApproval::Never),
-                approvals_reviewer: Some(ApprovalsReviewer::User),
-                display_label,
-            }),
+            context: FullAccessConfirmationContext::ProfileSelection {
+                return_to_permissions: true,
+                selection: PermissionProfileSelection {
+                    profile_id,
+                    approval_policy: Some(AskForApproval::Never),
+                    approvals_reviewer: Some(ApprovalsReviewer::User),
+                    display_label,
+                },
+            },
         } if preset.id == "full-access"
             && profile_id == BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS
             && display_label == "Full Access"
@@ -401,7 +403,10 @@ async fn full_access_confirmation_popup_snapshot() {
         .find(|preset| preset.id == "full-access")
         .expect("full access preset");
     chat.open_full_access_confirmation(
-        preset, /*return_to_permissions*/ false, /*profile_selection*/ None,
+        preset,
+        FullAccessConfirmationContext::ApprovalPreset {
+            return_to_permissions: false,
+        },
     );
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
@@ -796,18 +801,13 @@ async fn permissions_selection_history_snapshot_after_mode_switch() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
-    let (preset, return_to_permissions, profile_selection) =
-        std::iter::from_fn(|| rx.try_recv().ok())
-            .find_map(|event| match event {
-                AppEvent::OpenFullAccessConfirmation {
-                    preset,
-                    return_to_permissions,
-                    profile_selection,
-                } => Some((preset, return_to_permissions, profile_selection)),
-                _ => None,
-            })
-            .expect("expected full access confirmation event");
-    chat.open_full_access_confirmation(preset, return_to_permissions, profile_selection);
+    let (preset, context) = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|event| match event {
+            AppEvent::OpenFullAccessConfirmation { preset, context } => Some((preset, context)),
+            _ => None,
+        })
+        .expect("expected full access confirmation event");
+    chat.open_full_access_confirmation(preset, context);
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     let cells = drain_insert_history(&mut rx);
@@ -1179,12 +1179,8 @@ async fn permissions_full_access_history_cell_emitted_only_after_confirmation() 
             AppEvent::InsertHistoryCell(cell) => {
                 cells_before_confirmation.push(cell.display_lines(/*width*/ 80));
             }
-            AppEvent::OpenFullAccessConfirmation {
-                preset,
-                return_to_permissions,
-                profile_selection,
-            } => {
-                open_confirmation_event = Some((preset, return_to_permissions, profile_selection));
+            AppEvent::OpenFullAccessConfirmation { preset, context } => {
+                open_confirmation_event = Some((preset, context));
             }
             _ => {}
         }
@@ -1195,9 +1191,9 @@ async fn permissions_full_access_history_cell_emitted_only_after_confirmation() 
             "did not expect history cell before confirming full access"
         );
     }
-    let (preset, return_to_permissions, profile_selection) =
+    let (preset, context) =
         open_confirmation_event.expect("expected full access confirmation event");
-    chat.open_full_access_confirmation(preset, return_to_permissions, profile_selection);
+    chat.open_full_access_confirmation(preset, context);
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(

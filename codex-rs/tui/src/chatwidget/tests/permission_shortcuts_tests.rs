@@ -2,14 +2,16 @@ use super::permissions::requirements_stack;
 use super::*;
 use ApprovalsReviewer::AutoReview;
 use ApprovalsReviewer::User;
+use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use pretty_assertions::assert_eq;
 
-#[tokio::test]
-async fn permission_shortcuts_cycle_builtin_modes() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let thread_id = ThreadId::new();
+fn configure_permission_shortcuts(
+    chat: &mut ChatWidget,
+    thread_id: ThreadId,
+    guardian_approval_enabled: bool,
+) {
     chat.thread_id = Some(thread_id);
-    chat.set_feature_enabled(Feature::GuardianApproval, /*enabled*/ true);
+    chat.set_feature_enabled(Feature::GuardianApproval, guardian_approval_enabled);
     chat.chat_keymap.next_permission_mode = vec![crate::key_hint::plain(KeyCode::F(8))];
     chat.chat_keymap.previous_permission_mode = vec![crate::key_hint::plain(KeyCode::F(7))];
     #[cfg(target_os = "windows")]
@@ -17,25 +19,103 @@ async fn permission_shortcuts_cycle_builtin_modes() {
         chat.config.notices.hide_world_writable_warning = Some(true);
         chat.set_windows_sandbox_mode(Some(WindowsSandboxModeToml::Unelevated));
     }
+}
+
+fn set_current_permission_mode(
+    chat: &mut ChatWidget,
+    profile: PermissionProfile,
+    profile_id: &str,
+    approval: AskForApproval,
+    reviewer: ApprovalsReviewer,
+) {
+    chat.config
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+            profile,
+            ActivePermissionProfile::new(profile_id),
+        ))
+        .expect("set current profile");
+    chat.config
+        .permissions
+        .approval_policy
+        .set(approval.to_core())
+        .expect("set current approval policy");
+    chat.config.approvals_reviewer = reviewer;
+}
+
+fn expect_full_access_confirmation(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    expected_thread_id: ThreadId,
+) -> (ApprovalPreset, FullAccessConfirmationContext) {
+    let AppEvent::OpenFullAccessConfirmation { preset, context } =
+        rx.try_recv().expect("full-access confirmation")
+    else {
+        panic!("full access must be confirmed before the shortcut applies it");
+    };
+    let FullAccessConfirmationContext::PermissionShortcut {
+        thread_id,
+        selection,
+    } = &context
+    else {
+        panic!("full access must retain the shortcut continuation");
+    };
+    assert_eq!(
+        (
+            preset.id,
+            *thread_id,
+            selection.profile_id.as_str(),
+            selection.approval_policy,
+            selection.approvals_reviewer,
+            selection.display_label.as_str(),
+        ),
+        (
+            "full-access",
+            expected_thread_id,
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
+            Some(AskForApproval::Never),
+            Some(User),
+            "Full Access",
+        )
+    );
+    (preset, context)
+}
+
+#[tokio::test]
+async fn permission_shortcuts_cycle_builtin_modes() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    configure_permission_shortcuts(
+        &mut chat, thread_id, /*guardian_approval_enabled*/ true,
+    );
     for (current, reviewer, key, expected, next_reviewer) in [
         (":workspace", User, KeyCode::F(8), ":workspace", AutoReview),
-        (":workspace", AutoReview, KeyCode::F(8), ":read-only", User),
+        (
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
+            User,
+            KeyCode::F(8),
+            ":read-only",
+            User,
+        ),
         (":read-only", User, KeyCode::F(8), ":workspace", User),
-        (":read-only", User, KeyCode::F(7), ":workspace", AutoReview),
+        (
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
+            User,
+            KeyCode::F(7),
+            ":workspace",
+            AutoReview,
+        ),
     ] {
-        let profile = if current == ":read-only" {
-            PermissionProfile::read_only()
-        } else {
-            PermissionProfile::workspace_write()
+        let (profile, approval) = match current {
+            ":read-only" => (PermissionProfile::read_only(), AskForApproval::OnRequest),
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS => {
+                (PermissionProfile::Disabled, AskForApproval::Never)
+            }
+            _ => (
+                PermissionProfile::workspace_write(),
+                AskForApproval::OnRequest,
+            ),
         };
-        chat.config
-            .permissions
-            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
-                profile,
-                ActivePermissionProfile::new(current),
-            ))
-            .expect("set current profile");
-        chat.config.approvals_reviewer = reviewer;
+        set_current_permission_mode(&mut chat, profile, current, approval, reviewer);
         chat.handle_key_event(KeyEvent::from(key));
         chat.handle_key_event(KeyEvent::from(key));
         let AppEvent::ApplyPermissionShortcut {
@@ -88,6 +168,143 @@ async fn permission_shortcuts_cycle_builtin_modes() {
         ));
         assert!(rx.try_recv().is_err());
     }
+}
+
+#[tokio::test]
+async fn permission_shortcuts_route_full_access_through_confirmation() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    configure_permission_shortcuts(
+        &mut chat, thread_id, /*guardian_approval_enabled*/ false,
+    );
+    for (current, profile, key) in [
+        (
+            ":workspace",
+            PermissionProfile::workspace_write(),
+            KeyCode::F(8),
+        ),
+        (":read-only", PermissionProfile::read_only(), KeyCode::F(7)),
+    ] {
+        set_current_permission_mode(&mut chat, profile, current, AskForApproval::OnRequest, User);
+
+        chat.handle_key_event(KeyEvent::from(key));
+
+        let _confirmation = expect_full_access_confirmation(&mut rx, thread_id);
+        assert!(rx.try_recv().is_err(), "must emit only the confirmation");
+        chat.complete_permission_shortcut(thread_id);
+    }
+}
+
+#[tokio::test]
+async fn permission_shortcut_full_access_confirmation_controls_session_action() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    configure_permission_shortcuts(
+        &mut chat, thread_id, /*guardian_approval_enabled*/ false,
+    );
+    set_current_permission_mode(
+        &mut chat,
+        PermissionProfile::workspace_write(),
+        ":workspace",
+        AskForApproval::OnRequest,
+        User,
+    );
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::F(8)));
+    chat.handle_key_event(KeyEvent::from(KeyCode::F(8)));
+    let (preset, context) = expect_full_access_confirmation(&mut rx, thread_id);
+    assert!(
+        rx.try_recv().is_err(),
+        "pending confirmation must not repeat"
+    );
+    chat.open_full_access_confirmation(preset, context);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert!(rx.try_recv().is_err(), "cancel must not apply permissions");
+    assert_eq!(
+        (
+            chat.config
+                .permissions
+                .active_permission_profile()
+                .map(|profile| profile.id),
+            chat.config.permissions.permission_profile().clone(),
+            AskForApproval::from(chat.config.permissions.approval_policy.value()),
+        ),
+        (
+            Some(":workspace".to_string()),
+            PermissionProfile::workspace_write(),
+            AskForApproval::OnRequest,
+        )
+    );
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::F(8)));
+    let (preset, context) = expect_full_access_confirmation(&mut rx, thread_id);
+    chat.open_full_access_confirmation(preset, context);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let AppEvent::ApplyPermissionShortcut {
+        thread_id: source_thread_id,
+        selection,
+    } = rx.try_recv().expect("confirmed full-access shortcut")
+    else {
+        panic!("confirmation must apply through the session shortcut path");
+    };
+    assert_eq!(
+        (
+            source_thread_id,
+            selection.profile_id,
+            selection.approval_policy,
+            selection.approvals_reviewer,
+            selection.display_label,
+        ),
+        (
+            thread_id,
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS.to_string(),
+            Some(AskForApproval::Never),
+            Some(User),
+            "Full Access".to_string(),
+        )
+    );
+    assert!(rx.try_recv().is_err(), "must emit only one session action");
+}
+
+#[tokio::test]
+async fn permission_shortcuts_skip_disallowed_full_access() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    configure_permission_shortcuts(
+        &mut chat, thread_id, /*guardian_approval_enabled*/ false,
+    );
+    chat.config.config_layer_stack = requirements_stack(codex_config::ConfigRequirementsToml {
+        allowed_sandbox_modes: Some(vec![
+            codex_config::SandboxModeRequirement::ReadOnly,
+            codex_config::SandboxModeRequirement::WorkspaceWrite,
+        ]),
+        ..Default::default()
+    });
+    set_current_permission_mode(
+        &mut chat,
+        PermissionProfile::workspace_write(),
+        ":workspace",
+        AskForApproval::OnRequest,
+        User,
+    );
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::F(8)));
+
+    let AppEvent::ApplyPermissionShortcut {
+        thread_id: source_thread_id,
+        selection,
+    } = rx.try_recv().expect("next allowed permission selection")
+    else {
+        panic!("disallowed full access must be skipped");
+    };
+    assert_eq!(
+        (source_thread_id, selection.profile_id),
+        (thread_id, ":read-only".to_string())
+    );
+    assert!(rx.try_recv().is_err(), "must emit only one selection");
 }
 
 #[tokio::test]
