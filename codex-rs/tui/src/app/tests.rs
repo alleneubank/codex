@@ -40,6 +40,7 @@ use crate::chatwidget::tests::helpers::set_active_cell;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::chatwidget::tests::set_chatgpt_auth;
 use crate::chatwidget::tests::set_fast_mode_test_catalog;
+use crate::collaboration_modes;
 use crate::file_search::FileSearchManager;
 use crate::goal_files;
 use crate::history_cell::AgentMarkdownCell;
@@ -5460,6 +5461,7 @@ async fn make_test_app() -> App {
         agent_navigation: AgentNavigationState::default(),
         agents_overview: Default::default(),
         side_threads: HashMap::new(),
+        session_reasoning_effort_states: HashMap::new(),
         abandoned_side_threads: HashSet::new(),
         active_thread_id: None,
         active_thread_rx: None,
@@ -5537,6 +5539,7 @@ async fn make_test_app_with_channels() -> (
             agent_navigation: AgentNavigationState::default(),
             agents_overview: Default::default(),
             side_threads: HashMap::new(),
+            session_reasoning_effort_states: HashMap::new(),
             abandoned_side_threads: HashSet::new(),
             active_thread_id: None,
             active_thread_rx: None,
@@ -8180,6 +8183,114 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
         }
     })
     .await;
+}
+
+fn replay_primary_session(app: &mut App) {
+    let session = app
+        .primary_session_configured
+        .clone()
+        .expect("primary session should be cached");
+    app.replay_thread_snapshot(
+        ThreadEventSnapshot {
+            session: Some(session),
+            turns: Vec::new(),
+            events: Vec::new(),
+            input_state: None,
+        },
+        /*resume_restored_queue*/ false,
+    );
+}
+
+fn assert_effort_in_both_modes(app: &mut App, effort: ReasoningEffortConfig) {
+    for _ in 0..2 {
+        assert_eq!(
+            app.chat_widget.current_reasoning_effort(),
+            Some(effort.clone())
+        );
+        app.chat_widget
+            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    }
+}
+
+#[tokio::test]
+async fn session_effort_updates_are_thread_local() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let configured = ReasoningEffortConfig::Medium;
+        let configured_plan = ReasoningEffortConfig::Low;
+        app.config.model_reasoning_effort = Some(configured.clone());
+        app.config.plan_mode_reasoning_effort = Some(configured_plan.clone());
+        app.chat_widget
+            .set_configured_reasoning_effort(Some(configured.clone()));
+        app.chat_widget
+            .set_plan_mode_reasoning_effort(Some(configured_plan.clone()));
+
+        let mut app_server =
+            crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
+        let started = app_server
+            .start_thread(app.chat_widget.config_ref())
+            .await?;
+        app.enqueue_primary_thread_session(started.session, started.turns)
+            .await?;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        app.chat_widget.set_collaboration_mask(
+            collaboration_modes::plan_mask(app.model_catalog.as_ref()).expect("Plan mode"),
+        );
+
+        for (event, effort) in [
+            (
+                AppEvent::UpdateSessionPlanModeReasoningEffort(Some(ReasoningEffortConfig::Ultra)),
+                ReasoningEffortConfig::Ultra,
+            ),
+            (
+                AppEvent::UpdateSessionPlanModeReasoningEffort(Some(ReasoningEffortConfig::XHigh)),
+                ReasoningEffortConfig::XHigh,
+            ),
+        ] {
+            if app.chat_widget.active_collaboration_mode_kind() != ModeKind::Plan {
+                app.chat_widget
+                    .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            }
+            app.handle_event(&mut tui, &mut app_server, event).await?;
+            replay_primary_session(&mut app);
+            assert_effort_in_both_modes(&mut app, effort);
+        }
+        for effort in [ReasoningEffortConfig::Ultra, ReasoningEffortConfig::High] {
+            app.handle_event(
+                &mut tui,
+                &mut app_server,
+                AppEvent::UpdateSessionReasoningEffort(Some(effort)),
+            )
+            .await?;
+        }
+        replay_primary_session(&mut app);
+        assert_effort_in_both_modes(&mut app, ReasoningEffortConfig::High);
+
+        assert_eq!(app.config.model_reasoning_effort, Some(configured.clone()));
+        assert_eq!(
+            app.config.plan_mode_reasoning_effort,
+            Some(configured_plan.clone())
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(configured.clone())
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().plan_mode_reasoning_effort,
+            Some(configured_plan.clone())
+        );
+
+        let fresh_config = app.fresh_session_config();
+        let second_thread = app_server.start_thread(&fresh_config).await?;
+        assert_eq!(second_thread.session.reasoning_effort, Some(configured));
+        assert_eq!(
+            fresh_config.plan_mode_reasoning_effort,
+            Some(configured_plan)
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]

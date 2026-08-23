@@ -85,13 +85,30 @@ impl ChatWidget {
         self.invalidate_custom_status_line_project_dir_cache();
         let forked_from_id = session.forked_from_id;
         let default_model = session.model.clone();
+        let collaboration_reasoning_effort = session
+            .collaboration_mode
+            .as_deref()
+            .and_then(CollaborationMode::reasoning_effort);
+        let default_reasoning_effort =
+            if collaboration_reasoning_effort == Some(ReasoningEffortConfig::Ultra) {
+                Some(ReasoningEffortConfig::Ultra)
+            } else {
+                session.reasoning_effort.clone()
+            };
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(default_model.clone()),
-            Some(session.reasoning_effort.clone()),
+            Some(default_reasoning_effort.clone()),
             /*developer_instructions*/ None,
         );
-        if session.reasoning_effort == Some(ReasoningEffortConfig::Ultra) {
-            self.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Ultra));
+        self.session_plan_mode_reasoning_effort = None;
+        if default_reasoning_effort == Some(ReasoningEffortConfig::Ultra) {
+            self.session_plan_mode_reasoning_effort = Some(Some(ReasoningEffortConfig::Ultra));
+        } else if let Some(collaboration_mode) = session
+            .collaboration_mode
+            .as_deref()
+            .filter(|mode| mode.mode == ModeKind::Plan)
+        {
+            self.session_plan_mode_reasoning_effort = Some(collaboration_mode.reasoning_effort());
         }
         match session.collaboration_mode.as_deref() {
             Some(collaboration_mode) => {

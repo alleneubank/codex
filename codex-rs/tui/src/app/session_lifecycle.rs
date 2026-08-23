@@ -599,6 +599,7 @@ impl App {
     pub(super) fn reset_thread_event_state(&mut self) {
         self.abort_all_thread_event_listeners();
         self.thread_event_channels.clear();
+        self.session_reasoning_effort_states.clear();
         self.agent_navigation.clear();
         self.side_threads.clear();
         self.active_thread_id = None;

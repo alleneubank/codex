@@ -1553,10 +1553,9 @@ impl App {
         self.chat_widget
             .set_queue_autosend_suppressed(/*suppressed*/ true);
         if let Some(session) = snapshot.session {
-            if session.reasoning_effort != Some(ReasoningEffortConfig::Ultra) {
-                self.chat_widget
-                    .set_plan_mode_reasoning_effort(self.config.plan_mode_reasoning_effort.clone());
-            }
+            let thread_id = session.thread_id;
+            self.chat_widget
+                .set_plan_mode_reasoning_effort(self.config.plan_mode_reasoning_effort.clone());
             if self.side_threads.contains_key(&session.thread_id) {
                 self.chat_widget.handle_side_thread_session(session);
             } else if suppress_replay_notices {
@@ -1564,6 +1563,7 @@ impl App {
             } else {
                 self.chat_widget.handle_thread_session(session);
             }
+            self.restore_thread_session_reasoning_effort_state(thread_id);
         }
         self.chat_widget.restore_thread_input_state(
             snapshot.input_state,

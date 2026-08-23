@@ -65,6 +65,23 @@ fn queue_composer_text_with_tab(chat: &mut ChatWidget, text: &str) {
     chat.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
 }
 
+fn assert_default_session_effort_update(events: &[AppEvent], expected: ReasoningEffortConfig) {
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateSessionReasoningEffort(effort) if effort.as_ref() == Some(&expected)
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateSessionPlanModeReasoningEffort(_)
+            | AppEvent::UpdateReasoningEffort(_)
+            | AppEvent::UpdatePlanModeReasoningEffort(_)
+            | AppEvent::UpdateModel(_)
+            | AppEvent::PersistModelSelection { .. }
+            | AppEvent::PersistPlanModeReasoningEffort(_)
+            | AppEvent::ApplyAdvancedReasoning { .. }
+    )));
+}
+
 fn queue_goal_with_large_paste(chat: &mut ChatWidget, paste: String) {
     chat.bottom_pane
         .set_composer_text("/goal ".to_string(), Vec::new(), Vec::new());
@@ -403,11 +420,117 @@ async fn queued_slash_menu_cancel_drains_next_input() {
     )
     .await;
     assert_cancelled_queued_menu_drains_next_input(
+        "/effort",
+        "Select Reasoning Level",
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    )
+    .await;
+    assert_cancelled_queued_menu_drains_next_input(
         "/permissions",
         "Update Model Permissions",
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
     )
     .await;
+}
+
+#[tokio::test]
+async fn queued_slash_effort_without_model_metadata_drains_next_input() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(Vec::new()));
+    handle_turn_started(&mut chat, "turn-1");
+
+    queue_composer_text_with_tab(&mut chat, "/effort");
+    queue_composer_text_with_tab(&mut chat, "hello after unavailable effort");
+
+    complete_turn_with_message(&mut chat, "turn-1", Some("done"));
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "hello after unavailable effort".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected queued message after unavailable effort, got {other:?}"),
+    }
+    assert!(chat.input_queue.queued_user_messages.is_empty());
+}
+
+#[tokio::test]
+async fn slash_effort_emits_session_only_update() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+
+    chat.dispatch_command(SlashCommand::Effort);
+    assert_chatwidget_snapshot!(
+        "slash_effort_popup",
+        render_bottom_popup(&chat, /*width*/ 80)
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_default_session_effort_update(&events, ReasoningEffortConfig::High);
+}
+
+fn install_advanced_effort_catalog(chat: &mut ChatWidget) {
+    let mut preset = get_available_model(chat, "gpt-5.4");
+    preset
+        .supported_reasoning_efforts
+        .retain(|option| !ChatWidget::is_advanced_reasoning_effort(&option.effort));
+    preset
+        .supported_reasoning_efforts
+        .push(ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Ultra,
+            description: "Ultra reasoning".to_string(),
+        });
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+}
+
+#[tokio::test]
+async fn slash_effort_advanced_selection_remains_session_only() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.config
+        .multi_agent_v2
+        .max_concurrent_threads_per_session = 8;
+    install_advanced_effort_catalog(&mut chat);
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+
+    chat.dispatch_command(SlashCommand::Effort);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let advanced_model = std::iter::from_fn(|| rx.try_recv().ok()).find_map(|event| match event {
+        AppEvent::OpenSessionAdvancedReasoningPopup { model } => Some(model),
+        _ => None,
+    });
+    chat.open_session_advanced_reasoning_popup(
+        advanced_model.expect("session advanced reasoning popup"),
+    );
+    assert_chatwidget_snapshot!(
+        "slash_effort_advanced_popup",
+        render_bottom_popup(&chat, /*width*/ 80)
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_default_session_effort_update(&events, ReasoningEffortConfig::Ultra);
+    let warnings = events
+        .iter()
+        .filter_map(|event| match event {
+            AppEvent::InsertHistoryCell(cell) => {
+                Some(lines_to_single_string(&cell.display_lines(/*width*/ 80)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1);
+    assert_chatwidget_snapshot!("slash_effort_ultra_warning", &warnings[0]);
 }
 
 #[tokio::test]

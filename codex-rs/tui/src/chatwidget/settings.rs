@@ -140,20 +140,24 @@ impl ChatWidget {
     /// so the footer reflects it without waiting for the next mode switch.
     /// Passing `None` resets to the Plan-mode preset default.
     pub(crate) fn set_plan_mode_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
-        self.config.plan_mode_reasoning_effort = effort.clone();
-        if self.collaboration_modes_enabled()
-            && let Some(mask) = self.active_collaboration_mask.as_mut()
-            && mask.mode == Some(ModeKind::Plan)
-        {
-            if let Some(effort) = effort {
-                mask.reasoning_effort = Some(Some(effort));
-            } else if let Some(plan_mask) =
-                collaboration_modes::plan_mask(self.model_catalog.as_ref())
-            {
-                mask.reasoning_effort = plan_mask.reasoning_effort;
-            }
+        self.config.plan_mode_reasoning_effort = effort;
+        self.session_plan_mode_reasoning_effort = None;
+        self.refresh_active_plan_mode_reasoning_effort();
+    }
+
+    /// Override Plan-mode reasoning only for the active thread/session.
+    pub(crate) fn set_session_plan_mode_reasoning_effort(
+        &mut self,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        let ephemeral_default_ultra = self.current_collaboration_mode.reasoning_effort()
+            == Some(ReasoningEffortConfig::Ultra)
+            && self.config.model_reasoning_effort != Some(ReasoningEffortConfig::Ultra);
+        if effort == Some(ReasoningEffortConfig::Ultra) || ephemeral_default_ultra {
+            self.set_reasoning_effort(effort.clone());
         }
-        self.refresh_model_dependent_surfaces();
+        self.session_plan_mode_reasoning_effort = Some(effort);
+        self.refresh_active_plan_mode_reasoning_effort();
     }
 
     /// Set the reasoning effort for the non-Plan collaboration mode.
@@ -161,6 +165,18 @@ impl ChatWidget {
     /// Does not touch the active Plan mask — Plan reasoning is controlled
     /// exclusively by the Plan preset and `set_plan_mode_reasoning_effort`.
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
+        if effort == Some(ReasoningEffortConfig::Ultra) {
+            self.session_plan_mode_reasoning_effort = Some(Some(ReasoningEffortConfig::Ultra));
+        } else if self.session_plan_mode_reasoning_effort
+            == Some(Some(ReasoningEffortConfig::Ultra))
+        {
+            self.session_plan_mode_reasoning_effort =
+                if self.config.plan_mode_reasoning_effort == Some(ReasoningEffortConfig::Ultra) {
+                    None
+                } else {
+                    Some(effort.clone())
+                };
+        }
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             /*model*/ None,
             Some(effort.clone()),
@@ -173,6 +189,37 @@ impl ChatWidget {
             // Generic "global default" updates should not mutate the active Plan mask.
             // Plan reasoning is controlled by the Plan preset and Plan-only override updates.
             mask.reasoning_effort = Some(effort);
+        }
+        self.refresh_model_dependent_surfaces();
+    }
+
+    pub(super) fn apply_plan_mode_reasoning_effort_override(
+        &self,
+        mask: &mut CollaborationModeMask,
+    ) {
+        if mask.mode != Some(ModeKind::Plan) {
+            return;
+        }
+        match self.session_plan_mode_reasoning_effort.clone() {
+            Some(Some(effort)) => mask.reasoning_effort = Some(Some(effort)),
+            Some(None) => {
+                if let Some(plan_mask) = collaboration_modes::plan_mask(self.model_catalog.as_ref())
+                {
+                    mask.reasoning_effort = plan_mask.reasoning_effort;
+                }
+            }
+            None => {
+                if let Some(effort) = self.config.plan_mode_reasoning_effort.clone() {
+                    mask.reasoning_effort = Some(Some(effort));
+                }
+            }
+        }
+    }
+
+    fn refresh_active_plan_mode_reasoning_effort(&mut self) {
+        if let Some(mut mask) = self.active_collaboration_mask.take() {
+            self.apply_plan_mode_reasoning_effort_override(&mut mask);
+            self.active_collaboration_mask = Some(mask);
         }
         self.refresh_model_dependent_surfaces();
     }
@@ -708,11 +755,7 @@ impl ChatWidget {
         let previous_mode = self.active_mode_kind();
         let previous_model = self.current_model().to_string();
         let previous_effort = self.effective_reasoning_effort();
-        if mask.mode == Some(ModeKind::Plan)
-            && let Some(effort) = self.config.plan_mode_reasoning_effort.clone()
-        {
-            mask.reasoning_effort = Some(Some(effort));
-        }
+        self.apply_plan_mode_reasoning_effort_override(&mut mask);
         if mask.mode == Some(ModeKind::Plan) {
             self.dismissed_plan_mode_nudge_scopes
                 .insert(self.plan_mode_nudge_scope());

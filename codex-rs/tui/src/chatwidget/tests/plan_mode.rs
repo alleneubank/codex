@@ -495,6 +495,74 @@ async fn reasoning_shortcut_in_plan_mode_updates_plan_override_without_prompt_or
 }
 
 #[tokio::test]
+async fn slash_effort_in_plan_mode_updates_session_override_without_prompt_or_persist() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Low));
+    let mut plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
+        .expect("expected plan collaboration mode");
+    plan_mask.reasoning_effort = Some(Some(ReasoningEffortConfig::High));
+    chat.set_effective_collaboration_mode(chat.current_collaboration_mode().apply_mask(&plan_mask));
+    let _ = drain_insert_history(&mut rx);
+
+    chat.dispatch_command(SlashCommand::Effort);
+    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("High (current)"));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateSessionPlanModeReasoningEffort(Some(ReasoningEffortConfig::XHigh))
+    )));
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AppEvent::UpdateSessionReasoningEffort(_)
+            | AppEvent::UpdateReasoningEffort(_)
+            | AppEvent::UpdatePlanModeReasoningEffort(_)
+            | AppEvent::PersistPlanModeReasoningEffort(_)
+            | AppEvent::PersistModelSelection { .. }
+    )));
+}
+
+#[tokio::test]
+async fn session_plan_effort_survives_thread_input_state_restore() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Low));
+    chat.set_collaboration_mask(
+        collaboration_modes::plan_mask(chat.model_catalog.as_ref())
+            .expect("expected plan collaboration mode"),
+    );
+    chat.set_session_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::High));
+    chat.set_collaboration_mask(
+        collaboration_modes::default_mask(chat.model_catalog.as_ref())
+            .expect("expected default collaboration mode"),
+    );
+    let input_state = chat
+        .capture_thread_input_state()
+        .expect("expected thread input state");
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Low));
+    chat.restore_thread_input_state(
+        Some(input_state),
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: false,
+        },
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+
+    assert_eq!(
+        chat.current_reasoning_effort(),
+        Some(ReasoningEffortConfig::High)
+    );
+    assert_eq!(
+        chat.config_ref().plan_mode_reasoning_effort,
+        Some(ReasoningEffortConfig::Low)
+    );
+}
+
+#[tokio::test]
 async fn advanced_reasoning_selection_in_plan_mode_uses_expected_scope() {
     for effort in [ReasoningEffortConfig::Ultra, ReasoningEffortConfig::Max] {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
@@ -1793,6 +1861,14 @@ async fn set_reasoning_effort_does_not_override_active_plan_override() {
         Some(ReasoningEffortConfig::High)
     );
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
+    chat.set_configured_reasoning_effort(Some(ReasoningEffortConfig::Ultra));
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Ultra));
+    chat.set_session_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(
+        chat.current_reasoning_effort(),
+        Some(ReasoningEffortConfig::Ultra)
+    );
 }
 
 #[tokio::test]

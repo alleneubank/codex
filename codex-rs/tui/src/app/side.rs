@@ -499,6 +499,7 @@ impl App {
     pub(super) async fn discard_thread_local_state(&mut self, thread_id: ThreadId) {
         self.abort_thread_event_listener(thread_id);
         self.thread_event_channels.remove(&thread_id);
+        self.session_reasoning_effort_states.remove(&thread_id);
         self.side_threads.remove(&thread_id);
         self.agent_navigation.remove(thread_id);
         if self.active_thread_id == Some(thread_id) {

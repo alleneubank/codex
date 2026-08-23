@@ -1414,6 +1414,13 @@ impl App {
             }
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort.clone());
+                self.cache_active_thread_session_reasoning_effort_state();
+                self.sync_active_thread_reasoning_setting(app_server, effort)
+                    .await;
+            }
+            AppEvent::UpdateSessionReasoningEffort(effort) => {
+                self.chat_widget.set_reasoning_effort(effort.clone());
+                self.cache_active_thread_session_reasoning_effort_state();
                 self.sync_active_thread_reasoning_setting(app_server, effort)
                     .await;
             }
@@ -1461,11 +1468,16 @@ impl App {
             AppEvent::OpenAdvancedReasoningPopup { model } => {
                 self.chat_widget.open_advanced_reasoning_popup(model);
             }
+            AppEvent::OpenSessionAdvancedReasoningPopup { model } => {
+                self.chat_widget
+                    .open_session_advanced_reasoning_popup(model);
+            }
             AppEvent::ApplyAdvancedReasoning { model, effort } => {
                 let model_changed = self.chat_widget.current_model() != model
                     || self.chat_widget.current_collaboration_mode().model() != model;
                 let default_effort =
                     self.on_apply_advanced_reasoning(model.as_str(), effort.clone());
+                self.cache_active_thread_session_reasoning_effort_state();
                 if model_changed {
                     self.sync_active_thread_model_setting(
                         app_server,
@@ -2289,6 +2301,14 @@ impl App {
             }
             AppEvent::UpdatePlanModeReasoningEffort(effort) => {
                 self.on_update_plan_mode_reasoning_effort(effort);
+                self.cache_active_thread_session_reasoning_effort_state();
+                self.sync_active_thread_plan_mode_reasoning_setting(app_server)
+                    .await;
+            }
+            AppEvent::UpdateSessionPlanModeReasoningEffort(effort) => {
+                self.chat_widget
+                    .set_session_plan_mode_reasoning_effort(effort);
+                self.cache_active_thread_session_reasoning_effort_state();
                 self.sync_active_thread_plan_mode_reasoning_setting(app_server)
                     .await;
             }

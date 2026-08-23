@@ -3898,10 +3898,7 @@ async fn reasoning_shortcut_is_ignored_with_model_popup_open() {
 
 #[tokio::test]
 async fn reasoning_up_shortcut_does_not_silently_enter_advanced_effort() {
-    for (model, model_path) in [
-        ("gpt-5.4", "All models → gpt-5.4"),
-        ("codex-auto-test", "codex-auto-test"),
-    ] {
+    for model in ["gpt-5.4", "codex-auto-test"] {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
         chat.thread_id = Some(ThreadId::new());
         let mut preset = get_available_model(&chat, "gpt-5.4");
@@ -3941,9 +3938,7 @@ async fn reasoning_up_shortcut_does_not_silently_enter_advanced_effort() {
                 .collect::<Vec<_>>();
             assert_eq!(
                 messages,
-                vec![format!(
-                    "• Max and Ultra are available under /model → {model_path} → More reasoning…\n"
-                )]
+                vec!["• Max and Ultra are available under /effort → More reasoning…\n".to_string()]
             );
         }
     }
