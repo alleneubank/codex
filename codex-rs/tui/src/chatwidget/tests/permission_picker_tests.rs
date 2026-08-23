@@ -21,7 +21,10 @@ async fn clipped_full_access_confirmation_discloses_hidden_warning_text() {
             .find(|preset| preset.id == "full-access")
             .unwrap();
         chat.open_full_access_confirmation(
-            preset, /*return_to_permissions*/ true, /*profile_selection*/ None,
+            preset,
+            FullAccessConfirmationContext::ApprovalPreset {
+                return_to_permissions: true,
+            },
         );
 
         let area = Rect::new(/*x*/ 0, /*y*/ 0, /*width*/ 40, height);
@@ -82,7 +85,10 @@ async fn permission_picker_retry_and_confirmation_follow_configured_bindings() {
         .find(|preset| preset.id == "full-access")
         .unwrap();
     chat.open_full_access_confirmation(
-        preset, /*return_to_permissions*/ true, /*profile_selection*/ None,
+        preset,
+        FullAccessConfirmationContext::ApprovalPreset {
+            return_to_permissions: true,
+        },
     );
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::F(/*n*/ 3)));
