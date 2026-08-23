@@ -1,6 +1,12 @@
-//! Session-scoped shortcuts for the ordinary built-in permission modes.
+//! Session-scoped shortcuts for built-in permission modes, including guarded elevation.
 
 use super::*;
+
+struct PermissionShortcutChoice {
+    is_current: bool,
+    preset: ApprovalPreset,
+    selection: PermissionProfileSelection,
+}
 
 impl ChatWidget {
     pub(super) fn handle_permission_shortcut(&mut self, key_event: KeyEvent) -> bool {
@@ -34,7 +40,7 @@ impl ChatWidget {
         let active_profile = self.config.permissions.active_permission_profile();
         let mut choices = Vec::new();
         for preset in builtin_approval_presets() {
-            if !matches!(preset.id, "read-only" | "auto") {
+            if !matches!(preset.id, "read-only" | "auto" | "full-access") {
                 continue;
             }
             for reviewer in [ApprovalsReviewer::User, ApprovalsReviewer::AutoReview] {
@@ -83,15 +89,16 @@ impl ChatWidget {
                     ("auto", ApprovalsReviewer::AutoReview) => APPROVE_FOR_ME_LABEL,
                     _ => preset.label,
                 };
-                choices.push((
+                choices.push(PermissionShortcutChoice {
                     is_current,
-                    PermissionProfileSelection {
+                    preset: preset.clone(),
+                    selection: PermissionProfileSelection {
                         profile_id: preset.active_permission_profile.id.clone(),
                         approval_policy: Some(approval),
                         approvals_reviewer: Some(reviewer),
                         display_label: label.to_string(),
                     },
-                ));
+                });
             }
         }
         if !forward {
@@ -99,20 +106,32 @@ impl ChatWidget {
         }
         let start = choices
             .iter()
-            .position(|(current, _)| *current)
+            .position(|choice| choice.is_current)
             .map_or(0, |index| index + 1);
-        if let Some((_, selection)) = choices
+        if let Some(choice) = choices
             .iter()
             .cycle()
             .skip(start)
             .take(choices.len())
-            .find(|(current, _)| !current)
+            .find(|choice| !choice.is_current)
         {
-            self.permission_shortcut_pending = true;
-            self.app_event_tx.send(AppEvent::ApplyPermissionShortcut {
-                thread_id,
-                selection: selection.clone(),
-            });
+            if choice.preset.id == "full-access" {
+                self.permission_shortcut_pending = true;
+                self.app_event_tx
+                    .send(AppEvent::OpenFullAccessConfirmation {
+                        preset: choice.preset.clone(),
+                        context: FullAccessConfirmationContext::PermissionShortcut {
+                            thread_id,
+                            selection: choice.selection.clone(),
+                        },
+                    });
+            } else {
+                self.permission_shortcut_pending = true;
+                self.app_event_tx.send(AppEvent::ApplyPermissionShortcut {
+                    thread_id,
+                    selection: choice.selection.clone(),
+                });
+            }
         } else {
             self.add_info_message(
                 "No other permission modes are available.".to_string(),
