@@ -769,6 +769,7 @@ impl App {
         self.realtime_replay_order.clear();
         self.pending_server_profiles.clear();
         self.agents_overview.activity.clear();
+        self.session_reasoning_effort_states.clear();
         self.agent_navigation.clear();
         self.side_threads.clear();
         self.active_thread_id = None;

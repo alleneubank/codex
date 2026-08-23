@@ -109,11 +109,12 @@ async fn model_default_saves_report_server_outcomes_and_target_server_profile() 
             assert!(!messages.contains("Model changed"));
             assert!(!messages.contains("Service tier set"));
         } else {
+            // Ultra is session-only; the preceding explicit selection remains the saved default.
             assert_eq!(
                 toml::from_str::<toml::Value>(&persisted)?,
                 toml::Value::Table(toml::toml! {
                     model = "gpt-5.4"
-                    model_reasoning_effort = "medium"
+                    model_reasoning_effort = "high"
                     plan_mode_reasoning_effort = "high"
                     service_tier = "fast"
                 })
