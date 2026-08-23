@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/slash_commands.rs
+expression: "render_bottom_popup(&chat, 80)"
+---
+  Advanced Reasoning
+  ⚠ Consumes usage limits faster
+
+› 1. Ultra  For demanding work using multiple agents · highest usage
+
+  Press enter to confirm or esc to go back
