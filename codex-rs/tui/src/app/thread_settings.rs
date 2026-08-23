@@ -18,6 +18,24 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 
 impl App {
+    pub(super) fn cache_active_thread_session_reasoning_effort_state(&mut self) {
+        if let Some(thread_id) = self.active_thread_id {
+            self.session_reasoning_effort_states
+                .insert(thread_id, self.chat_widget.session_reasoning_effort_state());
+        }
+    }
+
+    pub(super) fn restore_thread_session_reasoning_effort_state(&mut self, thread_id: ThreadId) {
+        if let Some(state) = self
+            .session_reasoning_effort_states
+            .get(&thread_id)
+            .cloned()
+        {
+            self.chat_widget
+                .restore_session_reasoning_effort_state(state);
+        }
+    }
+
     pub(super) async fn sync_active_thread_model_setting(
         &mut self,
         app_server: &mut AppServerSession,

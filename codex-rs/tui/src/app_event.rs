@@ -994,6 +994,9 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Update reasoning effort only for the active thread/session.
+    UpdateSessionReasoningEffort(Option<ReasoningEffort>),
+
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
 
@@ -1049,6 +1052,11 @@ pub(crate) enum AppEvent {
 
     /// Open the explicit Max/Ultra reasoning selection popup for a model.
     OpenAdvancedReasoningPopup {
+        model: ModelPreset,
+    },
+
+    /// Open the explicit Max/Ultra picker for a session-only effort change.
+    OpenSessionAdvancedReasoningPopup {
         model: ModelPreset,
     },
 
@@ -1195,6 +1203,9 @@ pub(crate) enum AppEvent {
 
     /// Update the Plan-mode-specific reasoning effort in memory.
     UpdatePlanModeReasoningEffort(Option<ReasoningEffort>),
+
+    /// Update Plan-mode reasoning only for the active thread/session.
+    UpdateSessionPlanModeReasoningEffort(Option<ReasoningEffort>),
 
     /// Persist the acknowledgement flag for the world-writable directories warning.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]

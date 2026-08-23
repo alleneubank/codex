@@ -385,6 +385,8 @@ use self::plugins::PluginListFetchState;
 use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+mod effort_popup;
+pub(crate) use self::effort_popup::SessionReasoningEffortState;
 mod model_popup_state;
 mod model_popups;
 mod notifications;
@@ -576,6 +578,11 @@ pub(crate) struct ChatWidget {
     current_collaboration_mode: CollaborationMode,
     /// The currently active collaboration mask, if any.
     active_collaboration_mask: Option<CollaborationModeMask>,
+    /// Plan effort override owned by the active thread rather than `config.toml`.
+    ///
+    /// The outer `Option` distinguishes following the configured Plan default
+    /// from a thread-scoped reset to the Plan preset's effort.
+    session_plan_mode_reasoning_effort: Option<Option<ReasoningEffortConfig>>,
     has_chatgpt_account: bool,
     pub(crate) requires_openai_auth: bool,
     has_codex_backend_auth: bool,
