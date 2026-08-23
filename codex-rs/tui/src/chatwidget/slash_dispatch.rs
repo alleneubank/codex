@@ -370,6 +370,12 @@ impl ChatWidget {
                 self.open_model_popup();
                 self.defer_input_until_settings_applied();
             }
+            SlashCommand::Effort => {
+                self.open_effort_popup();
+                if !self.no_modal_or_popup_active() {
+                    self.defer_input_until_settings_applied();
+                }
+            }
             SlashCommand::Plan => {
                 self.apply_plan_slash_command();
             }
@@ -1275,6 +1281,7 @@ impl ChatWidget {
             | SlashCommand::Vim
             | SlashCommand::Daybreak
             | SlashCommand::Diff
+            | SlashCommand::Effort
             | SlashCommand::App
             | SlashCommand::Rename
             | SlashCommand::Voice
