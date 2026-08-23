@@ -130,15 +130,8 @@ impl ChatWidget {
             } else {
                 "is"
             };
-            let model_path = if current_model.starts_with("codex-auto-") {
-                current_model
-            } else {
-                format!("All models → {current_model}")
-            };
             self.add_info_message(
-                format!(
-                    "{advanced_label} {verb} available under /model → {model_path} → More reasoning…"
-                ),
+                format!("{advanced_label} {verb} available under /effort → More reasoning…"),
                 /*hint*/ None,
             );
             return true;
@@ -161,7 +154,7 @@ impl ChatWidget {
         true
     }
 
-    fn current_model_preset(&self) -> Option<ModelPreset> {
+    pub(super) fn current_model_preset(&self) -> Option<ModelPreset> {
         let current_model = self.current_model();
         self.model_catalog
             .try_list_models()
