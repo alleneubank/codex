@@ -324,6 +324,7 @@ use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod model_popup_state;
+mod effort_popup;
 mod model_popups;
 mod notifications;
 mod session_model_selection;
