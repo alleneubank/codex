@@ -324,6 +324,7 @@ use self::plugins::PluginListFetchState;
 use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+mod effort_popup;
 mod model_command;
 mod model_popup_state;
 mod model_popups;
