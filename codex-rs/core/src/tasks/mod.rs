@@ -1093,6 +1093,14 @@ impl Session {
                 time_to_first_token_ms,
             })
         };
+        if matches!(event, EventMsg::TurnComplete(_)) {
+            let context =
+                crate::hook_runtime::NotificationHookContext::capture(self, &turn_context).await;
+            self.completed_turn_hook_context
+                .lock()
+                .await
+                .replace(context);
+        }
         let saved_guardian_completion =
             matches!(event, EventMsg::TurnComplete(_)) && self.is_private_guardian_reviewer().await;
         self.finish_turn_diff(&turn_context, &event).await;

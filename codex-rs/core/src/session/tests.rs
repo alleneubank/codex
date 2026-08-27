@@ -742,6 +742,7 @@ async fn request_mcp_server_elicitation_waits_for_user_response(
                     codex_mcp::McpServerKey::unscoped("codex_apps"),
                     RequestId::String("request-1".into()),
                     request,
+                    None,
                 )
                 .await
         }
@@ -6523,6 +6524,7 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
 #[tokio::test]
 async fn mcp_runtime_keeps_local_backend_without_a_selected_local_environment() {
     let (session, turn) = make_session_and_context().await;
+    let session = Arc::new(session);
     let mut desired = session
         .latest_mcp_desired_state(/*auth*/ None, turn.initial_environments.clone())
         .await;
@@ -7125,6 +7127,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         fork_persistence: ForkPersistence::Copied,
         history_initialization: HistoryInitialization::New,
         forked_from_ordinal_exclusive: None,
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     };
     let per_turn_config = session.build_per_turn_config(
@@ -9485,6 +9488,7 @@ where
         fork_persistence: ForkPersistence::Copied,
         history_initialization: HistoryInitialization::New,
         forked_from_ordinal_exclusive: None,
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     });
     let per_turn_config = session.build_per_turn_config(
@@ -10483,6 +10487,7 @@ async fn step_context_keeps_its_mcp_runtime_for_tools() -> anyhow::Result<()> {
 #[tokio::test]
 async fn mcp_dependency_refresh_preserves_current_server_constraints() -> anyhow::Result<()> {
     let (session, _) = make_session_and_context().await;
+    let session = Arc::new(session);
     let mut config = session.get_config().await.as_ref().clone();
     config.mcp_servers = crate::config::Constrained::allow_only(config.mcp_servers.get().clone());
     let config = Arc::new(config);
