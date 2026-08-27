@@ -65,10 +65,22 @@ pub trait ElicitationReviewer: Send + Sync {
 
 pub type ElicitationReviewerHandle = Arc<dyn ElicitationReviewer>;
 
+/// Observer-only lifecycle events for user-visible MCP elicitation dialogs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElicitationNotification {
+    Dialog,
+    UrlDialog,
+    Complete,
+}
+
+type ElicitationNotificationHandler =
+    Arc<dyn Fn(ElicitationNotification) -> BoxFuture<'static, ()> + Send + Sync>;
+
 /// Holds an owner-provided registration while an MCP elicitation is waiting for a response.
 #[derive(Clone)]
 pub struct ElicitationLifecycle {
     register: Arc<dyn Fn() -> Box<dyn Send + Sync> + Send + Sync>,
+    notification_handler: Option<ElicitationNotificationHandler>,
 }
 
 impl ElicitationLifecycle {
@@ -78,7 +90,16 @@ impl ElicitationLifecycle {
     {
         Self {
             register: Arc::new(move || Box::new(register())),
+            notification_handler: None,
         }
+    }
+
+    pub fn with_notification_handler(
+        mut self,
+        handler: impl Fn(ElicitationNotification) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    ) -> Self {
+        self.notification_handler = Some(Arc::new(handler));
+        self
     }
 
     fn start(&self) -> ActiveElicitation {
@@ -86,10 +107,85 @@ impl ElicitationLifecycle {
             _registration: (self.register)(),
         }
     }
+
+    async fn begin_notification(
+        &self,
+        open: ElicitationNotification,
+    ) -> ActiveElicitationNotification {
+        let lifecycle = self.clone();
+        let open_task = tokio::spawn(async move {
+            lifecycle.notify(open).await;
+        });
+        let mut active = ActiveElicitationNotification {
+            lifecycle: self.clone(),
+            completion_pending: true,
+            open_task: Some(open_task),
+        };
+        active.wait_for_open().await;
+        active
+    }
+
+    async fn notify(&self, notification: ElicitationNotification) {
+        if let Some(handler) = &self.notification_handler {
+            handler(notification).await;
+        }
+    }
 }
 
 struct ActiveElicitation {
     _registration: Box<dyn Send + Sync>,
+}
+
+struct ActiveElicitationNotification {
+    lifecycle: ElicitationLifecycle,
+    completion_pending: bool,
+    open_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ActiveElicitationNotification {
+    async fn complete(mut self) {
+        self.wait_for_open().await;
+        self.completion_pending = false;
+        let lifecycle = self.lifecycle.clone();
+        let completion_task = tokio::spawn(async move {
+            lifecycle.notify(ElicitationNotification::Complete).await;
+        });
+        if let Err(error) = completion_task.await {
+            tracing::warn!(%error, "elicitation notification completion task failed");
+        }
+    }
+
+    async fn wait_for_open(&mut self) {
+        if let Some(open_task) = self.open_task.as_mut()
+            && let Err(error) = open_task.await
+        {
+            tracing::warn!(%error, "elicitation notification open task failed");
+        }
+        self.open_task = None;
+    }
+}
+
+impl Drop for ActiveElicitationNotification {
+    fn drop(&mut self) {
+        if !self.completion_pending {
+            return;
+        }
+        let Some(runtime) = tokio::runtime::Handle::try_current().ok() else {
+            tracing::warn!("elicitation notification dropped outside a Tokio runtime");
+            return;
+        };
+        self.completion_pending = false;
+        let lifecycle = self.lifecycle.clone();
+        let open_task = self.open_task.take();
+        runtime.spawn(async move {
+            if let Some(open_task) = open_task
+                && let Err(error) = open_task.await
+            {
+                tracing::warn!(%error, "elicitation notification open task failed");
+            }
+            lifecycle.notify(ElicitationNotification::Complete).await;
+        });
+    }
 }
 
 /// Routes model-visible elicitation response tokens to their exact pending responders.
@@ -182,6 +278,15 @@ impl ElicitationRequestRouter {
                     "elicitation request channel closed unexpectedly",
                 )
             };
+        let notification_type = match &request {
+            ElicitationRequest::Form { .. }
+            | ElicitationRequest::OpenAiForm { .. }
+            | ElicitationRequest::OpenAiElicitationForm { .. } => {
+                Some(ElicitationNotification::Dialog)
+            }
+            ElicitationRequest::Url { .. } => Some(ElicitationNotification::UrlDialog),
+            ElicitationRequest::UserVerification { .. } => None,
+        };
         let public_request_id = format!(
             "codex-mcp-elicitation-{}",
             NEXT_ELICITATION_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
@@ -215,7 +320,15 @@ impl ElicitationRequestRouter {
             })
             .await
             .context(delivery_context)?;
-        rx.await.context(response_context)
+        let notification = match authority.lifecycle.as_ref().zip(notification_type) {
+            Some((lifecycle, open)) => Some(lifecycle.begin_notification(open).await),
+            None => None,
+        };
+        let response = rx.await.context(response_context);
+        if let Some(notification) = notification {
+            notification.complete().await;
+        }
+        response
     }
 }
 
