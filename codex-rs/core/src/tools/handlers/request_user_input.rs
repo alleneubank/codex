@@ -85,7 +85,7 @@ impl RequestUserInputHandler {
         };
         let questions = args.questions.clone();
         let accepted = session
-            .request_user_input(turn.as_ref(), call_id.to_string(), args)
+            .request_user_input(&turn, call_id.to_string(), args, None)
             .await
             .ok_or_else(|| {
                 FunctionCallError::RespondToModel(format!(

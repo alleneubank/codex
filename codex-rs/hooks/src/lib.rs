@@ -26,11 +26,12 @@ pub use engine::dispatcher::hook_execution_mode_label;
 pub use engine::dispatcher::hook_handler_type_label;
 pub use events::common::SubagentHookContext;
 /// Hook event names as they appear in hooks JSON and config files.
-pub const HOOK_EVENT_NAMES: [&str; 14] = [
+pub const HOOK_EVENT_NAMES: [&str; 15] = [
     "PreModelRequest",
     "PostModelRequest",
     "PreToolUse",
     "PermissionRequest",
+    "Notification",
     "PostToolUse",
     "PreCompact",
     "PostCompact",
@@ -48,9 +49,10 @@ pub const HOOK_EVENT_NAMES: [&str; 14] = [
 /// Other events can appear in hooks JSON, but Codex ignores their matcher
 /// fields because those events do not dispatch against a tool, compaction
 /// trigger, session-start source, or session-end reason.
-pub const HOOK_EVENT_NAMES_WITH_MATCHERS: [&str; 9] = [
+pub const HOOK_EVENT_NAMES_WITH_MATCHERS: [&str; 10] = [
     "PreToolUse",
     "PermissionRequest",
+    "Notification",
     "PostToolUse",
     "PreCompact",
     "PostCompact",
@@ -67,6 +69,9 @@ pub use events::compact::PreCompactRequest;
 pub use events::compact::StatelessHookOutcome;
 pub use events::interrupt::InterruptOutcome;
 pub use events::interrupt::InterruptRequest;
+pub use events::notification::NotificationOutcome;
+pub use events::notification::NotificationRequest;
+pub use events::notification::NotificationType;
 pub use events::permission_request::PermissionRequestDecision;
 pub use events::permission_request::PermissionRequestOutcome;
 pub use events::permission_request::PermissionRequestRequest;
@@ -106,6 +111,7 @@ pub fn hook_event_key_label(event_name: HookEventName) -> &'static str {
     match event_name {
         HookEventName::PreToolUse => "pre_tool_use",
         HookEventName::PermissionRequest => "permission_request",
+        HookEventName::Notification => "notification",
         HookEventName::PostToolUse => "post_tool_use",
         HookEventName::PreCompact => "pre_compact",
         HookEventName::PostCompact => "post_compact",

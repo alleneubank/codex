@@ -260,10 +260,11 @@ impl RequestPluginInstallHandler {
         let request_id = RequestId::String(suggestion_id.into());
         let response = session
             .request_mcp_server_elicitation(
-                turn.as_ref(),
+                &turn,
                 McpServerKey::unscoped(CODEX_APPS_MCP_SERVER_NAME),
                 request_id,
                 request,
+                None,
             )
             .await;
         if let Some(response) = response.as_ref() {

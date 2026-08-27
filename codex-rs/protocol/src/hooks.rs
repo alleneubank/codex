@@ -15,6 +15,8 @@ pub struct HookEventsToml {
     pub pre_tool_use: Vec<MatcherGroup>,
     #[serde(rename = "PermissionRequest", default)]
     pub permission_request: Vec<MatcherGroup>,
+    #[serde(rename = "Notification", default)]
+    pub notification: Vec<MatcherGroup>,
     #[serde(rename = "PostToolUse", default)]
     pub post_tool_use: Vec<MatcherGroup>,
     #[serde(rename = "PreCompact", default)]
@@ -44,6 +46,7 @@ impl HookEventsToml {
             post_model_request,
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -59,6 +62,7 @@ impl HookEventsToml {
             && post_model_request.is_empty()
             && pre_tool_use.is_empty()
             && permission_request.is_empty()
+            && notification.is_empty()
             && post_tool_use.is_empty()
             && pre_compact.is_empty()
             && post_compact.is_empty()
@@ -77,6 +81,7 @@ impl HookEventsToml {
             post_model_request,
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -93,6 +98,7 @@ impl HookEventsToml {
             post_model_request,
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -110,12 +116,12 @@ impl HookEventsToml {
         .sum()
     }
 
-    pub fn into_matcher_groups(mut self) -> [(HookEventName, Vec<MatcherGroup>); 14] {
+    pub fn into_matcher_groups(mut self) -> [(HookEventName, Vec<MatcherGroup>); 15] {
         self.matcher_groups_mut()
             .map(|(event, groups)| (event, std::mem::take(groups)))
     }
 
-    pub fn matcher_groups_mut(&mut self) -> [(HookEventName, &mut Vec<MatcherGroup>); 14] {
+    pub fn matcher_groups_mut(&mut self) -> [(HookEventName, &mut Vec<MatcherGroup>); 15] {
         use HookEventName as Event;
 
         [
@@ -123,6 +129,7 @@ impl HookEventsToml {
             (Event::PostModelRequest, &mut self.post_model_request),
             (Event::PreToolUse, &mut self.pre_tool_use),
             (Event::PermissionRequest, &mut self.permission_request),
+            (Event::Notification, &mut self.notification),
             (Event::PostToolUse, &mut self.post_tool_use),
             (Event::PreCompact, &mut self.pre_compact),
             (Event::PostCompact, &mut self.post_compact),
