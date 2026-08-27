@@ -458,6 +458,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) skills_watcher: Arc<SkillsWatcher>,
     pub(super) turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
+    pub(super) user_attention: super::thread_user_attention::UserAttentionManager,
 }
 
 /// Whether resume attaches a client or restores a cold runtime during daemon startup.
@@ -517,6 +518,7 @@ impl ThreadRequestProcessor {
             skills_watcher,
             turn_cost_worker,
             initial_config_warnings: Arc::new(initial_config_warnings),
+            user_attention: super::thread_user_attention::UserAttentionManager::default(),
         }
     }
 
@@ -1020,6 +1022,7 @@ impl ThreadRequestProcessor {
     }
 
     async fn finalize_thread_teardown(&self, thread_id: ThreadId) {
+        self.user_attention.complete_thread(thread_id).await;
         self.pending_thread_unloads.lock().await.remove(&thread_id);
         self.outgoing
             .cancel_requests_for_thread(thread_id, /*error*/ None)
@@ -3599,6 +3602,7 @@ impl ThreadRequestProcessor {
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
+        self.user_attention.complete_connection(connection_id).await;
         let thread_ids = self
             .thread_state_manager
             .remove_connection(connection_id)

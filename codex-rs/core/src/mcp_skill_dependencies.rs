@@ -38,8 +38,8 @@ const MCP_DEPENDENCY_OPTION_INSTALL: &str = "Install";
 const MCP_DEPENDENCY_OPTION_SKIP: &str = "Continue anyway";
 
 pub(crate) async fn maybe_prompt_and_install_mcp_dependencies(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
     cancellation_token: &CancellationToken,
     mentioned_skills: &[SkillMetadata],
     elicitation_reviewer: Option<ElicitationReviewerHandle>,
@@ -113,8 +113,8 @@ async fn admit_mcp_dependencies(
 }
 
 async fn maybe_install_mcp_dependencies(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
     missing: HashMap<String, McpServerConfig>,
     elicitation_reviewer: Option<ElicitationReviewerHandle>,
 ) {
@@ -254,8 +254,8 @@ async fn maybe_install_mcp_dependencies(
 }
 
 async fn should_install_mcp_dependencies(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
     missing: &HashMap<String, McpServerConfig>,
     cancellation_token: &CancellationToken,
 ) -> bool {

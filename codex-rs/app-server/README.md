@@ -174,3 +174,37 @@ Attachments record the resources currently associated with a thread, independent
 `thread/attachment/list` accepts one `threadId` and returns at most 100 attachments per page, ordered by creation time and attachment id. Continue with `nextCursor` and the same `threadId` until the cursor is `null`. Each thread can retain up to 100 attachments. Removing an attachment frees a slot for a new attachment.
 
 Attachment creation and deletion requests using the same thread ID are serialized across connections. The requesting client receives its response before the compact update is broadcast, and duplicate creates or absent deletes do not emit updates. Deleting the owning thread removes its attachments under the same lifecycle exclusion; queued attachment mutations then report that the thread was not found.
+
+# User-attention lifecycle (experimental)
+
+Clients that expose a synchronous decision after a completed turn can bracket that UI with a correlated lifecycle. Initialize with `capabilities.experimentalApi = true`, then call `thread/userAttention/start` before displaying the decision:
+
+```json
+{
+  "method": "thread/userAttention/start",
+  "id": 27,
+  "params": {
+    "threadId": "thr_123",
+    "turnId": "turn_123",
+    "attentionId": "plan-prompt-123",
+    "kind": "planImplementation"
+  }
+}
+```
+
+`turnId` must identify the latest completed turn whose post-turn hook context remains available. `attentionId` is an opaque client-generated correlation value; it is never included in notification-hook input. Lifecycles are isolated by connection, thread, and attention ID, so different connections or threads may use the same value. A duplicate active start for the same key is rejected.
+
+Complete the lifecycle for every selection, dismissal, and cancellation path:
+
+```json
+{
+  "method": "thread/userAttention/complete",
+  "id": 28,
+  "params": {
+    "threadId": "thr_123",
+    "attentionId": "plan-prompt-123"
+  }
+}
+```
+
+Both methods return `{}`. Completion is safe to retry. Closing the owning connection or tearing down the thread completes any remaining owned lifecycle exactly once. Hook failures do not suppress the client decision UI; clients should surface signaling failures separately and continue to present the decision.
