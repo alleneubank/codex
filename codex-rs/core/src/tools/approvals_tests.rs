@@ -4,6 +4,7 @@ use crate::session::tests::test_environment_id;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
 use anyhow::Context;
+use codex_features::Feature;
 use codex_hooks::HooksConfig;
 use codex_models_manager::model_info::model_info_from_slug;
 use codex_protocol::approvals::NetworkPolicyAmendment;
@@ -18,6 +19,7 @@ enum ExpectedPromptEvent {
     Command,
     Patch,
     Mcp,
+    NativeMcpQuestion,
 }
 
 #[cfg(unix)]
@@ -154,6 +156,31 @@ fn observer_exec_command_action(turn_context: &TurnContext, call_id: &str) -> Ap
 }
 
 #[cfg(unix)]
+fn observer_mcp_action() -> ApprovalAction {
+    ApprovalAction::McpToolCall {
+        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        id: "mcp-route".to_string(),
+        server: "observer-server".to_string(),
+        tool_name: "observer-tool".to_string(),
+        arguments: Some(serde_json::json!({ "value": 1 })),
+        connector_id: None,
+        connector_name: None,
+        connector_description: None,
+        connected_account_email: None,
+        tool_title: Some("Observer Tool".to_string()),
+        tool_description: None,
+        annotations: None,
+        hook_tool_name: HookToolName::new("mcp__observer__tool"),
+        approval_policy: AskForApproval::OnRequest,
+        reviewer: ApprovalsReviewer::User,
+        approval_mode: AppToolApproval::Prompt,
+        allow_session_remember: false,
+        allow_persistent_approval: false,
+        prompt_permissions: None,
+    }
+}
+
+#[cfg(unix)]
 #[allow(
     clippy::expect_used,
     reason = "missing prompt events and observer output are direct test failures"
@@ -162,8 +189,18 @@ async fn assert_prompt_action_dispatches_observer(
     action: ApprovalAction,
     expected_event: ExpectedPromptEvent,
 ) {
-    let (session, turn_context, events, marker) =
+    let (session, mut turn_context, events, marker) =
         observed_approval_session(/*sync_decision*/ None).await;
+    if matches!(expected_event, ExpectedPromptEvent::NativeMcpQuestion) {
+        Arc::make_mut(
+            &mut Arc::get_mut(&mut turn_context)
+                .expect("unshared turn context")
+                .config,
+        )
+        .features
+        .disable(Feature::ToolCallMcpElicitation)
+        .expect("disable elicitation");
+    }
     let approval_context = observer_approval_context(Arc::clone(&turn_context), "observer-route");
     let approval_session = Arc::clone(&session);
     let approval_task = tokio::spawn(async move {
@@ -183,10 +220,10 @@ async fn assert_prompt_action_dispatches_observer(
                 ExpectedPromptEvent::Patch => {
                     matches!(event.msg, EventMsg::ApplyPatchApprovalRequest(_))
                 }
-                ExpectedPromptEvent::Mcp => matches!(
-                    event.msg,
-                    EventMsg::ElicitationRequest(_) | EventMsg::RequestUserInput(_)
-                ),
+                ExpectedPromptEvent::Mcp => matches!(event.msg, EventMsg::ElicitationRequest(_)),
+                ExpectedPromptEvent::NativeMcpQuestion => {
+                    matches!(event.msg, EventMsg::RequestUserInput(_))
+                }
             };
             if matches {
                 break;
@@ -195,6 +232,16 @@ async fn assert_prompt_action_dispatches_observer(
     })
     .await
     .expect("user approval prompt should be emitted");
+    timeout(Duration::from_secs(10), async {
+        while !marker
+            .try_exists()
+            .expect("observer marker path should be accessible")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("observer should run while the approval prompt is waiting");
     session.hooks().wait_for_async_hooks().await;
     assert_eq!(
         std::fs::read_to_string(&marker).expect("observer marker should exist"),
@@ -257,31 +304,7 @@ async fn every_distinct_user_approval_route_dispatches_async_observer() {
     )
     .await;
 
-    assert_prompt_action_dispatches_observer(
-        ApprovalAction::McpToolCall {
-            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
-            id: "mcp-route".to_string(),
-            server: "observer-server".to_string(),
-            tool_name: "observer-tool".to_string(),
-            arguments: Some(serde_json::json!({ "value": 1 })),
-            connector_id: None,
-            connector_name: None,
-            connector_description: None,
-            connected_account_email: None,
-            tool_title: Some("Observer Tool".to_string()),
-            tool_description: None,
-            annotations: None,
-            hook_tool_name: HookToolName::new("mcp__observer__tool"),
-            approval_policy: AskForApproval::OnRequest,
-            reviewer: ApprovalsReviewer::User,
-            approval_mode: AppToolApproval::Prompt,
-            allow_session_remember: false,
-            allow_persistent_approval: false,
-            prompt_permissions: None,
-        },
-        ExpectedPromptEvent::Mcp,
-    )
-    .await;
+    assert_prompt_action_dispatches_observer(observer_mcp_action(), ExpectedPromptEvent::Mcp).await;
 
     assert_prompt_action_dispatches_observer(
         ApprovalAction::NetworkAccess {
@@ -780,4 +803,63 @@ async fn canceled_human_checkpoint_rejects_late_approval() {
     assert_eq!(result.source, Some(ApprovalResolutionSource::User));
     assert!(matches!(result.result, Err(ToolError::Codex(error))
         if matches!(error.details(), codex_protocol::error::CodexErrorDetails::TurnAborted)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn restricted_mcp_approval_does_not_dispatch_observer_without_a_prompt() {
+    let (session, mut turn, events, marker) = observed_approval_session(None).await;
+    let turn_context = Arc::get_mut(&mut turn).expect("unshared turn context");
+    turn_context.root_capabilities_restricted = true;
+    Arc::make_mut(&mut turn_context.config)
+        .features
+        .disable(Feature::ToolCallMcpElicitation)
+        .expect("disable elicitation");
+    let context = observer_approval_context(turn, "restricted-mcp");
+    let result = session
+        .request_user_approval(&observer_mcp_action(), &context)
+        .await;
+    assert!(
+        matches!(result.decision, ReviewDecision::Denied { ref rejection }
+        if rejection.contains("requires the root thread"))
+    );
+    session.hooks().wait_for_async_hooks().await;
+    assert!(!marker.exists());
+    assert!(events.try_recv().is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn automatic_mcp_response_does_not_dispatch_observer_without_a_prompt() {
+    let (session, mut turn, events, marker) = observed_approval_session(None).await;
+    Arc::make_mut(
+        &mut Arc::get_mut(&mut turn)
+            .expect("unshared turn context")
+            .config,
+    )
+    .features
+    .enable(Feature::ToolCallMcpElicitation)
+    .expect("enable elicitation");
+    session
+        .services
+        .mcp_runtime
+        .set_elicitations_auto_deny(true);
+    let context = observer_approval_context(turn, "automatic-mcp");
+    let result = session
+        .request_user_approval(&observer_mcp_action(), &context)
+        .await;
+    assert_eq!(result.decision, ReviewDecision::Approved);
+    session.hooks().wait_for_async_hooks().await;
+    assert!(!marker.exists());
+    assert!(events.try_recv().is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_mcp_question_dispatches_observer_for_the_human_prompt() {
+    assert_prompt_action_dispatches_observer(
+        observer_mcp_action(),
+        ExpectedPromptEvent::NativeMcpQuestion,
+    )
+    .await;
 }

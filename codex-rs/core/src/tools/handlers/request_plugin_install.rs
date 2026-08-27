@@ -253,10 +253,11 @@ impl RequestPluginInstallHandler {
         let request_id = RequestId::String(suggestion_id.into());
         let elicitation = session
             .request_mcp_server_elicitation(
-                turn.as_ref(),
+                &turn,
                 CODEX_APPS_MCP_SERVER_NAME.to_string(),
                 request_id,
                 request,
+                None,
             )
             .await;
         let response = elicitation.response;

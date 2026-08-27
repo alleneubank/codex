@@ -32,6 +32,7 @@ use crate::session::turn_context::TurnContext;
 pub(crate) use approvals::ApprovalContext;
 pub(crate) use approvals::ApprovalResolution;
 pub(crate) use approvals::ApprovalResolutionSource;
+pub(crate) use approvals::PermissionRequestObserver;
 use codex_features::Feature;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::openai_models::ModelInfo;

@@ -530,6 +530,35 @@ fn permission_request_run_id(action: &ApprovalAction, ctx: &ApprovalContext) -> 
     }
 }
 
+pub(crate) struct PermissionRequestObserver {
+    review_context: GuardianReviewContext,
+    run_id: String,
+    payload: PermissionRequestPayload,
+    target_environment: String,
+}
+
+impl PermissionRequestObserver {
+    fn new(action: &ApprovalAction, ctx: &ApprovalContext) -> Self {
+        Self {
+            review_context: ctx.review_context.clone(),
+            run_id: permission_request_run_id(action, ctx),
+            payload: action.permission_request_payload(),
+            target_environment: action.hook_environment_id().to_string(),
+        }
+    }
+
+    pub(crate) async fn dispatch(self, sess: &Arc<Session>) {
+        run_permission_request_observer_hooks(
+            sess,
+            &self.review_context,
+            &self.run_id,
+            self.payload,
+            &self.target_environment,
+        )
+        .await;
+    }
+}
+
 impl Session {
     async fn check_approval_requirement(&self, ctx: &ApprovalContext) -> Result<(), ToolError> {
         if ctx.requires_human_approval() {
@@ -793,7 +822,6 @@ impl Session {
         action: &ApprovalAction,
         ctx: &ApprovalContext,
     ) -> ApprovalResolution {
-        let permission_request_run_id = permission_request_run_id(action, ctx);
         let decision = match action {
             ApprovalAction::ExecCommand {
                 environment_id,
@@ -814,7 +842,6 @@ impl Session {
                     self.observe_permission_request_user_wait(
                         action,
                         ctx,
-                        &permission_request_run_id,
                         self.request_command_approval(
                             ctx.review_context.turn(),
                             if human_once {
@@ -887,7 +914,6 @@ impl Session {
                 self.observe_permission_request_user_wait(
                     action,
                     ctx,
-                    &permission_request_run_id,
                     self.request_command_approval(
                         ctx.review_context.turn(),
                         ExecApprovalKind::WriteStdin,
@@ -928,7 +954,6 @@ impl Session {
                     self.observe_permission_request_user_wait(
                         action,
                         ctx,
-                        &permission_request_run_id,
                         self.request_patch_approval(
                             ctx.review_context.turn(),
                             ctx.call_id.clone(),
@@ -947,7 +972,6 @@ impl Session {
                             self.observe_permission_request_user_wait(
                                 action,
                                 ctx,
-                                &permission_request_run_id,
                                 self.request_patch_approval(
                                     ctx.review_context.turn(),
                                     ctx.call_id.clone(),
@@ -962,31 +986,15 @@ impl Session {
                     .await
                 }
             }
-            ApprovalAction::McpToolCall {
-                approval_policy, ..
-            } => {
-                if *approval_policy == AskForApproval::Never {
-                    return request_mcp_tool_user_approval(
-                        self,
-                        ctx.review_context.turn(),
-                        &ctx.call_id,
-                        action,
-                    )
-                    .await;
-                }
-                return self
-                    .observe_permission_request_user_wait(
-                        action,
-                        ctx,
-                        &permission_request_run_id,
-                        request_mcp_tool_user_approval(
-                            self,
-                            ctx.review_context.turn(),
-                            &ctx.call_id,
-                            action,
-                        ),
-                    )
-                    .await;
+            ApprovalAction::McpToolCall { .. } => {
+                return request_mcp_tool_user_approval(
+                    self,
+                    ctx.review_context.turn(),
+                    &ctx.call_id,
+                    action,
+                    Some(PermissionRequestObserver::new(action, ctx)),
+                )
+                .await;
             }
             ApprovalAction::NetworkAccess {
                 environment_id,
@@ -998,7 +1006,6 @@ impl Session {
                 self.observe_permission_request_user_wait(
                     action,
                     ctx,
-                    &permission_request_run_id,
                     self.request_command_approval(
                         ctx.review_context.turn(),
                         ExecApprovalKind::Command,
@@ -1032,17 +1039,11 @@ impl Session {
         self: &Arc<Self>,
         action: &ApprovalAction,
         ctx: &ApprovalContext,
-        permission_request_run_id: &str,
         wait: impl Future<Output = T>,
     ) -> T {
-        run_permission_request_observer_hooks(
-            self,
-            &ctx.review_context,
-            permission_request_run_id,
-            action.permission_request_payload(),
-            action.hook_environment_id(),
-        )
-        .await;
+        PermissionRequestObserver::new(action, ctx)
+            .dispatch(self)
+            .await;
         wait.await
     }
 }

@@ -2387,7 +2387,9 @@ async fn dispatched_mcp_approval_with_closed_response_is_classified_as_approval(
     let approval = tokio::spawn({
         let session = Arc::clone(&session);
         let turn_context = Arc::clone(&turn_context);
-        async move { request_mcp_tool_user_approval(&session, &turn_context, call_id, &action).await }
+        async move {
+            request_mcp_tool_user_approval(&session, &turn_context, call_id, &action, None).await
+        }
     });
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx_event.recv())
         .await

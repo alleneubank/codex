@@ -474,7 +474,7 @@ async fn handle_approved_mcp_tool_call(
     source: &crate::tools::context::ToolCallSource,
     approval_application: McpToolApprovalApplication,
 ) -> HandledMcpToolCall {
-    let turn_context = step_context.turn.as_ref();
+    let turn_context = &step_context.turn;
     let server = invocation.server.clone();
     let tool_name = invocation.tool.clone();
     let arguments_value = invocation.arguments.clone();
@@ -903,7 +903,7 @@ fn truncate_str_to_char_boundary(value: &str, max_chars: usize) -> &str {
 
 async fn maybe_request_codex_apps_auth_elicitation(
     sess: &Arc<Session>,
-    turn_context: &TurnContext,
+    turn_context: &Arc<TurnContext>,
     approval_policy: AskForApproval,
     call_id: &str,
     server: &str,
@@ -958,6 +958,7 @@ async fn maybe_request_codex_apps_auth_elicitation(
             CODEX_APPS_MCP_SERVER_NAME.to_string(),
             request_id,
             request,
+            None,
         )
         .await;
     if !outcome
@@ -1799,10 +1800,11 @@ async fn maybe_request_mcp_tool_approval(
 }
 
 pub(crate) async fn request_mcp_tool_user_approval(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
     call_id: &str,
     action: &ApprovalAction,
+    permission_observer: Option<crate::tools::PermissionRequestObserver>,
 ) -> ApprovalResolution {
     let ApprovalAction::McpToolCall {
         id,
@@ -1897,7 +1899,13 @@ pub(crate) async fn request_mcp_tool_user_approval(
                 prompt_options,
             });
         let outcome = sess
-            .request_mcp_server_elicitation(turn_context, server.clone(), request_id, request)
+            .request_mcp_server_elicitation(
+                turn_context,
+                server.clone(),
+                request_id,
+                request,
+                permission_observer,
+            )
             .await;
         // Missing replies are interruptions. A received Cancel needs provenance
         // from its source; RPC success alone does not establish a user action.
@@ -1933,7 +1941,7 @@ pub(crate) async fn request_mcp_tool_user_approval(
             auto_resolution_ms: None,
         };
         let response = sess
-            .request_user_input(turn_context, call_id.to_string(), args)
+            .request_user_input(turn_context, call_id.to_string(), args, permission_observer)
             .await;
         let cancellation_reason = response
             .as_ref()
