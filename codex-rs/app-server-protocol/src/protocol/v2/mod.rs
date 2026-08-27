@@ -36,6 +36,7 @@ mod thread_attachment;
 mod thread_data;
 mod thread_usage;
 mod turn;
+mod user_attention;
 mod user_verification;
 mod windows_sandbox;
 
@@ -76,6 +77,7 @@ pub use thread_attachment::*;
 pub use thread_data::*;
 pub use thread_usage::*;
 pub use turn::*;
+pub use user_attention::*;
 pub use user_verification::*;
 pub use windows_sandbox::*;
 
