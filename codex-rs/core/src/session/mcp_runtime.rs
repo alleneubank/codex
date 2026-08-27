@@ -282,7 +282,7 @@ impl Session {
 
     #[tracing::instrument(name = "mcp.runtime.refresh", skip_all)]
     pub(super) async fn publish_mcp_runtime(
-        &self,
+        self: &Arc<Self>,
         desired: &McpDesiredState,
         mcp_projection: McpRuntimeProjection,
         ready_selected_capability_roots: &[SelectedCapabilityRoot],
@@ -309,7 +309,7 @@ impl Session {
     }
 
     pub(super) fn build_mcp_runtime_input(
-        &self,
+        self: &Arc<Self>,
         desired: &McpDesiredState,
         mcp_projection: McpRuntimeProjection,
         ready_selected_capability_roots: &[SelectedCapabilityRoot],
