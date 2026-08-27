@@ -48,6 +48,7 @@ pub use codex_thread::GuardianAuthorizationVersion;
 pub use codex_thread::GuardianRootMessage;
 pub use codex_thread::GuardianRootSnapshot;
 pub use codex_thread::ThreadConfigSnapshot;
+pub use codex_thread::UserAttentionLifecycle;
 pub use session::turn_context::TurnContext;
 mod agent;
 mod agent_communication;

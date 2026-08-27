@@ -1853,6 +1853,13 @@
           },
           "type": "array"
         },
+        "Notification": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/MatcherGroup"
+          },
+          "type": "array"
+        },
         "PermissionRequest": {
           "default": [],
           "items": {

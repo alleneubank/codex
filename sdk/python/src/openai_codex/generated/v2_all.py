@@ -1740,6 +1740,7 @@ class HookErrorInfo(BaseModel):
 class HookEventName(Enum):
     pre_tool_use = "preToolUse"
     permission_request = "permissionRequest"
+    notification = "notification"
     post_tool_use = "postToolUse"
     pre_compact = "preCompact"
     post_compact = "postCompact"
@@ -2112,6 +2113,9 @@ class ManagedHooksRequirements(BaseModel):
     )
     permission_request: Annotated[
         list[ConfiguredHookMatcherGroup], Field(alias="PermissionRequest")
+    ]
+    notification: Annotated[
+        list[ConfiguredHookMatcherGroup], Field(alias="Notification")
     ]
     post_compact: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="PostCompact")]
     post_tool_use: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="PostToolUse")]
