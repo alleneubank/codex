@@ -204,6 +204,19 @@ pub struct BackgroundTerminalInfo {
     pub cwd: PathUri,
 }
 
+/// Owns one bounded user-attention notification pair.
+///
+/// Completing or dropping the handle emits the matching completion exactly once.
+pub struct UserAttentionLifecycle {
+    lifecycle: crate::hook_runtime::NotificationLifecycle,
+}
+
+impl UserAttentionLifecycle {
+    pub async fn complete(self) {
+        self.lifecycle.complete().await;
+    }
+}
+
 /// Conduit for the bidirectional stream of messages that compose a thread
 /// (formerly called a conversation) in Codex.
 impl CodexThread {
@@ -251,6 +264,28 @@ impl CodexThread {
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.io.session_loop_termination.clone().await;
+    }
+
+    pub async fn start_plan_implementation_attention(
+        &self,
+        completed_turn_id: &str,
+    ) -> anyhow::Result<UserAttentionLifecycle> {
+        let context = self
+            .session
+            .completed_turn_hook_context
+            .lock()
+            .await
+            .clone()
+            .filter(|context| context.turn_id == completed_turn_id)
+            .ok_or_else(|| anyhow::anyhow!("completed turn hook context is unavailable"))?;
+        let lifecycle = crate::hook_runtime::begin_notification_lifecycle_with_context(
+            &self.session,
+            context,
+            codex_hooks::NotificationType::PlanImplementationRequest,
+            codex_hooks::NotificationType::PlanImplementationComplete,
+        )
+        .await;
+        Ok(UserAttentionLifecycle { lifecycle })
     }
 
     pub(crate) async fn emit_thread_ready_lifecycle(&self) {

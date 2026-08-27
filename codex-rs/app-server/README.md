@@ -191,6 +191,8 @@ Example with notification opt-out:
 - `thread/section/move` — atomically move a thread into the section identified by `sectionId`, before another thread or at the end when `beforeThreadId` is `null`. Reordering within the same section preserves `sectionEnteredAt`; entering a different section resets it. Set `sectionId` to `null` to remove the thread from its section. Returns `{}` on success.
 - `thread/settings/update` — experimental; queue a partial update to a loaded thread’s next-turn settings without starting a turn or adding transcript items. Omitted fields leave settings unchanged; `serviceTier: null` clears the tier; deprecated `multiAgentMode` is ignored, while Ultra reasoning effort enables proactive multi-agent behavior; `sandboxPolicy` and `permissions` cannot be combined. Parent-owned Multi-Agent V2 subagents reject direct settings updates. Returns `{}` when the update is accepted and emits `thread/settings/updated` with the full effective settings only if they actually change. `turn/start` settings overrides emit the same notification when they change the stored settings.
 - `thread/memoryMode/set` — experimental; set a thread’s persisted memory eligibility to `"enabled"` or `"disabled"` for either a loaded thread or a stored rollout; returns `{}` on success.
+- `thread/userAttention/start` — experimental; start a client-owned user-attention lifecycle for a completed turn. Pass `threadId`, the completed `turnId`, an opaque `attentionId`, and `kind: "planImplementation"`. Active duplicate IDs on the same connection and thread are rejected.
+- `thread/userAttention/complete` — experimental; complete the lifecycle identified by `threadId` and `attentionId`. Completion is idempotent; disconnect and thread teardown also complete matching lifecycles.
 - `memory/reset` — experimental; clear the current `CODEX_HOME/memories` directory and reset persisted memory stage data in sqlite while preserving existing thread memory modes; returns `{}` on success.
 - `thread/goal/set` — create or update the single persisted goal for a materialized thread; returns the current goal and emits `thread/goal/updated`. Parent-owned Multi-Agent V2 subagents reject goal updates, including while unloaded.
 - `thread/goal/get` — fetch the current persisted goal for a materialized thread; returns `goal: null` when no goal exists. Available even for parent-owned Multi-Agent V2 subagents.
@@ -2192,6 +2194,40 @@ To enable or disable a skill by name:
   }
 }
 ```
+
+### User-attention lifecycle (experimental)
+
+Clients that expose a synchronous decision after a completed turn can bracket that UI with a correlated lifecycle. Initialize with `capabilities.experimentalApi = true`, then call `thread/userAttention/start` before displaying the decision:
+
+```json
+{
+  "method": "thread/userAttention/start",
+  "id": 27,
+  "params": {
+    "threadId": "thr_123",
+    "turnId": "turn_123",
+    "attentionId": "plan-prompt-123",
+    "kind": "planImplementation"
+  }
+}
+```
+
+`turnId` must identify the latest completed turn whose post-turn hook context remains available. `attentionId` is an opaque client-generated correlation value; it is never included in notification-hook input. Lifecycles are isolated by connection, thread, and attention ID, so different connections or threads may use the same value. A duplicate active start for the same key is rejected.
+
+Complete the lifecycle for every selection, dismissal, and cancellation path:
+
+```json
+{
+  "method": "thread/userAttention/complete",
+  "id": 28,
+  "params": {
+    "threadId": "thr_123",
+    "attentionId": "plan-prompt-123"
+  }
+}
+```
+
+Both methods return `{}`. Completion is safe to retry. Closing the owning connection or tearing down the thread completes any remaining owned lifecycle exactly once. Hook failures do not suppress the client decision UI; clients should surface signaling failures separately and continue to present the decision.
 
 Use `hooks/list` to fetch discovered hooks for one or more `cwds`. Each result is evaluated with that `cwd`'s effective config, so feature gates and discovered config layers can differ within a single response.
 

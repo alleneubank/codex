@@ -727,6 +727,12 @@
           },
           "type": "array"
         },
+        "Notification": {
+          "items": {
+            "$ref": "#/definitions/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
         "PermissionRequest": {
           "items": {
             "$ref": "#/definitions/ConfiguredHookMatcherGroup"
@@ -808,6 +814,7 @@
         }
       },
       "required": [
+        "Notification",
         "PermissionRequest",
         "PostCompact",
         "PostToolUse",

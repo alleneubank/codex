@@ -1456,6 +1456,16 @@ impl MessageProcessor {
                     )
                     .await
             }
+            ClientRequest::ThreadUserAttentionStart { params, .. } => {
+                self.thread_processor
+                    .thread_user_attention_start(request_id.connection_id, params)
+                    .await
+            }
+            ClientRequest::ThreadUserAttentionComplete { params, .. } => {
+                self.thread_processor
+                    .thread_user_attention_complete(request_id.connection_id, params)
+                    .await
+            }
             ClientRequest::ThreadInjectItems { params, .. } => {
                 self.turn_processor
                     .thread_inject_items(&request_id, params)

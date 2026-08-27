@@ -598,6 +598,7 @@ export type { TurnSteerParams } from "./TurnSteerParams";
 export type { TurnSteerResponse } from "./TurnSteerResponse";
 export type { TurnToolOutput } from "./TurnToolOutput";
 export type { TurnsPage } from "./TurnsPage";
+export type { UserAttentionKind } from "./UserAttentionKind";
 export type { UserInput } from "./UserInput";
 export type { WarningNotification } from "./WarningNotification";
 export type { WebSearchAction } from "./WebSearchAction";

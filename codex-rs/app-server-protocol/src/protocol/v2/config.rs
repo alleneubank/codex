@@ -582,6 +582,9 @@ pub struct ManagedHooksRequirements {
     #[serde(rename = "PermissionRequest")]
     #[ts(rename = "PermissionRequest")]
     pub permission_request: Vec<ConfiguredHookMatcherGroup>,
+    #[serde(rename = "Notification")]
+    #[ts(rename = "Notification")]
+    pub notification: Vec<ConfiguredHookMatcherGroup>,
     #[serde(rename = "PostToolUse")]
     #[ts(rename = "PostToolUse")]
     pub post_tool_use: Vec<ConfiguredHookMatcherGroup>,

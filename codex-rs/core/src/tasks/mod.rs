@@ -840,6 +840,15 @@ impl Session {
                 time_to_first_token_ms,
             })
         };
+        if matches!(event, EventMsg::TurnComplete(_)) {
+            let context =
+                crate::hook_runtime::NotificationHookContext::capture(self, turn_context.as_ref())
+                    .await;
+            self.completed_turn_hook_context
+                .lock()
+                .await
+                .replace(context);
+        }
         self.send_event(turn_context.as_ref(), event).await;
         self.services
             .guardian_rejection_circuit_breaker

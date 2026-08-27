@@ -12753,6 +12753,7 @@
         "enum": [
           "preToolUse",
           "permissionRequest",
+          "notification",
           "postToolUse",
           "preCompact",
           "postCompact",
@@ -13892,6 +13893,12 @@
             },
             "type": "array"
           },
+          "Notification": {
+            "items": {
+              "$ref": "#/definitions/v2/ConfiguredHookMatcherGroup"
+            },
+            "type": "array"
+          },
           "PermissionRequest": {
             "items": {
               "$ref": "#/definitions/v2/ConfiguredHookMatcherGroup"
@@ -13973,6 +13980,7 @@
           }
         },
         "required": [
+          "Notification",
           "PermissionRequest",
           "PostCompact",
           "PostToolUse",
@@ -24810,6 +24818,17 @@
           "data"
         ],
         "type": "object"
+      },
+      "UserAttentionKind": {
+        "oneOf": [
+          {
+            "description": "A post-plan decision asking whether Codex should implement the completed plan.",
+            "enum": [
+              "planImplementation"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "UserInput": {
         "oneOf": [

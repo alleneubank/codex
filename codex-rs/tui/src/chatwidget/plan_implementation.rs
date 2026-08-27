@@ -1,3 +1,4 @@
+use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
 
 use crate::app_event::AppEvent;
@@ -20,6 +21,22 @@ pub(super) const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX: &str = concat!(
 pub(super) const PLAN_IMPLEMENTATION_DEFAULT_UNAVAILABLE: &str = "Default mode unavailable";
 pub(super) const PLAN_IMPLEMENTATION_NO_APPROVED_PLAN: &str = "No approved plan available";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PlanImplementationAttention {
+    pub(super) thread_id: ThreadId,
+    pub(super) attention_id: String,
+}
+
+fn completion_action(attention: &PlanImplementationAttention) -> SelectionAction {
+    let attention = attention.clone();
+    Box::new(move |tx| {
+        tx.send(AppEvent::CompletePlanImplementationAttention {
+            thread_id: attention.thread_id,
+            attention_id: attention.attention_id.clone(),
+        });
+    })
+}
+
 /// Builds the confirmation prompt shown after a plan is approved in Plan mode.
 ///
 /// The optional usage label is already phrased for display, such as `89% used`
@@ -29,16 +46,22 @@ pub(super) fn selection_view_params(
     default_mask: Option<CollaborationModeMask>,
     plan_markdown: Option<&str>,
     clear_context_usage_label: Option<&str>,
+    attention: Option<PlanImplementationAttention>,
 ) -> SelectionViewParams {
     let (implement_actions, implement_disabled_reason) = match default_mask.clone() {
         Some(mask) => {
             let user_text = PLAN_IMPLEMENTATION_CODING_MESSAGE.to_string();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            let mut actions: Vec<SelectionAction> = attention
+                .as_ref()
+                .map(completion_action)
+                .into_iter()
+                .collect();
+            actions.push(Box::new(move |tx| {
                 tx.send(AppEvent::SubmitUserMessageWithMode {
                     text: user_text.clone(),
                     collaboration_mode: mask.clone(),
                 });
-            })];
+            }));
             (actions, None)
         }
         None => (
@@ -56,11 +79,16 @@ pub(super) fn selection_view_params(
         (Some(_), Some(plan_markdown)) if !plan_markdown.trim().is_empty() => {
             let user_text =
                 format!("{PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX}\n\n{plan_markdown}");
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            let mut actions: Vec<SelectionAction> = attention
+                .as_ref()
+                .map(completion_action)
+                .into_iter()
+                .collect();
+            actions.push(Box::new(move |tx| {
                 tx.send(AppEvent::ClearUiAndSubmitUserMessage {
                     text: user_text.clone(),
                 });
-            })];
+            }));
             (actions, None)
         }
         (Some(_), _) => (
@@ -104,11 +132,23 @@ pub(super) fn selection_view_params(
                 description: Some("Continue planning with the model.".to_string()),
                 selected_description: None,
                 is_current: false,
-                actions: Vec::new(),
+                actions: attention
+                    .as_ref()
+                    .map(completion_action)
+                    .into_iter()
+                    .collect(),
                 dismiss_on_select: true,
                 ..Default::default()
             },
         ],
+        on_cancel: attention.map(|attention| {
+            Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                tx.send(AppEvent::CompletePlanImplementationAttention {
+                    thread_id: attention.thread_id,
+                    attention_id: attention.attention_id.clone(),
+                });
+            }) as Box<dyn Fn(&crate::app_event_sender::AppEventSender) + Send + Sync>
+        }),
         ..Default::default()
     }
 }
