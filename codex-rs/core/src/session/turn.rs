@@ -847,7 +847,7 @@ async fn build_skills_and_plugins(
     mentioned_plugins: &[crate::plugins::PluginCapabilitySummary],
     cancellation_token: &CancellationToken,
 ) -> Option<(Vec<ResponseItem>, HashSet<String>)> {
-    let turn_context = step_context.turn.as_ref();
+    let turn_context = &step_context.turn;
     // Guardian input embeds the parent transcript as untrusted evidence. Do not interpret skill or
     // plugin mentions from that generated prompt as requests to inject additional instructions.
     if crate::guardian::is_basic_session_source(&turn_context.session_source) {

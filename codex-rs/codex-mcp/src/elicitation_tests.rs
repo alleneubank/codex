@@ -11,6 +11,7 @@ use serde_json::Map;
 use serde_json::json;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
+use std::time::Duration;
 
 type ReviewerResponse = std::result::Result<Option<ElicitationResponse>, &'static str>;
 
@@ -125,6 +126,196 @@ async fn assert_declined(marker: Value, response: Option<ReviewerResponse>) {
         assert_eq!(reviewer.calls.load(Relaxed), expected_calls);
     }
     assert!(events.is_empty());
+}
+
+type NotificationLog = Arc<StdMutex<Vec<ElicitationNotification>>>;
+
+fn notification_fixture(
+    auto_deny: bool,
+    reviewer: Option<Arc<RecordingReviewer>>,
+) -> (
+    ElicitationRequestManager,
+    Receiver<Event>,
+    SendElicitation,
+    NotificationLog,
+) {
+    let notifications = Arc::new(StdMutex::new(Vec::new()));
+    let recorded_notifications = Arc::clone(&notifications);
+    let lifecycle_reviewer = reviewer.clone();
+    let lifecycle = ElicitationLifecycle::new(move || -> Box<dyn Send + Sync> {
+        match &lifecycle_reviewer {
+            Some(reviewer) => {
+                reviewer.active_elicitations.fetch_add(/*val*/ 1, Relaxed);
+                Box::new(LifecycleRegistration(reviewer.active_elicitations.clone()))
+            }
+            None => Box::new(()),
+        }
+    })
+    .with_notification_handler(move |notification| {
+        let recorded_notifications = Arc::clone(&recorded_notifications);
+        async move {
+            recorded_notifications
+                .lock()
+                .expect("notification log available")
+                .push(notification);
+        }
+        .boxed()
+    });
+    let router = ElicitationRequestRouter::default();
+    router.set_auto_deny(auto_deny);
+    let config = test_elicitation_config(
+        "independent-mcp",
+        AskForApproval::OnRequest,
+        PermissionProfile::Disabled,
+    );
+    let manager = ElicitationRequestManager::new(
+        config,
+        reviewer.map(|reviewer| reviewer as Arc<dyn ElicitationReviewer>),
+        Some(lifecycle),
+        router,
+    );
+    let (tx_event, events) = async_channel::bounded(1);
+    let sender = manager.make_sender("independent-mcp".to_string(), Some(tx_event));
+    (manager, events, sender, notifications)
+}
+
+async fn wait_for_notifications(notifications: &NotificationLog, count: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while notifications
+            .lock()
+            .expect("notification log available")
+            .len()
+            != count
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("notification count");
+}
+
+async fn run_visible_elicitation(elicitation: Elicitation) -> NotificationLog {
+    let (manager, events, sender, notifications) = notification_fixture(false, None);
+    let request = tokio::spawn(async move {
+        sender(RequestId::Number(7), elicitation)
+            .await
+            .expect("elicitation response")
+    });
+    let EventMsg::ElicitationRequest(event) = events.recv().await.expect("elicitation event").msg
+    else {
+        panic!("expected elicitation request event");
+    };
+    let ProtocolRequestId::String(public_request_id) = event.id else {
+        panic!("expected string request id");
+    };
+    let response = ElicitationResponse {
+        action: ElicitationAction::Cancel,
+        content: None,
+        meta: None,
+    };
+    manager
+        .router
+        .resolve(
+            "independent-mcp".to_string(),
+            RequestId::String(public_request_id.into()),
+            response.clone(),
+        )
+        .await
+        .expect("resolve elicitation");
+    assert_eq!(request.await.expect("elicitation task"), response);
+    notifications
+}
+
+#[tokio::test]
+async fn surfaced_form_openai_form_and_url_emit_paired_notifications() {
+    let form_schema = ElicitationSchema::builder()
+        .required_property(
+            "name",
+            rmcp::model::PrimitiveSchemaDefinition::String(rmcp::model::StringSchema::new()),
+        )
+        .build()
+        .expect("valid form schema");
+    for (elicitation, open) in [
+        (
+            Elicitation::Mcp(ElicitRequestParams::FormElicitationParams {
+                meta: None,
+                message: "form".to_string(),
+                requested_schema: form_schema,
+            }),
+            ElicitationNotification::Dialog,
+        ),
+        (
+            Elicitation::OpenAiForm {
+                meta: None,
+                message: "form".to_string(),
+                requested_schema: json!({"type": "object"}),
+            },
+            ElicitationNotification::Dialog,
+        ),
+        (
+            Elicitation::Mcp(ElicitRequestParams::UrlElicitationParams {
+                meta: None,
+                message: "url".to_string(),
+                url: "https://example.com/authorize".to_string(),
+                elicitation_id: "url-1".to_string(),
+            }),
+            ElicitationNotification::UrlDialog,
+        ),
+    ] {
+        let notifications = run_visible_elicitation(elicitation).await;
+        assert_eq!(
+            *notifications.lock().expect("notification log available"),
+            vec![open, ElicitationNotification::Complete]
+        );
+    }
+}
+
+#[tokio::test]
+async fn dropped_visible_elicitation_emits_one_completion_notification() {
+    let (_manager, events, sender, notifications) = notification_fixture(false, None);
+    let request = tokio::spawn(async move {
+        sender(
+            RequestId::Number(7),
+            Elicitation::OpenAiForm {
+                meta: None,
+                message: "form".to_string(),
+                requested_schema: json!({}),
+            },
+        )
+        .await
+    });
+    events.recv().await.expect("visible elicitation event");
+    wait_for_notifications(&notifications, /*count*/ 1).await;
+    request.abort();
+    let _ = request.await;
+    wait_for_notifications(&notifications, /*count*/ 2).await;
+    assert_eq!(
+        *notifications.lock().expect("notification log available"),
+        vec![
+            ElicitationNotification::Dialog,
+            ElicitationNotification::Complete
+        ]
+    );
+}
+
+#[tokio::test]
+async fn automatically_and_programmatically_handled_elicitations_are_silent() {
+    let (_manager, events, sender, notifications) = notification_fixture(true, None);
+    assert_eq!(
+        send_elicitation(&sender, None).await.action,
+        ElicitationAction::Decline
+    );
+    assert!(events.is_empty());
+    assert!(notifications.lock().expect("notification log").is_empty());
+
+    let reviewer = RecordingReviewer::new(Ok(Some(approved_response())));
+    let (_manager, events, sender, notifications) = notification_fixture(false, Some(reviewer));
+    assert_eq!(
+        send_elicitation(&sender, Some(Value::Bool(true))).await,
+        approved_response()
+    );
+    assert!(events.is_empty());
+    assert!(notifications.lock().expect("notification log").is_empty());
 }
 
 #[test]

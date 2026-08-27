@@ -1713,6 +1713,7 @@ fn hook_event_label(event_name: codex_app_server_protocol::HookEventName) -> &'s
     match event_name {
         codex_app_server_protocol::HookEventName::PreToolUse => "PreToolUse",
         codex_app_server_protocol::HookEventName::PermissionRequest => "PermissionRequest",
+        codex_app_server_protocol::HookEventName::Notification => "Notification",
         codex_app_server_protocol::HookEventName::PostToolUse => "PostToolUse",
         codex_app_server_protocol::HookEventName::PreCompact => "PreCompact",
         codex_app_server_protocol::HookEventName::PostCompact => "PostCompact",

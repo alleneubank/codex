@@ -38,6 +38,8 @@ pub struct HookEventsToml {
     pub pre_tool_use: Vec<MatcherGroup>,
     #[serde(rename = "PermissionRequest", default)]
     pub permission_request: Vec<MatcherGroup>,
+    #[serde(rename = "Notification", default)]
+    pub notification: Vec<MatcherGroup>,
     #[serde(rename = "PostToolUse", default)]
     pub post_tool_use: Vec<MatcherGroup>,
     #[serde(rename = "PreCompact", default)]
@@ -65,6 +67,7 @@ impl HookEventsToml {
         let Self {
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -78,6 +81,7 @@ impl HookEventsToml {
         } = self;
         pre_tool_use.is_empty()
             && permission_request.is_empty()
+            && notification.is_empty()
             && post_tool_use.is_empty()
             && pre_compact.is_empty()
             && post_compact.is_empty()
@@ -94,6 +98,7 @@ impl HookEventsToml {
         let Self {
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -108,6 +113,7 @@ impl HookEventsToml {
         [
             pre_tool_use,
             permission_request,
+            notification,
             post_tool_use,
             pre_compact,
             post_compact,
@@ -125,17 +131,18 @@ impl HookEventsToml {
         .sum()
     }
 
-    pub fn into_matcher_groups(mut self) -> [(HookEventName, Vec<MatcherGroup>); 12] {
+    pub fn into_matcher_groups(mut self) -> [(HookEventName, Vec<MatcherGroup>); 13] {
         self.matcher_groups_mut()
             .map(|(event, groups)| (event, std::mem::take(groups)))
     }
 
-    pub fn matcher_groups_mut(&mut self) -> [(HookEventName, &mut Vec<MatcherGroup>); 12] {
+    pub fn matcher_groups_mut(&mut self) -> [(HookEventName, &mut Vec<MatcherGroup>); 13] {
         use HookEventName as Event;
 
         [
             (Event::PreToolUse, &mut self.pre_tool_use),
             (Event::PermissionRequest, &mut self.permission_request),
+            (Event::Notification, &mut self.notification),
             (Event::PostToolUse, &mut self.post_tool_use),
             (Event::PreCompact, &mut self.pre_compact),
             (Event::PostCompact, &mut self.post_compact),

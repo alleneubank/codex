@@ -87,6 +87,7 @@ fn managed_hooks_requirements_default_interrupt_to_empty() {
         "SessionStart": [],
         "SessionEnd": [],
         "UserPromptSubmit": [],
+        "Notification": [],
         "SubagentStart": [],
         "SubagentStop": [],
         "Stop": []

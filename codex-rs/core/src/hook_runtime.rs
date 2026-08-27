@@ -8,7 +8,10 @@ use codex_analytics::build_track_events_context;
 use codex_connectors::AppToolPolicyEvaluator;
 use codex_connectors::AppToolPolicyInput;
 use codex_core_plugins::executor_plugin_hook_sources;
+use codex_hooks::Hooks;
 use codex_hooks::InterruptRequest;
+use codex_hooks::NotificationRequest;
+use codex_hooks::NotificationType;
 use codex_hooks::PermissionRequestDecision;
 use codex_hooks::PermissionRequestOutcome;
 use codex_hooks::PermissionRequestRequest;
@@ -28,6 +31,7 @@ use codex_hooks::hook_handler_type_label;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_otel::HOOK_RUN_DURATION_METRIC;
 use codex_otel::HOOK_RUN_METRIC;
+use codex_otel::SessionTelemetry;
 use codex_plugin::ExecutorPluginHookSource;
 use codex_protocol::items::FunctionCallOutputItem;
 use codex_protocol::items::TurnItem;
@@ -35,6 +39,7 @@ use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CodexErrorInfo;
+use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::HookCompletedEvent;
 use codex_protocol::protocol::HookEventName;
@@ -86,6 +91,243 @@ pub(crate) enum PreToolUseHookResult {
     Blocked(String),
 }
 
+/// Keeps an exposed user-attention request paired with exactly one completion notification.
+///
+/// The hook work runs in owned tasks so cancelling the request future cannot cancel an already
+/// exposed lifecycle event. Dropping the guard chains completion after any in-flight open hook.
+pub(crate) struct NotificationLifecycle {
+    session: Arc<Session>,
+    context: NotificationHookContext,
+    completion_type: Option<NotificationType>,
+    open_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl NotificationLifecycle {
+    pub(crate) async fn complete(mut self) {
+        self.wait_for_open().await;
+        let Some(completion_type) = self.completion_type.take() else {
+            return;
+        };
+        let session = Arc::clone(&self.session);
+        let context = self.context.clone();
+        let completion_task = tokio::spawn(async move {
+            run_notification_hook_with_context(&session, context, completion_type).await;
+        });
+        if let Err(error) = completion_task.await {
+            tracing::warn!(%error, "notification completion task failed");
+        }
+    }
+
+    async fn wait_for_open(&mut self) {
+        if let Some(open_task) = self.open_task.as_mut()
+            && let Err(error) = open_task.await
+        {
+            tracing::warn!(%error, "notification open task failed");
+        }
+        self.open_task = None;
+    }
+}
+
+impl Drop for NotificationLifecycle {
+    fn drop(&mut self) {
+        let Some(completion_type) = self.completion_type.take() else {
+            return;
+        };
+        let Some(runtime) = tokio::runtime::Handle::try_current().ok() else {
+            tracing::warn!("notification lifecycle dropped outside a Tokio runtime");
+            return;
+        };
+        let session = Arc::clone(&self.session);
+        let context = self.context.clone();
+        let open_task = self.open_task.take();
+        runtime.spawn(async move {
+            if let Some(open_task) = open_task
+                && let Err(error) = open_task.await
+            {
+                tracing::warn!(%error, "notification open task failed");
+            }
+            run_notification_hook_with_context(&session, context, completion_type).await;
+        });
+    }
+}
+
+pub(crate) async fn begin_notification_lifecycle(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    open_type: NotificationType,
+    completion_type: NotificationType,
+) -> NotificationLifecycle {
+    let context = NotificationHookContext::capture(sess, turn_context).await;
+    begin_notification_lifecycle_with_context(sess, context, open_type, completion_type).await
+}
+
+pub(crate) async fn begin_notification_lifecycle_with_context(
+    sess: &Arc<Session>,
+    context: NotificationHookContext,
+    open_type: NotificationType,
+    completion_type: NotificationType,
+) -> NotificationLifecycle {
+    let session = Arc::clone(sess);
+    let open_context = context.clone();
+    let open_task = tokio::spawn(async move {
+        run_notification_hook_with_context(&session, open_context, open_type).await;
+    });
+    let mut lifecycle = NotificationLifecycle {
+        session: Arc::clone(sess),
+        context,
+        completion_type: Some(completion_type),
+        open_task: Some(open_task),
+    };
+    lifecycle.wait_for_open().await;
+    lifecycle
+}
+
+pub(crate) async fn run_notification_hook(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    notification_type: NotificationType,
+) {
+    let context = NotificationHookContext::capture(sess, turn_context).await;
+    run_notification_hook_with_context(sess, context, notification_type).await;
+}
+
+#[derive(Clone)]
+pub(crate) struct NotificationHookContext {
+    pub(crate) turn_id: String,
+    hooks: Arc<Hooks>,
+    cwd: AbsolutePathBuf,
+    model: String,
+    permission_mode: String,
+    originator: String,
+    session_telemetry: SessionTelemetry,
+    memories_disabled_on_external_context: bool,
+}
+
+impl NotificationHookContext {
+    pub(crate) async fn capture(sess: &Arc<Session>, turn_context: &TurnContext) -> Self {
+        Self {
+            turn_id: turn_context.sub_id.clone(),
+            hooks: sess.hooks(),
+            cwd: current_hook_cwd(sess, turn_context).await,
+            model: turn_context.model_info().slug.clone(),
+            permission_mode: hook_permission_mode(turn_context),
+            originator: turn_context.originator.clone(),
+            session_telemetry: turn_context.session_telemetry.clone(),
+            memories_disabled_on_external_context: turn_context
+                .config
+                .memories
+                .disable_on_external_context,
+        }
+    }
+}
+
+async fn run_notification_hook_with_context(
+    sess: &Arc<Session>,
+    context: NotificationHookContext,
+    notification_type: NotificationType,
+) {
+    let request = NotificationRequest {
+        session_id: sess.session_id().into(),
+        turn_id: context.turn_id.clone(),
+        cwd: context.cwd.clone(),
+        transcript_path: sess.hook_transcript_path().await,
+        model: context.model.clone(),
+        permission_mode: context.permission_mode.clone(),
+        notification_type,
+    };
+    let hooks = Arc::clone(&context.hooks);
+    emit_hook_started_events_for_turn_id(
+        sess,
+        &context.turn_id,
+        hooks.preview_notification(&request),
+    )
+    .await;
+    let outcome = hooks.run_notification(request).await;
+    emit_hook_completed_events_for_turn_id(sess, &context, outcome.hook_events).await;
+}
+
+async fn emit_hook_started_events_for_turn_id(
+    sess: &Arc<Session>,
+    turn_id: &str,
+    preview_runs: Vec<HookRunSummary>,
+) {
+    for run in preview_runs
+        .into_iter()
+        .filter(|run| run.execution_mode == HookExecutionMode::Sync)
+    {
+        sess.send_event_raw(Event {
+            id: turn_id.to_string(),
+            msg: EventMsg::HookStarted(HookStartedEvent {
+                turn_id: Some(turn_id.to_string()),
+                run,
+            }),
+        })
+        .await;
+    }
+}
+
+async fn emit_hook_completed_events_for_turn_id(
+    sess: &Arc<Session>,
+    context: &NotificationHookContext,
+    completed_events: Vec<HookCompletedEvent>,
+) {
+    if context.memories_disabled_on_external_context
+        && completed_events.iter().any(|completed| {
+            completed.run.handler_type == HookHandlerType::McpTool
+                && matches!(
+                    completed.run.status,
+                    HookRunStatus::Completed | HookRunStatus::Blocked | HookRunStatus::Stopped
+                )
+        })
+    {
+        state_db::mark_thread_memory_mode_polluted(
+            sess.services.state_db.as_deref(),
+            sess.thread_id,
+            "mcp_tool_hook",
+        )
+        .await;
+    }
+
+    for completed in completed_events {
+        let tags = hook_run_metric_tags(&completed.run);
+        context
+            .session_telemetry
+            .counter(HOOK_RUN_METRIC, /*inc*/ 1, &tags);
+        if let Some(duration_ms) = completed.run.duration_ms
+            && let Ok(duration_ms) = u64::try_from(duration_ms)
+        {
+            context.session_telemetry.record_duration(
+                HOOK_RUN_DURATION_METRIC,
+                Duration::from_millis(duration_ms),
+                &tags,
+            );
+        }
+        let tracking = build_track_events_context(
+            context.model.clone(),
+            sess.thread_id.to_string(),
+            context.turn_id.clone(),
+            context.originator.clone(),
+        );
+        sess.services.analytics_events_client.track_hook_run(
+            tracking,
+            HookRunFact {
+                event_name: completed.run.event_name,
+                hook_source: completed.run.source,
+                handler_type: completed.run.handler_type,
+                execution_mode: completed.run.execution_mode,
+                status: completed.run.status,
+            },
+        );
+        if completed.run.execution_mode == HookExecutionMode::Sync {
+            sess.send_event_raw(Event {
+                id: context.turn_id.clone(),
+                msg: EventMsg::HookCompleted(completed),
+            })
+            .await;
+        }
+    }
+}
+
 pub(crate) struct ToolHookContext<'a> {
     pub(crate) session: &'a Arc<Session>,
     pub(crate) turn: &'a Arc<TurnContext>,
@@ -106,7 +348,7 @@ impl<'a> ToolHookContext<'a> {
     }
 }
 
-async fn current_hook_cwd(sess: &Arc<Session>, turn_context: &Arc<TurnContext>) -> AbsolutePathBuf {
+async fn current_hook_cwd(sess: &Arc<Session>, turn_context: &TurnContext) -> AbsolutePathBuf {
     sess.services
         .turn_environments
         .snapshot()
@@ -1032,6 +1274,7 @@ fn hook_run_metric_tags(run: &HookRunSummary) -> [(&'static str, &'static str); 
     let hook_name = match run.event_name {
         HookEventName::PreToolUse => "PreToolUse",
         HookEventName::PermissionRequest => "PermissionRequest",
+        HookEventName::Notification => "Notification",
         HookEventName::PostToolUse => "PostToolUse",
         HookEventName::PreCompact => "PreCompact",
         HookEventName::PostCompact => "PostCompact",
@@ -1265,12 +1508,13 @@ mod tests {
     #[test]
     fn hook_run_metric_tags_match_analytics_shape() {
         let mut run = sample_hook_run(HookRunStatus::Blocked, HookSource::Project);
+        run.event_name = HookEventName::Notification;
         run.handler_type = HookHandlerType::McpTool;
 
         assert_eq!(
             hook_run_metric_tags(&run),
             [
-                ("hook_name", "Stop"),
+                ("hook_name", "Notification"),
                 ("source", "project"),
                 ("status", "blocked"),
                 ("handler_type", "mcp_tool"),

@@ -41,6 +41,53 @@ fn form_request(meta: Option<RequestMetaObject>) -> ElicitationReviewRequest {
 }
 
 #[test]
+fn elicitation_open_notifications_classify_every_request_shape() {
+    let form_fields = || (None, "Prompt".to_string(), json!({ "type": "object" }));
+    let requests = [
+        {
+            let (meta, message, requested_schema) = form_fields();
+            ElicitationRequest::Form {
+                meta,
+                message,
+                requested_schema,
+            }
+        },
+        {
+            let (meta, message, requested_schema) = form_fields();
+            ElicitationRequest::OpenAiForm {
+                meta,
+                message,
+                requested_schema,
+            }
+        },
+        {
+            let (meta, message, requested_schema) = form_fields();
+            ElicitationRequest::OpenAiElicitationForm {
+                meta,
+                message,
+                requested_schema,
+            }
+        },
+        ElicitationRequest::Url {
+            meta: None,
+            message: "Open URL".to_string(),
+            url: "https://example.com".to_string(),
+            elicitation_id: "elicitation-1".to_string(),
+        },
+    ];
+
+    assert_eq!(
+        requests.map(|request| elicitation_open_notification_type(&request)),
+        [
+            codex_hooks::NotificationType::ElicitationDialog,
+            codex_hooks::NotificationType::ElicitationDialog,
+            codex_hooks::NotificationType::ElicitationDialog,
+            codex_hooks::NotificationType::ElicitationUrlDialog,
+        ]
+    );
+}
+
+#[test]
 fn guardian_elicitation_review_request_builds_mcp_tool_call() {
     let request = form_request(guardian_meta(Some(json!({
         "origin": "https://example.com",

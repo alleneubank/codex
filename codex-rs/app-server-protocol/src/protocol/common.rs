@@ -643,6 +643,18 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadMemoryModeSetResponse,
     },
+    #[experimental("thread/userAttention/start")]
+    ThreadUserAttentionStart => "thread/userAttention/start" {
+        params: v2::ThreadUserAttentionStartParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadUserAttentionStartResponse,
+    },
+    #[experimental("thread/userAttention/complete")]
+    ThreadUserAttentionComplete => "thread/userAttention/complete" {
+        params: v2::ThreadUserAttentionCompleteParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadUserAttentionCompleteResponse,
+    },
     #[experimental("memory/reset")]
     MemoryReset => "memory/reset" {
         params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,

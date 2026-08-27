@@ -770,6 +770,7 @@ fn event_label(event_name: HookEventName) -> &'static str {
     match event_name {
         HookEventName::PreToolUse => "PreToolUse",
         HookEventName::PermissionRequest => "PermissionRequest",
+        HookEventName::Notification => "Notification",
         HookEventName::PostToolUse => "PostToolUse",
         HookEventName::PreCompact => "PreCompact",
         HookEventName::PostCompact => "PostCompact",
@@ -787,6 +788,7 @@ fn event_description(event_name: HookEventName) -> &'static str {
     match event_name {
         HookEventName::PreToolUse => "Before a tool executes",
         HookEventName::PermissionRequest => "When permission is requested",
+        HookEventName::Notification => "When Codex needs user attention",
         HookEventName::PostToolUse => "After a tool executes",
         HookEventName::PreCompact => "Before context compaction",
         HookEventName::PostCompact => "After context compaction",

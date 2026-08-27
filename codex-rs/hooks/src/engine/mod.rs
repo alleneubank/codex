@@ -11,6 +11,8 @@ use crate::events::compact::PreCompactRequest;
 use crate::events::compact::StatelessHookOutcome;
 use crate::events::interrupt::InterruptOutcome;
 use crate::events::interrupt::InterruptRequest;
+use crate::events::notification::NotificationOutcome;
+use crate::events::notification::NotificationRequest;
 use crate::events::permission_request::PermissionRequestOutcome;
 use crate::events::permission_request::PermissionRequestRequest;
 use crate::events::post_tool_use::PostToolUseOutcome;
@@ -166,6 +168,7 @@ impl ConfiguredHandler {
         match self.event_name {
             codex_protocol::protocol::HookEventName::PreToolUse => "pre-tool-use",
             codex_protocol::protocol::HookEventName::PermissionRequest => "permission-request",
+            codex_protocol::protocol::HookEventName::Notification => "notification",
             codex_protocol::protocol::HookEventName::PostToolUse => "post-tool-use",
             codex_protocol::protocol::HookEventName::PreCompact => "pre-compact",
             codex_protocol::protocol::HookEventName::PostCompact => "post-compact",
@@ -356,6 +359,13 @@ impl ClaudeHooksEngine {
         crate::events::permission_request::preview(&self.handlers, request)
     }
 
+    pub(crate) fn preview_notification(
+        &self,
+        request: &NotificationRequest,
+    ) -> Vec<HookRunSummary> {
+        crate::events::notification::preview(&self.handlers, request)
+    }
+
     pub(crate) fn max_permission_request_timeout(&self) -> Duration {
         Duration::from_secs(
             self.handlers
@@ -401,6 +411,13 @@ impl ClaudeHooksEngine {
         request: PermissionRequestRequest,
     ) -> PermissionRequestOutcome {
         crate::events::permission_request::run_observers(self, request).await
+    }
+
+    pub(crate) async fn run_notification(
+        &self,
+        request: NotificationRequest,
+    ) -> NotificationOutcome {
+        crate::events::notification::run(self, request).await
     }
 
     pub(crate) async fn run_post_tool_use(

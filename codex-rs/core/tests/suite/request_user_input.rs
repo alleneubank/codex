@@ -3,6 +3,8 @@
 use codex_core::TurnInputRequest;
 use core_test_support::test_codex::local_selections;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 use codex_features::Feature;
 use codex_protocol::config_types::CollaborationMode;
@@ -38,6 +40,62 @@ use serde_json::json;
 use tokio::time::Duration;
 use tokio::time::timeout;
 
+#[derive(Clone, Copy)]
+enum NotificationHookMode {
+    Sync,
+    Async,
+}
+
+fn write_user_input_notification_hook(
+    home: &Path,
+    mode: NotificationHookMode,
+) -> anyhow::Result<()> {
+    let script_path = home.join("user_input_notification_hook.py");
+    let log_path = home.join("user_input_notification_hook.jsonl");
+    let script = format!(
+        r#"import json
+from pathlib import Path
+import sys
+
+payload = json.load(sys.stdin)
+with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\n")
+raise SystemExit(7)
+"#,
+        log_path = log_path.display(),
+    );
+    let hooks = json!({
+        "hooks": {
+            "Notification": [{
+                "matcher": "user_input_request|user_input_complete",
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                    "async": matches!(mode, NotificationHookMode::Async),
+                }]
+            }]
+        }
+    });
+
+    fs::write(script_path, script)?;
+    fs::write(home.join("hooks.json"), hooks.to_string())?;
+    Ok(())
+}
+
+async fn wait_for_notification_count(log_path: &Path, count: usize) -> anyhow::Result<()> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let payloads = fs::read_to_string(log_path).unwrap_or_default();
+            if payloads.lines().count() >= count {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
 fn call_output(req: &ResponsesRequest, call_id: &str) -> String {
     let raw = req.function_call_output(call_id);
     assert_eq!(
@@ -69,7 +127,7 @@ fn call_output_content_and_success(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_user_input_round_trip_resolves_pending() -> anyhow::Result<()> {
+async fn pending_request_user_input_emits_paired_attention_notifications() -> anyhow::Result<()> {
     request_user_input_round_trip_for_mode(ModeKind::Plan).await
 }
 
@@ -78,23 +136,36 @@ async fn request_user_input_round_trip_for_mode(mode: ModeKind) -> anyhow::Resul
 
     let server = start_mock_server().await;
 
-    let builder = test_codex();
-    let TestCodex {
-        codex,
-        cwd,
-        session_configured,
-        ..
-    } = builder
+    let hook_mode = if mode == ModeKind::Plan {
+        NotificationHookMode::Sync
+    } else {
+        NotificationHookMode::Async
+    };
+    let mut builder = test_codex()
+        .with_pre_build_hook(move |home| {
+            write_user_input_notification_hook(home, hook_mode)
+                .expect("write user-input notification hook fixture");
+        })
         .with_config(move |config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+            config.bypass_hook_trust = true;
             if mode == ModeKind::Default {
                 config
                     .features
                     .enable(Feature::DefaultModeRequestUserInput)
                     .expect("test config should allow feature update");
             }
-        })
-        .build(&server)
-        .await?;
+        });
+    let TestCodex {
+        codex,
+        cwd,
+        home,
+        session_configured,
+        ..
+    } = builder.build_with_auto_env(&server).await?;
 
     let call_id = "user-input-call";
     let expected_is_blocking = mode == ModeKind::Plan;
@@ -165,6 +236,20 @@ async fn request_user_input_round_trip_for_mode(mode: ModeKind) -> anyhow::Resul
     assert_eq!(request.is_blocking, expected_is_blocking);
     assert_eq!(request.auto_resolution_ms, None);
     assert_eq!(request.questions[0].is_other, true);
+    let log_path = home.path().join("user_input_notification_hook.jsonl");
+    wait_for_notification_count(&log_path, /*count*/ 1).await?;
+    let open_payload: Value = serde_json::from_str(
+        fs::read_to_string(&log_path)?
+            .lines()
+            .next()
+            .expect("open notification log line"),
+    )?;
+    assert_eq!(open_payload["notification_type"], "user_input_request");
+    assert_eq!(open_payload["message"], "Codex needs your input");
+    assert_eq!(open_payload["hook_event_name"], "Notification");
+    assert_eq!(open_payload["permission_mode"], "bypassPermissions");
+    assert_eq!(open_payload.get("questions"), None);
+    assert_eq!(open_payload.get("answers"), None);
     assert!(
         timeout(Duration::from_millis(200), async {
             loop {
@@ -182,13 +267,16 @@ async fn request_user_input_round_trip_for_mode(mode: ModeKind) -> anyhow::Resul
         "TokenCount should wait until request_user_input resolves"
     );
 
-    let mut answers = HashMap::new();
-    answers.insert(
-        "confirm_path".to_string(),
-        RequestUserInputAnswer {
-            answers: vec!["yes".to_string()],
-        },
-    );
+    let answers = if mode == ModeKind::Plan {
+        HashMap::from([(
+            "confirm_path".to_string(),
+            RequestUserInputAnswer {
+                answers: vec!["yes".to_string()],
+            },
+        )])
+    } else {
+        HashMap::new()
+    };
     let response = RequestUserInputResponse { answers };
     codex
         .submit(Op::UserInputAnswer {
@@ -199,18 +287,26 @@ async fn request_user_input_round_trip_for_mode(mode: ModeKind) -> anyhow::Resul
 
     wait_for_event(&codex, |event| matches!(event, EventMsg::TokenCount(_))).await;
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    wait_for_notification_count(&log_path, /*count*/ 2).await?;
 
     let req = second_mock.single_request();
     let output_text = call_output(&req, call_id);
     let output_json: Value = serde_json::from_str(&output_text)?;
-    assert_eq!(
-        output_json,
-        json!({
-            "answers": {
-                "confirm_path": { "answers": ["yes"] }
-            }
-        })
-    );
+    let expected_output = if mode == ModeKind::Plan {
+        json!({"answers": {"confirm_path": {"answers": ["yes"]}}})
+    } else {
+        json!({"answers": {}})
+    };
+    assert_eq!(output_json, expected_output);
+    let payloads = fs::read_to_string(log_path)?
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(payloads[1]["notification_type"], "user_input_complete");
+    assert_eq!(payloads[1]["message"], "Codex input request completed");
+    assert_eq!(payloads[1].get("questions"), None);
+    assert_eq!(payloads[1].get("answers"), None);
 
     Ok(())
 }
@@ -240,12 +336,25 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            write_user_input_notification_hook(home, NotificationHookMode::Sync)
+                .expect("write user-input notification hook fixture");
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+            config.bypass_hook_trust = true;
+        });
     let TestCodex {
         codex,
         cwd,
+        home,
         session_configured,
         ..
-    } = test_codex().build(&server).await?;
+    } = builder.build_with_auto_env(&server).await?;
 
     let call_id = "user-input-interrupt";
     let request_args = json!({
@@ -302,6 +411,8 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
         _ => None,
     })
     .await;
+    let log_path = home.path().join("user_input_notification_hook.jsonl");
+    wait_for_notification_count(&log_path, /*count*/ 1).await?;
 
     codex.submit(Op::Interrupt).await?;
 
@@ -317,6 +428,19 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
         Some(77)
     );
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnAborted(_))).await;
+
+    wait_for_notification_count(&log_path, /*count*/ 2).await?;
+    let notification_types = fs::read_to_string(log_path)?
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|payload| payload["notification_type"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        notification_types,
+        vec![json!("user_input_request"), json!("user_input_complete")]
+    );
 
     assert_eq!(request.call_id, call_id);
     Ok(())
@@ -418,6 +542,7 @@ async fn request_user_input_rejected_in_default_mode_by_default() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_user_input_round_trip_in_default_mode_with_feature() -> anyhow::Result<()> {
+async fn non_blocking_auto_resolution_response_emits_paired_attention_notifications()
+-> anyhow::Result<()> {
     request_user_input_round_trip_for_mode(ModeKind::Default).await
 }

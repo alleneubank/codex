@@ -172,7 +172,7 @@ async fn request_user_input_holds_an_elicitation_until_response() {
         async move {
             session
                 .request_user_input(
-                    turn_context.as_ref(),
+                    &turn_context,
                     "call-1".to_string(),
                     RequestUserInputArgs {
                         questions: Vec::new(),

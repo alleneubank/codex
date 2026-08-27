@@ -643,7 +643,7 @@ async fn request_mcp_server_elicitation_auto_accepts_when_auto_deny_is_enabled()
 
     let response = session
         .request_mcp_server_elicitation(
-            turn_context.as_ref(),
+            &turn_context,
             "codex_apps".to_string(),
             RequestId::String("request-1".into()),
             ElicitationRequest::Form {
@@ -6658,6 +6658,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
         auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     };
     let per_turn_config =
@@ -8951,6 +8952,7 @@ where
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
         auth_account_change_fenced: std::sync::atomic::AtomicBool::new(false),
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     });
     let per_turn_config =

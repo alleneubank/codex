@@ -8,6 +8,8 @@ use crate::events::compact::PreCompactRequest;
 use crate::events::compact::StatelessHookOutcome;
 use crate::events::interrupt::InterruptOutcome;
 use crate::events::interrupt::InterruptRequest;
+use crate::events::notification::NotificationOutcome;
+use crate::events::notification::NotificationRequest;
 use crate::events::permission_request::PermissionRequestOutcome;
 use crate::events::permission_request::PermissionRequestRequest;
 use crate::events::post_tool_use::PostToolUseOutcome;
@@ -192,6 +194,13 @@ impl Hooks {
         self.engine.preview_permission_request(request)
     }
 
+    pub fn preview_notification(
+        &self,
+        request: &NotificationRequest,
+    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+        self.engine.preview_notification(request)
+    }
+
     /// Maximum configured timeout among PermissionRequest hooks.
     ///
     /// Matching handlers run concurrently, so their aggregate timeout is bounded by this maximum.
@@ -239,6 +248,10 @@ impl Hooks {
         request: PermissionRequestRequest,
     ) -> PermissionRequestOutcome {
         self.engine.run_permission_request_observers(request).await
+    }
+
+    pub async fn run_notification(&self, request: NotificationRequest) -> NotificationOutcome {
+        self.engine.run_notification(request).await
     }
 
     pub async fn run_post_tool_use(&self, request: PostToolUseRequest) -> PostToolUseOutcome {
