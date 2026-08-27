@@ -1941,6 +1941,7 @@ class HookEventName(Enum):
     post_model_request = "postModelRequest"
     pre_tool_use = "preToolUse"
     permission_request = "permissionRequest"
+    notification = "notification"
     post_tool_use = "postToolUse"
     pre_compact = "preCompact"
     post_compact = "postCompact"
@@ -2371,6 +2372,7 @@ class ManagedHooksRequirements(BaseModel):
     interrupt: Annotated[
         list[ConfiguredHookMatcherGroup] | None, Field(alias="Interrupt", validate_default=True)
     ] = []
+    notification: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="Notification")]
     permission_request: Annotated[
         list[ConfiguredHookMatcherGroup], Field(alias="PermissionRequest")
     ]
@@ -6689,6 +6691,10 @@ class TurnSteerResponse(BaseModel):
         populate_by_name=True,
     )
     turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class UserAttentionKind(RootModel[Literal["planImplementation"]]):
+    root: Literal["planImplementation"]
 
 
 class TextUserInput(BaseModel):

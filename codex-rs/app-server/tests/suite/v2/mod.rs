@@ -183,6 +183,7 @@ mod turn_interrupt;
 mod turn_settings_update;
 mod turn_start;
 mod turn_steer;
+mod user_attention;
 mod view_image;
 mod web_search;
 mod windows_sandbox_setup;

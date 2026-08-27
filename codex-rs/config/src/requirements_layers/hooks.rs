@@ -208,6 +208,7 @@ fn append_hook_events(existing: &mut HookEventsToml, incoming: HookEventsToml) -
         post_model_request,
         pre_tool_use,
         permission_request,
+        notification,
         post_tool_use,
         pre_compact,
         post_compact,
@@ -225,6 +226,7 @@ fn append_hook_events(existing: &mut HookEventsToml, incoming: HookEventsToml) -
     changed |= append_vec(&mut existing.post_model_request, post_model_request);
     changed |= append_vec(&mut existing.pre_tool_use, pre_tool_use);
     changed |= append_vec(&mut existing.permission_request, permission_request);
+    changed |= append_vec(&mut existing.notification, notification);
     changed |= append_vec(&mut existing.post_tool_use, post_tool_use);
     changed |= append_vec(&mut existing.pre_compact, pre_compact);
     changed |= append_vec(&mut existing.post_compact, post_compact);

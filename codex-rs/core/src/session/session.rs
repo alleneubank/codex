@@ -101,6 +101,8 @@ pub(crate) struct Session {
     pub(super) history_initialization: HistoryInitialization,
     pub(super) forked_from_ordinal_exclusive: Option<u64>,
     pub(super) next_internal_sub_id: AtomicU64,
+    pub(crate) completed_turn_hook_context:
+        Mutex<Option<crate::hook_runtime::NotificationHookContext>>,
 }
 
 #[derive(Clone)]
@@ -1927,6 +1929,7 @@ impl Session {
                 history_initialization,
                 forked_from_ordinal_exclusive,
                 next_internal_sub_id: AtomicU64::new(0),
+                completed_turn_hook_context: Mutex::new(None),
             });
             if let Some(startup) = &startup {
                 startup.set_session(Arc::clone(&sess));

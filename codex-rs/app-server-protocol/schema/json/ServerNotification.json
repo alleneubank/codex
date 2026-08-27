@@ -2352,6 +2352,7 @@
         "postModelRequest",
         "preToolUse",
         "permissionRequest",
+        "notification",
         "postToolUse",
         "preCompact",
         "postCompact",
