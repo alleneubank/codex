@@ -2791,6 +2791,41 @@ impl App {
                 self.chat_widget
                     .submit_user_message_with_mode(text, collaboration_mode);
             }
+            AppEvent::OpenPlanImplementationPrompt {
+                thread_id,
+                turn_id,
+                attention_id,
+            } => {
+                if let Err(error) = app_server
+                    .thread_user_attention_start(
+                        thread_id,
+                        turn_id,
+                        attention_id.clone(),
+                    )
+                    .await
+                {
+                    tracing::warn!(%error, "failed to start plan implementation attention");
+                    self.chat_widget.add_warning_message(
+                        "Could not signal that the plan decision needs attention.".to_string(),
+                    );
+                }
+                self.chat_widget
+                    .open_plan_implementation_prompt(Some((thread_id, attention_id)));
+            }
+            AppEvent::CompletePlanImplementationAttention {
+                thread_id,
+                attention_id,
+            } => {
+                if let Err(error) = app_server
+                    .thread_user_attention_complete(thread_id, attention_id)
+                    .await
+                {
+                    tracing::warn!(%error, "failed to complete plan implementation attention");
+                    self.chat_widget.add_warning_message(
+                        "Could not signal that the plan decision was dismissed.".to_string(),
+                    );
+                }
+            }
             AppEvent::ManageSkillsClosed => {
                 self.chat_widget.handle_manage_skills_closed();
             }

@@ -5553,6 +5553,17 @@
       ],
       "type": "object"
     },
+    "UserAttentionKind": {
+      "oneOf": [
+        {
+          "description": "A post-plan decision asking whether Codex should implement the completed plan.",
+          "enum": [
+            "planImplementation"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "UserInput": {
       "oneOf": [
         {

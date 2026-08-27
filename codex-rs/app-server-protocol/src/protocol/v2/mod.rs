@@ -33,6 +33,7 @@ mod thread;
 mod thread_data;
 mod thread_usage;
 mod turn;
+mod user_attention;
 mod windows_sandbox;
 
 pub use account::*;
@@ -69,6 +70,7 @@ pub use thread::*;
 pub use thread_data::*;
 pub use thread_usage::*;
 pub use turn::*;
+pub use user_attention::*;
 pub use windows_sandbox::*;
 
 #[cfg(test)]

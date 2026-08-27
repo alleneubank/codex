@@ -117,6 +117,10 @@ use codex_app_server_protocol::ThreadUnarchiveParams;
 use codex_app_server_protocol::ThreadUnarchiveResponse;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
 use codex_app_server_protocol::ThreadUnsubscribeResponse;
+use codex_app_server_protocol::ThreadUserAttentionCompleteParams;
+use codex_app_server_protocol::ThreadUserAttentionCompleteResponse;
+use codex_app_server_protocol::ThreadUserAttentionStartParams;
+use codex_app_server_protocol::ThreadUserAttentionStartResponse;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnInterruptParams;
 use codex_app_server_protocol::TurnInterruptResponse;
@@ -124,6 +128,7 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
+use codex_app_server_protocol::UserAttentionKind;
 use codex_app_server_protocol::UserInput;
 use codex_config::ConfigLayerSource;
 use codex_otel::TelemetryAuthMode;
@@ -1462,6 +1467,49 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/unsubscribe failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_user_attention_start(
+        &mut self,
+        thread_id: ThreadId,
+        turn_id: String,
+        attention_id: String,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadUserAttentionStartResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadUserAttentionStart {
+                request_id,
+                params: ThreadUserAttentionStartParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id,
+                    attention_id,
+                    kind: UserAttentionKind::PlanImplementation,
+                },
+            })
+            .await
+            .wrap_err("thread/userAttention/start failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_user_attention_complete(
+        &mut self,
+        thread_id: ThreadId,
+        attention_id: String,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadUserAttentionCompleteResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadUserAttentionComplete {
+                request_id,
+                params: ThreadUserAttentionCompleteParams {
+                    thread_id: thread_id.to_string(),
+                    attention_id,
+                },
+            })
+            .await
+            .wrap_err("thread/userAttention/complete failed in TUI")?;
         Ok(())
     }
 

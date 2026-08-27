@@ -269,10 +269,34 @@ impl ChatWidget {
             return;
         }
 
-        self.open_plan_implementation_prompt();
+        let Some(thread_id) = self.thread_id else {
+            tracing::warn!("cannot signal plan implementation attention without a thread id");
+            self.add_warning_message(
+                "Could not signal that the plan decision needs attention.".to_string(),
+            );
+            self.open_plan_implementation_prompt(/*attention*/ None);
+            return;
+        };
+        let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() else {
+            tracing::warn!("cannot signal plan implementation attention without a turn id");
+            self.add_warning_message(
+                "Could not signal that the plan decision needs attention.".to_string(),
+            );
+            self.open_plan_implementation_prompt(/*attention*/ None);
+            return;
+        };
+        self.app_event_tx
+            .send(AppEvent::OpenPlanImplementationPrompt {
+                thread_id,
+                attention_id: format!("plan-implementation-{turn_id}"),
+                turn_id,
+            });
     }
 
-    pub(super) fn open_plan_implementation_prompt(&mut self) {
+    pub(crate) fn open_plan_implementation_prompt(
+        &mut self,
+        attention: Option<(ThreadId, String)>,
+    ) {
         let default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
         let context_usage_label = self.plan_implementation_context_usage_label();
 
@@ -281,6 +305,12 @@ impl ChatWidget {
                 default_mask,
                 self.transcript.latest_proposed_plan_markdown.as_deref(),
                 context_usage_label.as_deref(),
+                attention.map(|(thread_id, attention_id)| {
+                    plan_implementation::PlanImplementationAttention {
+                        thread_id,
+                        attention_id,
+                    }
+                }),
             ));
         self.notify(Notification::PlanModePrompt {
             title: PLAN_IMPLEMENTATION_TITLE.to_string(),

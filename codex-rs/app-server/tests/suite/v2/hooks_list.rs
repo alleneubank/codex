@@ -94,6 +94,25 @@ additionalContextLimit = 4096
     Ok(())
 }
 
+fn write_notification_hook_config(codex_home: &std::path::Path) -> Result<()> {
+    std::fs::write(
+        codex_home.join("config.toml"),
+        r#"[hooks]
+
+[[hooks.Notification]]
+matcher = "user_input_request"
+
+[[hooks.Notification.hooks]]
+type = "command"
+command = "python3 /tmp/listed-hook.py"
+timeout = 5
+async = true
+statusMessage = "running listed hook"
+"#,
+    )?;
+    Ok(())
+}
+
 fn write_plugin_hook_config(codex_home: &std::path::Path, hooks_json: &str) -> Result<()> {
     let plugin_root = codex_home.join("plugins/cache/test/demo/local");
     std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
@@ -185,10 +204,10 @@ timeout = 5
 }
 
 #[tokio::test]
-async fn hooks_list_shows_discovered_hook() -> Result<()> {
+async fn hooks_list_shows_discovered_notification_hook() -> Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
-    write_user_hook_config(codex_home.path())?;
+    write_notification_hook_config(codex_home.path())?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -210,16 +229,16 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
         vec![HooksListEntry {
             cwd: cwd.path().to_path_buf(),
             hooks: vec![HookMetadata {
-                key: format!("{}:pre_tool_use:0:0", config_path.as_path().display()),
-                event_name: HookEventName::PreToolUse,
+                key: format!("{}:notification:0:0", config_path.as_path().display()),
+                event_name: HookEventName::Notification,
                 handler: HookHandlerMetadata::Command {
                     command: "python3 /tmp/listed-hook.py".to_string(),
                     r#async: true,
                 },
-                matcher: Some("Bash".to_string()),
+                matcher: Some("user_input_request".to_string()),
                 timeout_sec: 5,
                 status_message: Some("running listed hook".to_string()),
-                additional_context_limit: Some(4_096),
+                additional_context_limit: None,
                 source_path: config_path,
                 source: HookSource::User,
                 plugin_id: None,
@@ -227,13 +246,13 @@ async fn hooks_list_shows_discovered_hook() -> Result<()> {
                 enabled: true,
                 is_managed: false,
                 current_hash: command_hook_hash(
-                    "pre_tool_use",
-                    Some("Bash"),
+                    "notification",
+                    Some("user_input_request"),
                     "python3 /tmp/listed-hook.py",
                     /*timeout_sec*/ 5,
                     /*async*/ true,
                     Some("running listed hook"),
-                    /*additional_context_limit*/ Some(4_096),
+                    /*additional_context_limit*/ None,
                 ),
                 trust_status: HookTrustStatus::Untrusted,
             }],

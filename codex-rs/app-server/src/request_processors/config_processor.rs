@@ -625,6 +625,7 @@ fn map_hooks_requirements_to_api(hooks: ManagedHooksRequirementsToml) -> Managed
     let HookEventsToml {
         pre_tool_use,
         permission_request,
+        notification,
         post_tool_use,
         pre_compact,
         post_compact,
@@ -642,6 +643,7 @@ fn map_hooks_requirements_to_api(hooks: ManagedHooksRequirementsToml) -> Managed
         windows_managed_dir,
         pre_tool_use: map_hook_matcher_groups_to_api(pre_tool_use),
         permission_request: map_hook_matcher_groups_to_api(permission_request),
+        notification: map_hook_matcher_groups_to_api(notification),
         post_tool_use: map_hook_matcher_groups_to_api(post_tool_use),
         pre_compact: map_hook_matcher_groups_to_api(pre_compact),
         post_compact: map_hook_matcher_groups_to_api(post_compact),

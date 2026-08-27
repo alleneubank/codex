@@ -95,7 +95,7 @@ async fn plan_draft_footer_narrow_snapshot() {
 async fn plan_implementation_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.on_plan_item_completed("- Step 1\n- Step 2\n".to_string());
-    chat.open_plan_implementation_prompt();
+    chat.open_plan_implementation_prompt(None);
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("plan_implementation_popup", popup);
@@ -108,7 +108,7 @@ async fn plan_implementation_popup_context_usage_snapshot() {
         /*total_tokens*/ 90_000, /*context_window*/ 100_000,
     )));
     chat.on_plan_item_completed("- Step 1\n- Step 2\n".to_string());
-    chat.open_plan_implementation_prompt();
+    chat.open_plan_implementation_prompt(None);
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("plan_implementation_popup_context_usage", popup);
@@ -118,7 +118,7 @@ async fn plan_implementation_popup_context_usage_snapshot() {
 async fn plan_implementation_popup_no_selected_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.on_plan_item_completed("- Step 1\n- Step 2\n".to_string());
-    chat.open_plan_implementation_prompt();
+    chat.open_plan_implementation_prompt(None);
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
@@ -126,12 +126,43 @@ async fn plan_implementation_popup_no_selected_snapshot() {
 }
 
 #[tokio::test]
+async fn plan_implementation_attention_signal_warning_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    let plan_mask = collaboration_modes::mask_for_kind(chat.model_catalog.as_ref(), ModeKind::Plan)
+        .expect("expected plan collaboration mask");
+    chat.set_collaboration_mask(plan_mask);
+    let _ = drain_insert_history(&mut rx);
+    chat.transcript.saw_plan_item_this_turn = true;
+
+    chat.maybe_prompt_plan_implementation();
+
+    let warning_lines = drain_insert_history(&mut rx)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_chatwidget_snapshot!(
+        "plan_implementation_attention_signal_warning",
+        lines_to_single_string(&warning_lines)
+    );
+    assert!(render_bottom_popup(&chat, /*width*/ 80).contains(PLAN_IMPLEMENTATION_TITLE));
+}
+
+#[tokio::test]
 async fn plan_implementation_popup_yes_emits_submit_message_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
-    chat.open_plan_implementation_prompt();
+    let thread_id = ThreadId::new();
+    chat.open_plan_implementation_prompt(Some((thread_id, "attention-yes".to_string())));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
+    assert_matches!(
+        rx.try_recv().expect("expected attention completion"),
+        AppEvent::CompletePlanImplementationAttention {
+            thread_id: completed_thread_id,
+            attention_id,
+        } if completed_thread_id == thread_id && attention_id == "attention-yes"
+    );
     let event = rx.try_recv().expect("expected AppEvent");
     let AppEvent::SubmitUserMessageWithMode {
         text,
@@ -153,11 +184,19 @@ async fn plan_implementation_popup_clear_context_emits_clear_submit_event() {
     let plan_markdown = "- Step 1\n- Step 2\n";
     chat.on_plan_item_completed(plan_markdown.to_string());
     let _ = drain_insert_history(&mut rx);
-    chat.open_plan_implementation_prompt();
+    let thread_id = ThreadId::new();
+    chat.open_plan_implementation_prompt(Some((thread_id, "attention-clear".to_string())));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
+    assert_matches!(
+        rx.try_recv().expect("expected attention completion"),
+        AppEvent::CompletePlanImplementationAttention {
+            thread_id: completed_thread_id,
+            attention_id,
+        } if completed_thread_id == thread_id && attention_id == "attention-clear"
+    );
     let event = rx.try_recv().expect("expected AppEvent");
     let AppEvent::ClearUiAndSubmitUserMessage { text } = event else {
         panic!("expected ClearUiAndSubmitUserMessage, got {event:?}");
@@ -172,6 +211,84 @@ async fn plan_implementation_popup_clear_context_emits_clear_submit_event() {
 }
 
 #[tokio::test]
+async fn plan_implementation_popup_stay_completes_attention_without_submitting() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let thread_id = ThreadId::new();
+    chat.open_plan_implementation_prompt(Some((thread_id, "attention-stay".to_string())));
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv().expect("expected attention completion"),
+        AppEvent::CompletePlanImplementationAttention {
+            thread_id: completed_thread_id,
+            attention_id,
+        } if completed_thread_id == thread_id && attention_id == "attention-stay"
+    );
+    while let Ok(event) = rx.try_recv() {
+        assert!(!matches!(
+            event,
+            AppEvent::SubmitUserMessageWithMode { .. }
+                | AppEvent::ClearUiAndSubmitUserMessage { .. }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn plan_implementation_starts_attention_before_opening_popup() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    let plan_mask = collaboration_modes::mask_for_kind(chat.model_catalog.as_ref(), ModeKind::Plan)
+        .expect("expected plan collaboration mask");
+    chat.set_collaboration_mask(plan_mask);
+    let _ = drain_insert_history(&mut rx);
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.turn_lifecycle.last_turn_id = Some("turn-plan".to_string());
+    chat.transcript.saw_plan_item_this_turn = true;
+
+    chat.maybe_prompt_plan_implementation();
+
+    let popup_before_start = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(!popup_before_start.contains(PLAN_IMPLEMENTATION_TITLE));
+    let event = rx.try_recv().expect("expected attention start event");
+    let AppEvent::OpenPlanImplementationPrompt {
+        thread_id: event_thread_id,
+        turn_id,
+        attention_id,
+    } = event
+    else {
+        panic!("expected OpenPlanImplementationPrompt, got {event:?}");
+    };
+    assert_eq!(event_thread_id, thread_id);
+    assert_eq!(turn_id, "turn-plan");
+    assert_eq!(attention_id, "plan-implementation-turn-plan");
+
+    chat.open_plan_implementation_prompt(Some((thread_id, attention_id)));
+    let popup_after_start = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup_after_start.contains(PLAN_IMPLEMENTATION_TITLE));
+}
+
+#[tokio::test]
+async fn plan_implementation_popup_escape_completes_attention_without_submitting() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let thread_id = ThreadId::new();
+    chat.open_plan_implementation_prompt(Some((thread_id, "attention-escape".to_string())));
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    assert_matches!(
+        rx.try_recv().expect("expected attention completion"),
+        AppEvent::CompletePlanImplementationAttention {
+            thread_id: completed_thread_id,
+            attention_id,
+        } if completed_thread_id == thread_id && attention_id == "attention-escape"
+    );
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
     let (chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     let default_mask = collaboration_modes::default_mode_mask(chat.model_catalog.as_ref())
@@ -181,6 +298,7 @@ async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
         /*default_mask*/ None,
         Some("- Step\n"),
         /*clear_context_usage_label*/ None,
+        /*attention*/ None,
     );
     assert_eq!(
         params.items[1].disabled_reason.as_deref(),
@@ -191,6 +309,7 @@ async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
         Some(default_mask.clone()),
         /*plan_markdown*/ None,
         /*clear_context_usage_label*/ None,
+        /*attention*/ None,
     );
     assert_eq!(
         params.items[1].disabled_reason.as_deref(),
@@ -201,6 +320,7 @@ async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
         Some(default_mask.clone()),
         Some("  \n"),
         /*clear_context_usage_label*/ None,
+        /*attention*/ None,
     );
     assert_eq!(
         params.items[1].disabled_reason.as_deref(),
@@ -211,6 +331,7 @@ async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
         Some(default_mask.clone()),
         Some("- Step\n"),
         /*clear_context_usage_label*/ None,
+        /*attention*/ None,
     );
     assert_eq!(params.items[1].disabled_reason, None);
     assert!(!params.items[1].actions.is_empty());
@@ -224,6 +345,7 @@ async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
         Some(default_mask),
         Some("- Step\n"),
         Some("89% used"),
+        /*attention*/ None,
     );
     assert_eq!(
         params.items[1].description.as_deref(),
@@ -620,7 +742,7 @@ async fn open_plan_implementation_prompt_sets_pending_notification() {
     chat.local_settings.tui.notification_settings.notifications =
         Notifications::Custom(vec!["plan-mode-prompt".to_string()]);
 
-    chat.open_plan_implementation_prompt();
+    chat.open_plan_implementation_prompt(None);
 
     assert_matches!(
         chat.pending_notification,
@@ -646,7 +768,7 @@ async fn open_plan_reasoning_scope_prompt_sets_pending_notification() {
 async fn agent_turn_complete_does_not_override_pending_plan_mode_prompt_notification() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
 
-    chat.open_plan_implementation_prompt();
+    chat.open_plan_implementation_prompt(None);
     chat.notify(Notification::AgentTurnComplete {
         response: "done".to_string(),
     });

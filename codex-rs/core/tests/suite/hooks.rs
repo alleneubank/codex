@@ -1826,22 +1826,48 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let responses = mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp-1"),
-                ev_assistant_message("msg-1", "first turn completed"),
-                ev_completed("resp-1"),
-            ]),
-            sse(vec![
-                ev_response_created("resp-2"),
-                ev_assistant_message("msg-2", "idle async context observed"),
-                ev_completed("resp-2"),
-            ]),
-        ],
-    )
-    .await;
+    let active_turn_gate = if automatic_continuation {
+        None
+    } else {
+        Some(TempDir::new()?)
+    };
+    let active_turn_release_path = active_turn_gate
+        .as_ref()
+        .map(|gate| gate.path().join("release"));
+    let mut response_sequence = vec![sse(vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "first turn completed"),
+        ev_completed("resp-1"),
+    ])];
+    if let Some(release_path) = active_turn_release_path.as_ref() {
+        let args = serde_json::json!({
+            "cmd": format!(
+                r#"python3 -c 'import time; from pathlib import Path; gate = Path(r"{}"); exec("while not gate.exists(): time.sleep(0.01)")'"#,
+                release_path.display()
+            )
+        });
+        response_sequence.push(sse(vec![
+            ev_response_created("resp-2"),
+            ev_function_call(
+                "async-hook-idle-next-turn-gate",
+                "exec_command",
+                &serde_json::to_string(&args)?,
+            ),
+            ev_completed("resp-2"),
+        ]));
+        response_sequence.push(sse(vec![
+            ev_response_created("resp-3"),
+            ev_assistant_message("msg-3", "next-turn async context observed"),
+            ev_completed("resp-3"),
+        ]));
+    } else {
+        response_sequence.push(sse(vec![
+            ev_response_created("resp-2"),
+            ev_assistant_message("msg-2", "idle async context observed"),
+            ev_completed("resp-2"),
+        ]));
+    }
+    let responses = mount_sse_sequence(&server, response_sequence).await;
 
     let test = test_codex()
         .with_pre_build_hook(|home| {
@@ -1860,7 +1886,7 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
     let started_path = test
         .codex_home_path()
         .join("async_user_prompt_submit_started");
-    fs_wait::wait_for_path_exists(started_path, Duration::from_secs(5))
+    fs_wait::wait_for_path_exists(started_path.clone(), Duration::from_secs(5))
         .await
         .context("timed out waiting for the async hook to start")?;
 
@@ -1874,7 +1900,7 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
     let finished_path = test
         .codex_home_path()
         .join("async_user_prompt_submit_finished");
-    fs_wait::wait_for_path_exists(finished_path, Duration::from_secs(5))
+    fs_wait::wait_for_path_exists(finished_path.clone(), Duration::from_secs(5))
         .await
         .context("timed out waiting for the async hook to finish")?;
 
@@ -1892,6 +1918,10 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
     );
 
     let next_prompt = "observe the buffered async context";
+    if !automatic_continuation {
+        fs::remove_file(&started_path).context("clear the first async hook start marker")?;
+        fs::remove_file(&finished_path).context("clear the first async hook finish marker")?;
+    }
     let next_turn = if automatic_continuation {
         TurnInputRequest::new(TurnInput::ResponseItem(responses::user_message_item(
             next_prompt,
@@ -1902,12 +1932,27 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
             ..Default::default()
         })
     } else {
+        let (sandbox_policy, permission_profile) =
+            turn_permission_fields(PermissionProfile::Disabled, test.config.cwd.as_path());
         TurnInputRequest::user_input(vec![UserInput::Text {
             text: next_prompt.to_string(),
             text_elements: Vec::new(),
         }])
+        .with_thread_settings(ThreadSettingsOverrides {
+            approval_policy: Some(AskForApproval::Never),
+            sandbox_policy: Some(sandbox_policy),
+            permission_profile,
+            ..Default::default()
+        })
     };
     test.codex.start_turn_if_idle(next_turn).await?;
+
+    if let Some(release_path) = active_turn_release_path {
+        fs_wait::wait_for_path_exists(finished_path, Duration::from_secs(5))
+            .await
+            .context("timed out waiting for the next-turn async hook to finish")?;
+        fs::write(release_path, "ready").context("release the active next turn")?;
+    }
 
     let mut warning_event = None;
     timeout(Duration::from_secs(5), async {
@@ -1930,7 +1975,7 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
     .context("timed out waiting for the next turn to complete")??;
 
     let requests = responses.requests();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), if automatic_continuation { 2 } else { 3 });
     let second_turn_id = requests[1].body_json()["client_metadata"]["turn_id"]
         .as_str()
         .context("second model request should include its turn ID")?
@@ -1967,6 +2012,14 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
         context_index < prompt_index,
         "buffered async hook context should precede the next user prompt"
     );
+    if !automatic_continuation {
+        assert!(
+            requests[2]
+                .message_input_texts("developer")
+                .contains(&format!("async context for {next_prompt}")),
+            "the next-turn async hook context should be delivered before the turn completes"
+        );
+    }
 
     Ok(())
 }

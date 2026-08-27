@@ -1297,6 +1297,17 @@ pub(crate) enum AppEvent {
         collaboration_mode: CollaborationModeMask,
     },
 
+    OpenPlanImplementationPrompt {
+        thread_id: ThreadId,
+        turn_id: String,
+        attention_id: String,
+    },
+
+    CompletePlanImplementationAttention {
+        thread_id: ThreadId,
+        attention_id: String,
+    },
+
     /// Open the approval popup.
     FullScreenApprovalRequest(ApprovalRequest),
 

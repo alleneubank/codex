@@ -3004,8 +3004,8 @@ impl Session {
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn request_user_input(
-        &self,
-        turn_context: &TurnContext,
+        self: &Arc<Self>,
+        turn_context: &Arc<TurnContext>,
         call_id: String,
         args: RequestUserInputArgs,
     ) -> Option<RequestUserInputResponse> {
@@ -3038,7 +3038,16 @@ impl Session {
             .turn_metadata_state
             .mark_user_input_requested_during_turn();
         self.send_event(turn_context, event).await;
-        rx_response.await.ok()
+        let notification = crate::hook_runtime::begin_notification_lifecycle(
+            self,
+            turn_context,
+            codex_hooks::NotificationType::UserInputRequest,
+            codex_hooks::NotificationType::UserInputComplete,
+        )
+        .await;
+        let response = rx_response.await.ok();
+        notification.complete().await;
+        response
     }
 
     #[expect(

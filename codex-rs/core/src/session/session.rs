@@ -104,6 +104,8 @@ pub(crate) struct Session {
     pub(super) forked_from_ordinal_exclusive: Option<u64>,
     pub(super) next_internal_sub_id: AtomicU64,
     pub(super) auth_account_change_fenced: AtomicBool,
+    pub(crate) completed_turn_hook_context:
+        Mutex<Option<crate::hook_runtime::NotificationHookContext>>,
 }
 
 #[derive(Clone)]
@@ -1589,6 +1591,7 @@ impl Session {
                 forked_from_ordinal_exclusive,
                 next_internal_sub_id: AtomicU64::new(0),
                 auth_account_change_fenced: AtomicBool::new(auth_account_change_fenced),
+                completed_turn_hook_context: Mutex::new(None),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;
