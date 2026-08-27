@@ -38,6 +38,7 @@ mod thread_prediction;
 mod thread_sample;
 mod thread_usage;
 mod turn;
+mod user_attention;
 mod user_verification;
 mod windows_sandbox;
 
@@ -80,6 +81,7 @@ pub use thread_prediction::*;
 pub use thread_sample::*;
 pub use thread_usage::*;
 pub use turn::*;
+pub use user_attention::*;
 pub use user_verification::*;
 pub use windows_sandbox::*;
 

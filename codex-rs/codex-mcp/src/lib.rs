@@ -7,6 +7,7 @@ pub use connection_manager::NetworkPolicyMetadata;
 pub use connection_manager::NetworkPolicyMetadataProvider;
 pub use connection_manager::tool_is_model_visible;
 pub use elicitation::ElicitationLifecycle;
+pub use elicitation::ElicitationNotification;
 pub use elicitation::ElicitationReviewRequest;
 pub use elicitation::ElicitationReviewer;
 pub use elicitation::ElicitationReviewerHandle;

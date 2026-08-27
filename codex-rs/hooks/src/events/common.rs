@@ -123,6 +123,7 @@ pub(crate) fn matcher_pattern_for_event(
     match event_name {
         HookEventName::PreToolUse
         | HookEventName::PermissionRequest
+        | HookEventName::Notification
         | HookEventName::PostToolUse
         | HookEventName::SessionStart
         | HookEventName::SessionEnd
@@ -304,6 +305,13 @@ mod tests {
         assert_eq!(
             matcher_pattern_for_event(HookEventName::PostToolUse, Some("Edit|Write")),
             Some("Edit|Write")
+        );
+        assert_eq!(
+            matcher_pattern_for_event(
+                HookEventName::Notification,
+                Some("user_input_request|elicitation_dialog")
+            ),
+            Some("user_input_request|elicitation_dialog")
         );
         assert_eq!(
             matcher_pattern_for_event(HookEventName::SessionStart, Some("startup|resume")),
