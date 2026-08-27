@@ -8537,6 +8537,7 @@
       "enum": [
         "preToolUse",
         "permissionRequest",
+        "notification",
         "postToolUse",
         "preCompact",
         "postCompact",
@@ -9694,6 +9695,12 @@
     },
     "ManagedHooksRequirements": {
       "properties": {
+        "Notification": {
+          "items": {
+            "$ref": "#/definitions/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
         "PermissionRequest": {
           "items": {
             "$ref": "#/definitions/ConfiguredHookMatcherGroup"
@@ -9775,6 +9782,7 @@
         }
       },
       "required": [
+        "Notification",
         "PermissionRequest",
         "PostCompact",
         "PostToolUse",

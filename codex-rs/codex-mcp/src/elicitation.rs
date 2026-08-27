@@ -60,10 +60,22 @@ pub trait ElicitationReviewer: Send + Sync {
 
 pub type ElicitationReviewerHandle = Arc<dyn ElicitationReviewer>;
 
+/// Observer-only lifecycle events for user-visible MCP elicitation dialogs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElicitationNotification {
+    Dialog,
+    UrlDialog,
+    Complete,
+}
+
+type ElicitationNotificationHandler =
+    Arc<dyn Fn(ElicitationNotification) -> BoxFuture<'static, ()> + Send + Sync>;
+
 /// Holds an owner-provided registration while an MCP elicitation is waiting for a response.
 #[derive(Clone)]
 pub struct ElicitationLifecycle {
     register: Arc<dyn Fn() -> Box<dyn Send + Sync> + Send + Sync>,
+    notification_handler: Option<ElicitationNotificationHandler>,
 }
 
 impl ElicitationLifecycle {
@@ -73,7 +85,16 @@ impl ElicitationLifecycle {
     {
         Self {
             register: Arc::new(move || Box::new(register())),
+            notification_handler: None,
         }
+    }
+
+    pub fn with_notification_handler(
+        mut self,
+        handler: impl Fn(ElicitationNotification) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    ) -> Self {
+        self.notification_handler = Some(Arc::new(handler));
+        self
     }
 
     fn start(&self) -> ActiveElicitation {
@@ -81,10 +102,85 @@ impl ElicitationLifecycle {
             _registration: (self.register)(),
         }
     }
+
+    async fn begin_notification(
+        &self,
+        open: ElicitationNotification,
+    ) -> ActiveElicitationNotification {
+        let lifecycle = self.clone();
+        let open_task = tokio::spawn(async move {
+            lifecycle.notify(open).await;
+        });
+        let mut active = ActiveElicitationNotification {
+            lifecycle: self.clone(),
+            completion_pending: true,
+            open_task: Some(open_task),
+        };
+        active.wait_for_open().await;
+        active
+    }
+
+    async fn notify(&self, notification: ElicitationNotification) {
+        if let Some(handler) = &self.notification_handler {
+            handler(notification).await;
+        }
+    }
 }
 
 struct ActiveElicitation {
     _registration: Box<dyn Send + Sync>,
+}
+
+struct ActiveElicitationNotification {
+    lifecycle: ElicitationLifecycle,
+    completion_pending: bool,
+    open_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ActiveElicitationNotification {
+    async fn complete(mut self) {
+        self.wait_for_open().await;
+        self.completion_pending = false;
+        let lifecycle = self.lifecycle.clone();
+        let completion_task = tokio::spawn(async move {
+            lifecycle.notify(ElicitationNotification::Complete).await;
+        });
+        if let Err(error) = completion_task.await {
+            tracing::warn!(%error, "elicitation notification completion task failed");
+        }
+    }
+
+    async fn wait_for_open(&mut self) {
+        if let Some(open_task) = self.open_task.as_mut()
+            && let Err(error) = open_task.await
+        {
+            tracing::warn!(%error, "elicitation notification open task failed");
+        }
+        self.open_task = None;
+    }
+}
+
+impl Drop for ActiveElicitationNotification {
+    fn drop(&mut self) {
+        if !self.completion_pending {
+            return;
+        }
+        let Some(runtime) = tokio::runtime::Handle::try_current().ok() else {
+            tracing::warn!("elicitation notification dropped outside a Tokio runtime");
+            return;
+        };
+        self.completion_pending = false;
+        let lifecycle = self.lifecycle.clone();
+        let open_task = self.open_task.take();
+        runtime.spawn(async move {
+            if let Some(open_task) = open_task
+                && let Err(error) = open_task.await
+            {
+                tracing::warn!(%error, "elicitation notification open task failed");
+            }
+            lifecycle.notify(ElicitationNotification::Complete).await;
+        });
+    }
 }
 
 /// Routes model-visible elicitation response tokens to their exact pending responders.
@@ -361,34 +457,40 @@ impl ElicitationRequestManager {
                     NEXT_ELICITATION_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
                 );
                 let routed_request_id = RequestId::String(public_request_id.clone().into());
-                let request = match elicitation {
+                let (request, notification_type) = match elicitation {
                     Elicitation::Mcp(rmcp::model::ElicitRequestParams::FormElicitationParams {
                         meta,
                         message,
                         requested_schema,
-                    }) => ElicitationRequest::Form {
-                        meta: meta
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .context("failed to serialize MCP elicitation metadata")?,
-                        message,
-                        requested_schema: serde_json::to_value(requested_schema)
-                            .context("failed to serialize MCP elicitation schema")?,
-                    },
+                    }) => (
+                        ElicitationRequest::Form {
+                            meta: meta
+                                .map(serde_json::to_value)
+                                .transpose()
+                                .context("failed to serialize MCP elicitation metadata")?,
+                            message,
+                            requested_schema: serde_json::to_value(requested_schema)
+                                .context("failed to serialize MCP elicitation schema")?,
+                        },
+                        ElicitationNotification::Dialog,
+                    ),
                     Elicitation::Mcp(rmcp::model::ElicitRequestParams::UrlElicitationParams {
                         meta,
                         message,
                         url,
                         elicitation_id,
-                    }) => ElicitationRequest::Url {
-                        meta: meta
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .context("failed to serialize MCP elicitation metadata")?,
-                        message,
-                        url,
-                        elicitation_id,
-                    },
+                    }) => (
+                        ElicitationRequest::Url {
+                            meta: meta
+                                .map(serde_json::to_value)
+                                .transpose()
+                                .context("failed to serialize MCP elicitation metadata")?,
+                            message,
+                            url,
+                            elicitation_id,
+                        },
+                        ElicitationNotification::UrlDialog,
+                    ),
                     Elicitation::Mcp(_) => {
                         return Ok(ElicitationResponse {
                             action: ElicitationAction::Decline,
@@ -400,11 +502,14 @@ impl ElicitationRequestManager {
                         meta,
                         message,
                         requested_schema,
-                    } => ElicitationRequest::OpenAiForm {
-                        meta,
-                        message,
-                        requested_schema,
-                    },
+                    } => (
+                        ElicitationRequest::OpenAiForm {
+                            meta,
+                            message,
+                            requested_schema,
+                        },
+                        ElicitationNotification::Dialog,
+                    ),
                 };
                 let (tx, rx) = oneshot::channel();
                 let _active_elicitation = lifecycle.as_ref().map(ElicitationLifecycle::start);
@@ -430,8 +535,17 @@ impl ElicitationRequestManager {
                     })
                     .await
                     .context("failed to deliver MCP elicitation request")?;
-                rx.await
-                    .context("elicitation request channel closed unexpectedly")
+                let notification = match lifecycle.as_ref() {
+                    Some(lifecycle) => Some(lifecycle.begin_notification(notification_type).await),
+                    None => None,
+                };
+                let response = rx
+                    .await
+                    .context("elicitation request channel closed unexpectedly");
+                if let Some(notification) = notification {
+                    notification.complete().await;
+                }
+                response
             }
             .boxed()
         })

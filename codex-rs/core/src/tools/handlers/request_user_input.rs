@@ -77,7 +77,7 @@ impl RequestUserInputHandler {
             auto_resolution_ms: None,
         };
         let response = session
-            .request_user_input(turn.as_ref(), call_id, args)
+            .request_user_input(&turn, call_id, args)
             .await
             .ok_or_else(|| {
                 FunctionCallError::RespondToModel(format!(

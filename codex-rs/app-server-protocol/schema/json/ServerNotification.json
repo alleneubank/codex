@@ -2083,6 +2083,7 @@
       "enum": [
         "preToolUse",
         "permissionRequest",
+        "notification",
         "postToolUse",
         "preCompact",
         "postCompact",

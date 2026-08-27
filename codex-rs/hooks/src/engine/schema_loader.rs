@@ -4,6 +4,7 @@ use serde_json::Value;
 
 #[allow(dead_code)]
 pub(crate) struct GeneratedHookSchemas {
+    pub notification_command_input: Value,
     pub post_tool_use_command_input: Value,
     pub post_tool_use_command_output: Value,
     pub permission_request_command_input: Value,
@@ -30,6 +31,10 @@ pub(crate) struct GeneratedHookSchemas {
 pub(crate) fn generated_hook_schemas() -> &'static GeneratedHookSchemas {
     static SCHEMAS: OnceLock<GeneratedHookSchemas> = OnceLock::new();
     SCHEMAS.get_or_init(|| GeneratedHookSchemas {
+        notification_command_input: parse_json_schema(
+            "notification.command.input",
+            include_str!("../../schema/generated/notification.command.input.schema.json"),
+        ),
         post_tool_use_command_input: parse_json_schema(
             "post-tool-use.command.input",
             include_str!("../../schema/generated/post-tool-use.command.input.schema.json"),
@@ -131,6 +136,7 @@ mod tests {
     fn loads_generated_hook_schemas() {
         let schemas = generated_hook_schemas();
 
+        assert_eq!(schemas.notification_command_input["type"], "object");
         assert_eq!(schemas.post_tool_use_command_input["type"], "object");
         assert_eq!(schemas.post_tool_use_command_output["type"], "object");
         assert_eq!(schemas.permission_request_command_input["type"], "object");

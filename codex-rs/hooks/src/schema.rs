@@ -19,6 +19,7 @@ const POST_TOOL_USE_INPUT_FIXTURE: &str = "post-tool-use.command.input.schema.js
 const POST_TOOL_USE_OUTPUT_FIXTURE: &str = "post-tool-use.command.output.schema.json";
 const PERMISSION_REQUEST_INPUT_FIXTURE: &str = "permission-request.command.input.schema.json";
 const PERMISSION_REQUEST_OUTPUT_FIXTURE: &str = "permission-request.command.output.schema.json";
+const NOTIFICATION_INPUT_FIXTURE: &str = "notification.command.input.schema.json";
 const POST_COMPACT_INPUT_FIXTURE: &str = "post-compact.command.input.schema.json";
 const POST_COMPACT_OUTPUT_FIXTURE: &str = "post-compact.command.output.schema.json";
 const PRE_TOOL_USE_INPUT_FIXTURE: &str = "pre-tool-use.command.input.schema.json";
@@ -509,6 +510,25 @@ pub(crate) struct SessionEndCommandInput {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "notification.command.input")]
+pub(crate) struct NotificationCommandInput {
+    pub session_id: String,
+    pub transcript_path: NullableString,
+    pub cwd: String,
+    #[schemars(schema_with = "notification_hook_event_name_schema")]
+    pub hook_event_name: String,
+    pub model: String,
+    #[schemars(schema_with = "permission_mode_schema")]
+    pub permission_mode: String,
+    #[schemars(schema_with = "notification_type_schema")]
+    pub notification_type: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 impl SessionStartCommandInput {
     pub(crate) fn new(
         session_id: impl Into<String>,
@@ -627,6 +647,10 @@ pub fn write_schema_fixtures(schema_root: &Path) -> anyhow::Result<()> {
     write_schema(
         &generated_dir.join(PERMISSION_REQUEST_OUTPUT_FIXTURE),
         schema_json::<PermissionRequestCommandOutputWire>()?,
+    )?;
+    write_schema(
+        &generated_dir.join(NOTIFICATION_INPUT_FIXTURE),
+        schema_json::<NotificationCommandInput>()?,
     )?;
     write_schema(
         &generated_dir.join(POST_COMPACT_INPUT_FIXTURE),
@@ -759,6 +783,20 @@ fn session_end_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
     string_const_schema("SessionEnd")
 }
 
+fn notification_hook_event_name_schema(_gen: &mut SchemaGenerator) -> Schema {
+    string_const_schema("Notification")
+}
+
+fn notification_type_schema(_gen: &mut SchemaGenerator) -> Schema {
+    string_enum_schema(&[
+        "user_input_request",
+        "user_input_complete",
+        "elicitation_dialog",
+        "elicitation_url_dialog",
+        "elicitation_complete",
+    ])
+}
+
 fn session_end_reason_schema(_gen: &mut SchemaGenerator) -> Schema {
     string_const_schema("other")
 }
@@ -846,6 +884,8 @@ fn default_continue() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::NOTIFICATION_INPUT_FIXTURE;
+    use super::NotificationCommandInput;
     use super::NullableString;
     use super::PERMISSION_REQUEST_INPUT_FIXTURE;
     use super::PERMISSION_REQUEST_OUTPUT_FIXTURE;
@@ -906,6 +946,9 @@ mod tests {
             }
             PERMISSION_REQUEST_OUTPUT_FIXTURE => {
                 include_str!("../schema/generated/permission-request.command.output.schema.json")
+            }
+            NOTIFICATION_INPUT_FIXTURE => {
+                include_str!("../schema/generated/notification.command.input.schema.json")
             }
             POST_COMPACT_INPUT_FIXTURE => {
                 include_str!("../schema/generated/post-compact.command.input.schema.json")
@@ -991,6 +1034,7 @@ mod tests {
             POST_TOOL_USE_OUTPUT_FIXTURE,
             PERMISSION_REQUEST_INPUT_FIXTURE,
             PERMISSION_REQUEST_OUTPUT_FIXTURE,
+            NOTIFICATION_INPUT_FIXTURE,
             POST_COMPACT_INPUT_FIXTURE,
             POST_COMPACT_OUTPUT_FIXTURE,
             PRE_COMPACT_INPUT_FIXTURE,
@@ -1043,6 +1087,34 @@ mod tests {
             "UserPromptSubmitHookSpecificOutputWire",
             "UserPromptSubmit",
         );
+    }
+
+    #[test]
+    fn notification_input_is_bounded_and_observer_only() {
+        let schema: Value = serde_json::from_slice(
+            &schema_json::<NotificationCommandInput>()
+                .expect("serialize notification hook input schema"),
+        )
+        .expect("parse notification hook input schema");
+
+        assert_eq!(
+            schema["properties"]["hook_event_name"],
+            json!({"const": "Notification", "type": "string"})
+        );
+        assert_eq!(
+            schema["properties"]["notification_type"]["enum"],
+            json!([
+                "user_input_request",
+                "user_input_complete",
+                "elicitation_dialog",
+                "elicitation_url_dialog",
+                "elicitation_complete"
+            ])
+        );
+        assert!(schema["properties"].get("questions").is_none());
+        assert!(schema["properties"].get("answers").is_none());
+        assert!(schema["properties"].get("form").is_none());
+        assert!(schema["properties"].get("url").is_none());
     }
 
     #[test]
