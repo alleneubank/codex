@@ -35,6 +35,7 @@ use codex_protocol::mcp_approval_meta::TOOL_TITLE_KEY as MCP_ELICITATION_TOOL_TI
 use codex_protocol::openai_models::GuardianScope;
 use codex_protocol::openai_models::ModelInfo;
 use codex_rmcp_client::Elicitation;
+use futures::FutureExt;
 use rmcp::model::ElicitationAction;
 use rmcp::model::RequestMetaObject;
 use serde_json::Map;
@@ -541,11 +542,43 @@ impl Session {
         )
     }
 
-    pub(crate) fn mcp_elicitation_lifecycle(&self) -> codex_mcp::ElicitationLifecycle {
+    pub(crate) fn mcp_elicitation_lifecycle(self: &Arc<Self>) -> codex_mcp::ElicitationLifecycle {
         self.mcp_elicitation_lifecycle_handle
             .get_or_init(|| {
                 let elicitations = self.services.elicitations.clone();
+                let session = Arc::downgrade(self);
                 codex_mcp::ElicitationLifecycle::new(move || elicitations.register())
+                    .with_notification_handler(move |notification| {
+                        let session = session.clone();
+                        async move {
+                            let Some(session) = session.upgrade() else {
+                                return;
+                            };
+                            let turn_context =
+                                match session.active_turn_context_and_cancellation_token().await {
+                                    Some((turn_context, _)) => turn_context,
+                                    None => session.new_default_turn().await,
+                                };
+                            let notification_type = match notification {
+                                codex_mcp::ElicitationNotification::Dialog => {
+                                    codex_hooks::NotificationType::ElicitationDialog
+                                }
+                                codex_mcp::ElicitationNotification::UrlDialog => {
+                                    codex_hooks::NotificationType::ElicitationUrlDialog
+                                }
+                                codex_mcp::ElicitationNotification::Complete => {
+                                    codex_hooks::NotificationType::ElicitationComplete
+                                }
+                            };
+                            crate::hook_runtime::run_notification_hook(
+                                &session,
+                                &turn_context,
+                                notification_type,
+                            )
+                            .await;
+                        }
+                        .boxed()
+                    })
             })
             .clone()
     }
@@ -555,8 +588,8 @@ impl Session {
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn request_mcp_server_elicitation(
-        &self,
-        turn_context: &TurnContext,
+        self: &Arc<Self>,
+        turn_context: &Arc<TurnContext>,
         server_name: String,
         request_id: RequestId,
         request: ElicitationRequest,
@@ -601,6 +634,7 @@ impl Session {
                 codex_protocol::mcp::RequestId::Integer(value)
             }
         };
+        let open_notification_type = elicitation_open_notification_type(&request);
         let event = EventMsg::ElicitationRequest(ElicitationRequestEvent {
             turn_id: Some(turn_context.sub_id.clone()),
             server_name,
@@ -612,6 +646,18 @@ impl Session {
             .turn_metadata_state
             .mark_user_input_requested_during_turn();
         self.send_event(turn_context, event).await;
+        let notification = match open_notification_type {
+            Some(open_type) => Some(
+                crate::hook_runtime::begin_notification_lifecycle(
+                    self,
+                    turn_context,
+                    open_type,
+                    codex_hooks::NotificationType::ElicitationComplete,
+                )
+                .await,
+            ),
+            None => None,
+        };
         if let Some(plugin_install_telemetry) = plugin_install_telemetry {
             turn_context
                 .session_telemetry
@@ -621,8 +667,12 @@ impl Session {
                     plugin_install_telemetry.tool_name.as_str(),
                 );
         }
+        let response = rx_response.await.ok();
+        if let Some(notification) = notification {
+            notification.complete().await;
+        }
         McpServerElicitationOutcome {
-            response: rx_response.await.ok(),
+            response,
             sent: true,
         }
     }
@@ -661,7 +711,7 @@ impl Session {
     }
 
     pub(crate) async fn refresh_mcp_servers_now(
-        &self,
+        self: &Arc<Self>,
         turn_context: &TurnContext,
         refresh_config: &Config,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
@@ -734,6 +784,20 @@ impl Session {
 
     pub(crate) fn cancel_mcp_startup(&self) {
         self.services.mcp_runtime.cancel_startup();
+    }
+}
+
+fn elicitation_open_notification_type(
+    request: &ElicitationRequest,
+) -> Option<codex_hooks::NotificationType> {
+    match request {
+        ElicitationRequest::UserVerification { .. } => None,
+        ElicitationRequest::Url { .. } => Some(codex_hooks::NotificationType::ElicitationUrlDialog),
+        ElicitationRequest::Form { .. }
+        | ElicitationRequest::OpenAiForm { .. }
+        | ElicitationRequest::OpenAiElicitationForm { .. } => {
+            Some(codex_hooks::NotificationType::ElicitationDialog)
+        }
     }
 }
 

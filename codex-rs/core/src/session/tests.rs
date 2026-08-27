@@ -667,7 +667,7 @@ async fn request_mcp_server_elicitation_auto_accepts_when_auto_deny_is_enabled(
 
     let response = session
         .request_mcp_server_elicitation(
-            turn_context.as_ref(),
+            &turn_context,
             "codex_apps".to_string(),
             RequestId::String("request-1".into()),
             ElicitationRequest::Form {
@@ -6630,6 +6630,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     };
     let per_turn_config = session.build_per_turn_config(
@@ -8902,6 +8903,7 @@ where
         git_enrichment_policy: GitEnrichmentPolicy::Fresh,
         fork_persistence: ForkPersistence::Copied,
         forked_from_ordinal_exclusive: None,
+        completed_turn_hook_context: Mutex::new(None),
         next_internal_sub_id: AtomicU64::new(0),
     });
     let per_turn_config = session.build_per_turn_config(
