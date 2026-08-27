@@ -646,7 +646,7 @@ async fn request_mcp_server_elicitation_auto_accepts_when_auto_deny_is_enabled()
 
     let response = session
         .request_mcp_server_elicitation(
-            turn_context.as_ref(),
+            &turn_context,
             "codex_apps".to_string(),
             RequestId::String("request-1".into()),
             ElicitationRequest::Form {

@@ -410,7 +410,7 @@ async fn handle_approved_mcp_tool_call(
     item_metadata: McpToolCallItemMetadata,
     approval_application: McpToolApprovalApplication,
 ) -> HandledMcpToolCall {
-    let turn_context = step_context.turn.as_ref();
+    let turn_context = &step_context.turn;
     let server = invocation.server.clone();
     let tool_name = invocation.tool.clone();
     let arguments_value = invocation.arguments.clone();
@@ -689,7 +689,7 @@ fn truncate_str_to_char_boundary(value: &str, max_chars: usize) -> &str {
 
 async fn maybe_request_codex_apps_auth_elicitation(
     sess: &Arc<Session>,
-    turn_context: &TurnContext,
+    turn_context: &Arc<TurnContext>,
     approval_policy: AskForApproval,
     call_id: &str,
     server: &str,
@@ -1468,8 +1468,8 @@ async fn maybe_request_mcp_tool_approval(
 }
 
 pub(crate) async fn request_mcp_tool_user_approval(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
     call_id: &str,
     action: &ApprovalAction,
 ) -> ReviewDecision {
