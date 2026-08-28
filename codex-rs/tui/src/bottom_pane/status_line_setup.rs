@@ -151,7 +151,7 @@ pub(crate) enum StatusLineItem {
     /// Current thread name, omitted when unnamed.
     ThreadName,
 
-    /// Current thread title, falling back to its identifier when unnamed.
+    /// Current thread title, omitted when unnamed.
     ThreadTitle,
 
     /// Current workspace notification headline.
@@ -229,9 +229,7 @@ impl StatusLineItem {
             StatusLineItem::Daybreak => "Whether Daybreak is enabled for this thread",
             StatusLineItem::RawOutput => "Whether raw scrollback mode is active",
             StatusLineItem::ThreadName => "Current thread name (omitted when unnamed)",
-            StatusLineItem::ThreadTitle => {
-                "Current thread title, or thread identifier when unnamed"
-            }
+            StatusLineItem::ThreadTitle => "Current thread title (omitted when unnamed)",
             StatusLineItem::WorkspaceHeadline => {
                 "Workspace notification headline (Enterprise workspaces only; omitted when unavailable)"
             }
