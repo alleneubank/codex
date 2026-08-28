@@ -44,6 +44,7 @@ pub enum SlashCommand {
     Plan,
     Voice,
     Goal,
+    Mission,
     Agents,
     Side,
     Btw,
@@ -135,6 +136,7 @@ impl SlashCommand {
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Voice => "start or stop a live voice conversation",
             SlashCommand::Goal => "set or view the goal for a long-running task",
+            SlashCommand::Mission => "view mission, campaign evidence, attention, or next prompt",
             SlashCommand::Agents => "view and switch between all active agent sessions",
             SlashCommand::MultiAgents => "switch between this session's subagents",
             SlashCommand::Side | SlashCommand::Btw => {
@@ -177,6 +179,7 @@ impl SlashCommand {
                 | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Voice
+                | SlashCommand::Mission
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
@@ -204,6 +207,7 @@ impl SlashCommand {
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
+                | SlashCommand::Mission
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
@@ -257,6 +261,7 @@ impl SlashCommand {
             | SlashCommand::App
             | SlashCommand::Goal
             | SlashCommand::Voice
+            | SlashCommand::Mission
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins
@@ -322,6 +327,9 @@ mod tests {
     #[test]
     fn certain_commands_are_available_during_task() {
         assert!(SlashCommand::Goal.available_during_task());
+        assert!(SlashCommand::Mission.available_during_task());
+        assert!(SlashCommand::Mission.available_in_side_conversation());
+        assert!(SlashCommand::Mission.supports_inline_args());
         assert!(SlashCommand::Ide.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
