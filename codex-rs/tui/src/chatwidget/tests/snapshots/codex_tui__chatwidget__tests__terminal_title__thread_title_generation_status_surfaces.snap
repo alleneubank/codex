@@ -3,13 +3,13 @@ source: tui/src/chatwidget/tests/terminal_title.rs
 expression: "rendered.join(\"\\n\\n\")"
 ---
 name=None, pending=false
-status:  | 550e8400-e29b-41d4-a716-446655440000 | 550e8400-e29b-41d4-a716-446655440000
-title:  | 550e8400-e29b-41d4-a716-446655440000 | 550e8400-e29b-41d4-a716-44665...
+status:  |  | 550e8400-e29b-41d4-a716-446655440000
+title:  |  | 550e8400-e29b-41d4-a716-44665...
 default title: project
 
 name=None, pending=true
-status: renaming... ⠋ | 550e8400-e29b-41d4-a716-446655440000 ⠋ | 550e8400-e29b-41d4-a716-446655440000 ⠋
-title: renaming... ⠋ | 550e8400-e29b-41d4-a716-446655440000 ⠋ | 550e8400-e29b-41d4-a716-44665... ⠋
+status: renaming... ⠋ | renaming... ⠋ | 550e8400-e29b-41d4-a716-446655440000 ⠋
+title: renaming... ⠋ | renaming... ⠋ | 550e8400-e29b-41d4-a716-44665... ⠋
 default title: renaming... ⠋ | project
 
 name=Some("Fix login timeout"), pending=true
