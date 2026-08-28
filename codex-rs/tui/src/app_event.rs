@@ -630,6 +630,12 @@ pub(crate) enum AppEvent {
     /// Result of computing a `/diff` command.
     DiffResult(PathBuf, String),
 
+    /// Result of projecting typed mission state for `/mission`.
+    MissionResult {
+        cwd: PathBuf,
+        result: Result<String, String>,
+    },
+
     /// Open the app link view in the bottom pane.
     OpenAppLink {
         app_id: String,

@@ -824,6 +824,15 @@ impl App {
                 ));
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::MissionResult { cwd, result } => {
+                if cwds_differ(&cwd, self.chat_widget.config_ref().cwd.as_path()) {
+                    return Ok(AppRunControl::Continue);
+                }
+                match result {
+                    Ok(output) => self.chat_widget.add_info_message(output, /*hint*/ None),
+                    Err(error) => self.chat_widget.add_error_message(error),
+                }
+            }
             AppEvent::OpenAppLink {
                 app_id,
                 title,

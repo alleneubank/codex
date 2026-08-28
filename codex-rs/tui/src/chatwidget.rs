@@ -366,6 +366,7 @@ mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
 mod misalignment_policy;
+mod mission;
 mod pets;
 mod session_flow;
 mod session_header;

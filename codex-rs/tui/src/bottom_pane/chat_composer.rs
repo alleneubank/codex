@@ -409,6 +409,7 @@ fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
                 | SlashCommand::Copy
                 | SlashCommand::Raw
                 | SlashCommand::Diff
+                | SlashCommand::Mission
                 | SlashCommand::Mention
                 | SlashCommand::Skills
                 | SlashCommand::Import
