@@ -202,9 +202,7 @@ impl StatusLineItem {
             StatusLineItem::SessionId => "Current thread identifier (omitted until thread starts)",
             StatusLineItem::FastMode => "Whether Fast mode is currently active",
             StatusLineItem::RawOutput => "Whether raw scrollback mode is active",
-            StatusLineItem::ThreadTitle => {
-                "Current thread title, or thread identifier when unnamed"
-            }
+            StatusLineItem::ThreadTitle => "Current thread title (omitted when unnamed)",
             StatusLineItem::WorkspaceHeadline => {
                 "Workspace notification headline (Enterprise workspaces only; omitted when unavailable)"
             }
