@@ -14,7 +14,7 @@ expression: status_line_popup_snapshot(&mut chat)
   ───────────────────────
   [x] project-name               Project name (omitted when unavailable)
   [x] git-branch                 Current Git branch (omitted when unavailable)
-  [x] thread-title               Current thread title, or thread identifier when unnamed
+  [x] thread-title               Current thread title (omitted when unnamed)
 ↓
   preview-live-root · feature/live-preview-branch · Live preview thread
   enter select · esc back
