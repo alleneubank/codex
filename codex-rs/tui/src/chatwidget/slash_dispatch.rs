@@ -452,6 +452,7 @@ impl ChatWidget {
                     tx.send(AppEvent::DiffResult(cwd, text));
                 });
             }
+            SlashCommand::Mission => self.dispatch_mission_command(""),
             SlashCommand::Mention => {
                 self.insert_str("@");
             }
@@ -729,6 +730,7 @@ impl ChatWidget {
             SlashCommand::Pwd => {
                 self.add_error_message("Usage: /pwd".to_string());
             }
+            SlashCommand::Mission => self.dispatch_mission_command(trimmed),
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
                     match tokens::TokenActivityView::parse(trimmed) {
@@ -1155,6 +1157,7 @@ impl ChatWidget {
             | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Diff
+            | SlashCommand::Mission
             | SlashCommand::Effort
             | SlashCommand::App
             | SlashCommand::Rename
