@@ -815,11 +815,9 @@ impl ChatWidget {
             StatusLineItem::ThreadName => {
                 self.thread_name.as_deref().and_then(normalize_thread_name)
             }
-            StatusLineItem::ThreadTitle => self
-                .thread_name
-                .as_deref()
-                .and_then(normalize_thread_name)
-                .or_else(|| self.thread_id.map(|id| id.to_string())),
+            StatusLineItem::ThreadTitle => {
+                self.thread_name.as_deref().and_then(normalize_thread_name)
+            }
             StatusLineItem::WorkspaceHeadline => self.status_line_workspace_headline.clone(),
             StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
         }
