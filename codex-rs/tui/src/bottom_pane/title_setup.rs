@@ -104,7 +104,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::Status => {
                 "Compact session run-state text (Ready, Working, Thinking)"
             }
-            TerminalTitleItem::Thread => "Current thread title, or thread identifier when unnamed",
+            TerminalTitleItem::Thread => "Current thread title (omitted when unnamed)",
             TerminalTitleItem::GitBranch => "Current Git branch (omitted when unavailable)",
             TerminalTitleItem::ContextRemaining => {
                 "Percentage of context window remaining (omitted when unknown)"

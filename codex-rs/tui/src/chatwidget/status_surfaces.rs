@@ -780,17 +780,9 @@ impl ChatWidget {
                     }
                 }),
             StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
-            StatusLineItem::ThreadTitle => self.thread_name.as_ref().map_or_else(
-                || self.thread_id.map(|id| id.to_string()),
-                |name| {
-                    let trimmed = name.trim();
-                    if trimmed.is_empty() {
-                        self.thread_id.map(|id| id.to_string())
-                    } else {
-                        Some(trimmed.to_string())
-                    }
-                },
-            ),
+            StatusLineItem::ThreadTitle => {
+                self.thread_name.as_deref().and_then(normalize_thread_name)
+            }
             StatusLineItem::WorkspaceHeadline => self.status_line_workspace_headline.clone(),
             StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
         }

@@ -164,18 +164,32 @@ async fn status_surface_preview_lines_hardcoded_only_snapshot() {
 }
 
 #[tokio::test]
-async fn thread_title_falls_back_to_thread_id_when_unnamed() {
+async fn unnamed_thread_omits_thread_title_but_preserves_explicit_thread_id() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let thread_id = ThreadId::new();
+    let thread_id =
+        ThreadId::from_string("019fc8ab-1fb2-7000-8000-000000000001").expect("valid thread id");
+    let thread_id_text = thread_id.to_string();
     chat.thread_id = Some(thread_id);
+    cache_missing_project_root(&mut chat);
+    chat.config.tui_terminal_title =
+        Some(vec!["thread-title".to_string(), "project-name".to_string()]);
+    chat.refresh_terminal_title();
 
     assert_eq!(
-        status_preview_line(&mut chat, &[StatusLineItem::ThreadTitle]),
-        thread_id.to_string()
-    );
-    assert_eq!(
-        title_preview_line(&mut chat, &[TerminalTitleItem::Thread]),
-        thread_id.to_string()
+        (
+            chat.status_line_value_for_item(StatusLineItem::ThreadTitle),
+            chat.terminal_title_value_for_item(TerminalTitleItem::Thread, Instant::now()),
+            chat.status_line_value_for_item(StatusLineItem::SessionId),
+            chat.terminal_title_value_for_item(TerminalTitleItem::SessionId, Instant::now()),
+            chat.last_terminal_title.clone(),
+        ),
+        (
+            None,
+            None,
+            Some(thread_id_text.clone()),
+            Some("019fc8ab-1fb2-7000-8000-00000...".to_string()),
+            Some("project".to_string()),
+        )
     );
 }
 
