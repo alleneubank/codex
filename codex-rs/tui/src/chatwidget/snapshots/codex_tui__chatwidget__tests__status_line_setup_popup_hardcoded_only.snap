@@ -11,7 +11,7 @@ expression: status_line_popup_snapshot(&mut chat)
   ───────────────────────
   [x] project-name         Project name (omitted when unavailable)
   [x] git-branch           Current Git branch (omitted when unavailable)
-  [x] thread-title         Current thread title, or thread identifier when unnamed
+  [x] thread-title         Current thread title (omitted when unnamed)
   [x] profile              Config profile selected with --profile (omitted when unset)
   [x] provider             Model provider for the active thread
   [ ] model                Current model name
