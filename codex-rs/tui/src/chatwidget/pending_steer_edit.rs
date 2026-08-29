@@ -10,10 +10,11 @@ impl ChatWidget {
             KeyEvent {
                 code: KeyCode::Up,
                 modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             }
         ) || !self.bottom_pane.composer_is_empty()
+            || self.bottom_pane.is_in_paste_burst()
             || !self.bottom_pane.no_modal_or_popup_active()
         {
             return false;
@@ -63,7 +64,15 @@ impl ChatWidget {
     }
 
     pub(crate) fn restore_withdrawn_pending_steer(&mut self, pending: PendingSteer) {
-        self.restore_composer_state(composer_state_for_withdrawn_pending_steer(pending));
+        let PendingSteer {
+            user_message,
+            history_record,
+            ..
+        } = pending;
+        self.restore_user_message_to_composer(user_message_for_restore(
+            user_message,
+            &history_record,
+        ));
         self.refresh_pending_input_preview();
         self.request_redraw();
     }
@@ -71,25 +80,16 @@ impl ChatWidget {
 
 impl ThreadInputState {
     pub(crate) fn restore_withdrawn_pending_steer(&mut self, pending: PendingSteer) {
-        self.composer = Some(composer_state_for_withdrawn_pending_steer(pending));
-    }
-}
-
-fn composer_state_for_withdrawn_pending_steer(pending: PendingSteer) -> ThreadComposerState {
-    let PendingSteer {
-        user_message,
-        history_record,
-        ..
-    } = pending;
-    let user_message = user_message_for_restore(user_message, &history_record);
-    let cursor = user_message.text.len();
-    ThreadComposerState {
-        text: user_message.text,
-        local_images: user_message.local_images,
-        remote_image_urls: user_message.remote_image_urls,
-        text_elements: user_message.text_elements,
-        mention_bindings: user_message.mention_bindings,
-        pending_pastes: Vec::new(),
-        cursor,
+        let PendingSteer {
+            user_message,
+            history_record,
+            ..
+        } = pending;
+        self.composer = Some(
+            super::input_restore::merge_user_message_into_composer_state(
+                user_message_for_restore(user_message, &history_record),
+                self.composer.take(),
+            ),
+        );
     }
 }
