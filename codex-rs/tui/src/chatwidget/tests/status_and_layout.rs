@@ -2215,8 +2215,12 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_eq!(chat.input_queue.pending_steers.len(), 1);
-    let items = match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => items,
+    let (client_user_message_id, items) = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            items,
+            ..
+        } => (client_user_message_id, items),
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
     assert_eq!(
@@ -2237,10 +2241,11 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
     assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
     assert_eq!(chat.bottom_pane.is_task_running(), true);
 
-    complete_user_message(
+    complete_user_message_with_client_id(
         &mut chat,
         "user-steer",
-        "Please summarize the rest more briefly.",
+        Some(&client_user_message_id),
+        items,
     );
 
     assert!(chat.input_queue.pending_steers.is_empty());

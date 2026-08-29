@@ -393,6 +393,7 @@ mod model_popup_state;
 mod model_popups;
 mod notifications;
 use self::notifications::Notification;
+mod pending_steer;
 mod permission_popups;
 mod permission_shortcuts;
 mod permissions_menu;
@@ -448,8 +449,7 @@ use self::turn_lifecycle::TurnLifecycleState;
 mod usage;
 mod user_messages;
 mod working_directory;
-use self::user_messages::PendingSteer;
-use self::user_messages::PendingSteerCompareKey;
+use self::pending_steer::PendingSteer;
 use self::user_messages::PromptStash;
 use self::user_messages::PromptStashRestore;
 use self::user_messages::QueueDrain;
@@ -462,7 +462,7 @@ pub(crate) use self::user_messages::UserMessage;
 use self::user_messages::UserMessageDisplay;
 #[cfg(test)]
 use self::user_messages::UserMessageHistoryOverride;
-use self::user_messages::UserMessageHistoryRecord;
+pub(crate) use self::user_messages::UserMessageHistoryRecord;
 use self::user_messages::app_server_text_elements;
 pub(crate) use self::user_messages::create_initial_user_message;
 pub(crate) use self::user_messages::mention_bindings_from_user_inputs;
@@ -1323,8 +1323,40 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_committed_user_message(&mut self, items: &[UserInput], from_replay: bool) {
-        let display = Self::user_message_display_from_inputs(items);
+    fn on_committed_user_message(
+        &mut self,
+        client_user_message_id: Option<&str>,
+        items: &[UserInput],
+        from_replay: bool,
+    ) {
+        let pending = client_user_message_id.and_then(|client_user_message_id| {
+            pending_steer::take_pending_steer(
+                &mut self.input_queue.pending_steers,
+                client_user_message_id,
+            )
+            .or_else(|| {
+                pending_steer::take_pending_steer(
+                    &mut self.input_queue.committed_steers_for_replay,
+                    client_user_message_id,
+                )
+            })
+        });
+        let display = pending.as_ref().map_or_else(
+            || Self::user_message_display_from_inputs(items),
+            |pending| {
+                user_message_display_for_history(
+                    pending.user_message.clone(),
+                    &pending.history_record,
+                )
+            },
+        );
+        let mention_bindings = pending.as_ref().map_or_else(
+            || mention_bindings_from_user_inputs(items, &display.message),
+            |pending| pending.user_message.mention_bindings.clone(),
+        );
+        if pending.is_some() {
+            self.refresh_pending_input_preview();
+        }
         if from_replay {
             if self.review.is_review_mode {
                 return;
@@ -1335,32 +1367,14 @@ impl ChatWidget {
                     text_elements: display.text_elements.clone(),
                     local_image_paths: display.local_images.clone(),
                     remote_image_urls: display.remote_image_urls.clone(),
-                    mention_bindings: mention_bindings_from_user_inputs(items, &display.message),
+                    mention_bindings,
                     pending_pastes: Vec::new(),
                 });
             self.on_user_message_display(display);
             return;
         }
 
-        let compare_key = Self::pending_steer_compare_key_from_items(items);
-        if self
-            .input_queue
-            .pending_steers
-            .front()
-            .is_some_and(|pending| pending.compare_key == compare_key)
-        {
-            if let Some(pending) = self.input_queue.pending_steers.pop_front() {
-                self.refresh_pending_input_preview();
-                let pending_display =
-                    user_message_display_for_history(pending.user_message, &pending.history_record);
-                self.on_user_message_display(pending_display);
-            } else if self.last_rendered_user_message_display.as_ref() != Some(&display) {
-                tracing::warn!(
-                    "pending steer matched compare key but queue was empty when rendering committed user message"
-                );
-                self.on_user_message_display(display);
-            }
-        } else if !self.review.is_review_mode
+        if !self.review.is_review_mode
             && self.last_rendered_user_message_display.as_ref() != Some(&display)
         {
             self.on_user_message_display(display);
