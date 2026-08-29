@@ -2,7 +2,8 @@
 
 Law doc for pending-steer editing, present-tense, no narrated history — git is the changelog. The
 Boundary and ratified Decisions amend only with human confirmation; the driver appends provisional
-Decisions, marked and dated. Working memory lives in the campaign's `LOOP.md` State.
+Decisions, marked and dated. Durable contract traceability and verification evidence live in the
+colocated SPEC.
 
 ## Bar
 
@@ -12,9 +13,10 @@ to the composer without interrupting the agent or allowing the original message 
 ## Dimensions
 
 - Correctness: Core delivery and withdrawal have one atomic winner.
-- Fidelity: the complete model-significant rich user message returns unchanged, with the editor
-  reopened at a defined cursor position.
-- Interaction: contextual Up preserves existing history, cursor, popup, and modal ownership.
+- Fidelity: the complete model-significant rich user message returns unchanged, input entered
+  while withdrawal is in flight is preserved, and the editor reopens at a defined cursor position.
+- Interaction: contextual Up preserves existing paste-burst, history, cursor, popup, and modal
+  ownership.
 - Isolation: stale events cannot affect another thread, turn, or identical-looking steer.
 - Resilience: late, rejected, repeated, and failed requests neither duplicate nor misrepresent
   input.
@@ -30,10 +32,11 @@ to the composer without interrupting the agent or allowing the original message 
 - Stable/experimental schema tests prove that method-level experimental gating excludes the RPC
   from stable exports and includes its method plus all typed payloads in experimental exports.
 - TUI tests assert the emitted source-thread request, delayed restore until success, complete
-  `UserMessage` equality, cursor-at-end behavior, identical-message identity, and absence of
+  `UserMessage` equality, active and off-screen composer-state preservation, paste-burst flushing,
+  event-gap merge order, cursor-at-end behavior, identical-message identity, and absence of
   interrupt/start/steer fallback.
-- Key-routing tests keep nonempty-composer, popup/modal, no-pending, and ordinary history cases
-  unchanged.
+- Key-routing tests keep repeat-key, nonempty-composer, paste-burst, popup/modal, no-pending,
+  multiline-cursor, and ordinary history cases unchanged.
 - Pending-state tests prove that repeated Up emits one request, only the matching request id can
   complete it, and transport uncertainty stays non-editable until an authoritative lifecycle
   signal reconciles it.

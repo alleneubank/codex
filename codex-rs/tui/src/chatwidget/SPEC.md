@@ -23,7 +23,8 @@ and without leaving the original text eligible for delivery.
 - A pending steer moves through explicit local states: awaiting steer acceptance, acceptance
   uncertain, accepted by one turn, awaiting commit after a start fallback, withdrawal in flight,
   and withdrawal uncertain after a transport failure. Only an accepted steer is eligible for Up;
-  repeated Up is consumed while a withdrawal is in flight or uncertain.
+  repeated Up is consumed while a withdrawal is in flight or uncertain. An active non-bracketed
+  paste burst retains normal composer routing and is not eligible for withdrawal.
 - The TUI keeps the local pending steer unchanged while withdrawal is in flight. A correlated
   successful response removes it and restores the draft; a rejection leaves it pending.
 
@@ -41,7 +42,7 @@ also require the accepted turn id and local withdrawal request id to match.
 | `AwaitingAcceptance` or `AcceptanceUncertain` | ID-matched commit arrives before a submission response | Remove and render the row; a later response is a no-op. |
 | `Accepted` | eligible plain Up | `WithdrawalInFlight { accepted_turn_id, request_id }`; emit exactly one source-thread withdrawal request. |
 | `WithdrawalInFlight` | repeated Up | Remain in flight, consume the key, and emit nothing. |
-| `WithdrawalInFlight` | matching success | Remove the row and restore `user_message_for_restore(message, history_record)` with the cursor at the end. |
+| `WithdrawalInFlight` | matching success | Remove the row, flush any active paste burst, and prepend `user_message_for_restore(message, history_record)` to composer input entered while the request was in flight. Preserve that input's rich payload and pending pastes, with the cursor at the end of the merged draft. |
 | `WithdrawalInFlight` | matching JSON-RPC rejection | Return to `Accepted`, retain the row, and emit one warning. |
 | `WithdrawalInFlight` | transport or deserialization failure | `WithdrawalUncertain`; retain the row, disable Up, and emit one uncertainty warning. |
 | Any pending state | ID-matched commit | Remove and render the row, invalidate its request id, and make later responses no-ops. |
@@ -54,11 +55,14 @@ also require the accepted turn id and local withdrawal request id to match.
 ## Requirements
 
 - **REQ-PENDING-STEER-001**: Plain Up requests editing of the newest TUI-owned pending steer only
-  when the composer is empty and no popup or modal owns the key.
+  when the composer is empty, no non-bracketed paste burst is active, and no popup or modal owns
+  the key. Press and repeat key events follow the same eligibility rules.
 - **REQ-PENDING-STEER-002**: Editing restores the pending steer's text, local and remote images,
   text elements, mention bindings, and history representation without interrupting the active
-  turn. The cursor is placed at the end of the restored text; transient pre-submit cursor and
-  paste-burst state are not reconstructed.
+  turn. If composer input arrives while withdrawal is in flight, the withdrawn message is prepended
+  to that input and the existing rich payload and pending pastes are preserved. The cursor is placed
+  at the end of the merged draft; transient cursor and paste-burst state from the original
+  submission are not reconstructed.
 - **REQ-PENDING-STEER-003**: Core removes the exact pending user input atomically by expected turn
   id and client user-message id before the TUI removes its local mirror or restores the draft.
 - **REQ-PENDING-STEER-004**: A missing active turn, turn-id mismatch, missing id, or ambiguous id
@@ -69,8 +73,9 @@ also require the accepted turn id and local withdrawal request id to match.
   version of the withdrawn steer.
 - **REQ-PENDING-STEER-006**: Pending-steer commit notifications reconcile by client user-message id
   so identical message text and images cannot remove the wrong local preview row.
-- **REQ-PENDING-STEER-007**: With no eligible pending steer, a nonempty composer, or an active popup
-  or modal, plain Up retains its existing cursor, history, or popup behavior.
+- **REQ-PENDING-STEER-007**: With no eligible pending steer, a nonempty composer, an active
+  non-bracketed paste burst, or an active popup or modal, plain Up retains its existing paste,
+  cursor, history, or popup behavior.
 - **REQ-PENDING-STEER-008**: Withdrawal is scoped to the thread and turn that originated the key
   press; switching the displayed thread cannot redirect the request.
 - **REQ-PENDING-STEER-009**: A withdrawal rejection or transport failure leaves the local pending
@@ -160,23 +165,59 @@ steer retries or repeated client ids.
 
 ## Acceptance criteria
 
-- [ ] Empty-composer plain Up withdraws and restores the newest still-pending steer without
+- [x] Empty-composer plain Up withdraws and restores the newest still-pending steer without
   interrupting.
-- [ ] The original text cannot reach the model after withdrawal succeeds.
-- [ ] A drain that wins the race causes withdrawal to reject without appending or restoring input.
-- [ ] The complete model-significant rich user message survives the round trip and the restored
-  cursor is at the end.
-- [ ] Identical pending messages reconcile and edit by client id, not content comparison.
-- [ ] Nonempty-composer, popup, modal, no-pending, thread-switch, and interrupt behavior retain
-  their existing semantics.
-- [ ] Every submission, withdrawal, lifecycle, off-screen, and stale-response transition has an
+- [x] The original text cannot reach the model after withdrawal succeeds.
+- [x] A drain that wins the race causes withdrawal to reject without appending or restoring input.
+- [x] The complete model-significant rich user message survives the round trip; input entered while
+  withdrawal is in flight is preserved for active and off-screen threads, and the restored cursor
+  is at the end of the merged draft.
+- [x] Identical pending messages reconcile and edit by client id, not content comparison.
+- [x] Nonempty-composer, paste-burst, popup, modal, no-pending, thread-switch, and interrupt behavior
+  retain their existing semantics.
+- [x] Every submission, withdrawal, lifecycle, off-screen, and stale-response transition has an
   observable deterministic test.
-- [ ] Every row of the app-server outcome table has a wire-level assertion.
-- [ ] The stable schema omits the experimental method; the experimental schema and generated
+- [x] Every row of the app-server outcome table has a wire-level assertion.
+- [x] The stable schema omits the experimental method; the experimental schema and generated
   TypeScript include the method, params, response, and structured rejection reasons.
-- [ ] A deterministic in-process TUI → app-server → Core test proves withdrawal success and a
+- [x] A deterministic in-process TUI → app-server → Core test proves withdrawal success and a
   drain-wins rejection through the real request path.
 
 ## Test traceability
 
-Traceability is added at the TDD gate after the approved tests are observed red.
+| Contract | Primary verifier |
+| --- | --- |
+| REQ-PENDING-STEER-001, 007 | `tui/src/chatwidget/tests/pending_steer_edit.rs` plain-Up press/repeat routing, binding-collision, history recall, multiline cursor, paste-burst, popup/modal, and no-eligible-row cases; pending-input preview snapshots. |
+| REQ-PENDING-STEER-002, 005 | Rich-message restoration and resubmission tests deep-compare the retained message, merged active/off-screen composer state, pending pastes, event-gap ordering, cursor, and fresh resubmission identity. |
+| REQ-PENDING-STEER-003, 004 | Core queue race test plus `core/tests/suite/pending_input.rs` exact-match, queue-order, wrong-turn, missing, duplicate-id, no-active-turn, withdrawal-wins, and drain-wins cases. |
+| REQ-PENDING-STEER-006 | TUI commit/replay tests reconcile identical display payloads by `client_user_message_id`; ordinary repeated-id steer append behavior remains covered at the app-server boundary. |
+| REQ-PENDING-STEER-008, 010, 014 | Source-thread dispatch and off-screen completion tests correlate thread, turn, client-message, and request ids and reject stale or redirected responses. |
+| REQ-PENDING-STEER-009, 011 | TUI rejection, repeat-key Up, transport/deserialization uncertainty, completion, interruption, replay, and late-response cases prove fail-closed retention and recovery. |
+| REQ-PENDING-STEER-012, 013 | Submission and lifecycle transition-table tests cover steer acceptance and retry, start fallback, rejection, uncertainty, commit-before-response, turn end, interruption, replay, and late no-ops. |
+| Experimental app-server contract | `app-server/tests/suite/v2/turn_withdraw_pending_input.rs` asserts validation order, loading and policy rejection, every typed operational outcome, success, and drain-wins; `turn_steer.rs` preserves ordinary steer append semantics. `pending_input_withdrawal_exports_are_method_gated` asserts stable/experimental schema boundaries, generated dependencies, and always-present nullable error fields. |
+
+## Verification evidence
+
+- Schema generation: stable and experimental `just write-app-server-schema` passes with no
+  uncommitted fixture drift.
+- Focused suites: Core pending input 27/27, Core exhaustive elicitation adaptation 1/1,
+  app-server withdrawal 3/3, the pre-review TUI pending-steer set 46/46, the post-review focused
+  pending-steer-edit set 20/20, and app-server protocol 299/299 pass.
+- Full TUI suite: the pre-review tree passes 4100/4100. The post-review tree runs 4111 tests with
+  4106 passing and five unrelated lifecycle timeouts; every pending-steer unit and integration test
+  passes. Three lifecycle cases pass on immediate serial rerun, while the two remaining timeout-
+  prone cases pass on exact clean upstream. No pending `insta` snapshots remain.
+- Full Core suite: 4006 pass and four unrelated failures reproduce on the exact clean
+  `upstream/main` tree (`6478a751fd`).
+- Full app-server suite: all withdrawal tests pass; the unrelated code-mode, provenance,
+  filesystem-watch, image-generation, and MCP-status failures also reproduce or exhibit the same
+  flakiness on the exact clean upstream tree.
+- Complete workspace `just test`: both this branch and the exact clean upstream tree stop at the
+  same unavailable `rusty_v8` 150.4.0 aarch64 macOS archive (HTTP 404) before the workspace suite
+  can execute.
+- Fork gates: `just test-fork-maintenance` and `just check-fork-version` pass with upstream version
+  pin 0.151.0.
+- Live TUI smoke: while a `sleep 20` turn was active, an accepted pending steer displayed the new
+  edit hint; plain Up issued `turn/withdrawPendingInput`, removed the pending preview only after
+  success, restored the exact draft, and allowed the original turn to finish without receiving the
+  withdrawn text.
