@@ -411,25 +411,11 @@ impl ChatWidget {
     }
 
     pub(crate) fn restore_user_message_to_composer(&mut self, user_message: UserMessage) {
-        let draft = self.bottom_pane.composer_draft_snapshot();
-        let pending_pastes = draft.pending_pastes;
-        let draft_message = UserMessage {
-            text: draft.text,
-            text_elements: draft.text_elements,
-            local_images: draft.local_images,
-            remote_image_urls: draft.remote_image_urls,
-            mention_bindings: draft.mention_bindings,
-        };
-        let mut messages = vec![user_message];
-        if !draft_message.text.is_empty()
-            || !draft_message.local_images.is_empty()
-            || !draft_message.remote_image_urls.is_empty()
-        {
-            messages.push(draft_message);
-        }
-        self.restore_composer_state(Self::composer_state_from_user_message(
-            merge_user_messages(messages),
-            pending_pastes,
+        self.bottom_pane.flush_composer_paste_burst();
+        let composer = self.current_composer_state();
+        self.restore_composer_state(merge_user_message_into_composer_state(
+            user_message,
+            Some(composer),
         ));
     }
 
@@ -620,4 +606,34 @@ impl ChatWidget {
     pub(crate) fn set_queue_autosend_suppressed(&mut self, suppressed: bool) {
         self.input_queue.suppress_queue_autosend = suppressed;
     }
+}
+
+pub(super) fn merge_user_message_into_composer_state(
+    user_message: UserMessage,
+    composer: Option<ThreadComposerState>,
+) -> ThreadComposerState {
+    let ThreadComposerState {
+        text,
+        local_images,
+        remote_image_urls,
+        text_elements,
+        mention_bindings,
+        pending_pastes,
+        ..
+    } = composer.unwrap_or_default();
+    let draft_message = UserMessage {
+        text,
+        local_images,
+        remote_image_urls,
+        text_elements,
+        mention_bindings,
+    };
+    let mut messages = vec![user_message];
+    if !draft_message.text.is_empty()
+        || !draft_message.local_images.is_empty()
+        || !draft_message.remote_image_urls.is_empty()
+    {
+        messages.push(draft_message);
+    }
+    ChatWidget::composer_state_from_user_message(merge_user_messages(messages), pending_pastes)
 }
