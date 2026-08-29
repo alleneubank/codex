@@ -364,6 +364,7 @@ async fn restore_thread_input_state_preserves_pending_and_committed_replay_rows(
         client_user_message_id: "pending-client".to_string(),
         user_message: UserMessage::from("pending steer"),
         history_record: UserMessageHistoryRecord::UserMessageText,
+        lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
     }]);
     let mut rejected_steers_queue = VecDeque::new();
     rejected_steers_queue.push_back(UserMessage::from("already rejected"));
@@ -380,6 +381,9 @@ async fn restore_thread_input_state_preserves_pending_and_committed_replay_rows(
                 client_user_message_id: "committed-client".to_string(),
                 user_message: UserMessage::from("committed steer"),
                 history_record: UserMessageHistoryRecord::UserMessageText,
+                lifecycle: PendingSteerLifecycle::Accepted {
+                    turn_id: "committed-turn".to_string(),
+                },
             }]),
             rejected_steers_queue,
             rejected_steer_history_records: VecDeque::new(),
@@ -677,6 +681,7 @@ async fn offscreen_commit_replays_retained_rich_message_and_history_override() {
             client_user_message_id: "other-client".to_string(),
             user_message: submitted_message.clone(),
             history_record: UserMessageHistoryRecord::UserMessageText,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         });
     offscreen_input_state.reconcile_committed_pending_steer(&client_user_message_id);
     assert_eq!(
@@ -693,6 +698,7 @@ async fn offscreen_commit_replays_retained_rich_message_and_history_override() {
             client_user_message_id: client_user_message_id.clone(),
             user_message: submitted_message,
             history_record,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         }])
     );
 

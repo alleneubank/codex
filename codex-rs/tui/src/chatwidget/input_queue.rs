@@ -6,6 +6,8 @@
 use std::collections::VecDeque;
 
 use super::PendingSteer;
+#[cfg(test)]
+use super::PendingSteerLifecycle;
 use super::QueuedUserMessage;
 use super::UserMessage;
 use super::UserMessageHistoryRecord;
@@ -117,11 +119,15 @@ mod tests {
             client_user_message_id: "client-pending".to_string(),
             user_message: UserMessage::from("pending"),
             history_record: UserMessageHistoryRecord::UserMessageText,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         });
         state.committed_steers_for_replay.push_back(PendingSteer {
             client_user_message_id: "client-committed".to_string(),
             user_message: UserMessage::from("committed"),
             history_record: UserMessageHistoryRecord::UserMessageText,
+            lifecycle: PendingSteerLifecycle::Accepted {
+                turn_id: "turn-committed".to_string(),
+            },
         });
 
         assert_eq!(

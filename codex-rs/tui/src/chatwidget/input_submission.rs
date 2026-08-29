@@ -337,16 +337,19 @@ impl ChatWidget {
             None
         };
         let client_user_message_id = Uuid::new_v4().to_string();
-        let pending_steer = (!render_in_history).then(|| PendingSteer {
-            client_user_message_id: client_user_message_id.clone(),
-            user_message: UserMessage {
-                text: text.clone(),
-                local_images: local_images.clone(),
-                remote_image_urls: remote_image_urls.clone(),
-                text_elements: text_elements.clone(),
-                mention_bindings: mention_bindings.clone(),
-            },
-            history_record: history_record.clone(),
+        let pending_steer = (!render_in_history).then(|| {
+            PendingSteer::new(
+                client_user_message_id.clone(),
+                UserMessage {
+                    text: text.clone(),
+                    local_images: local_images.clone(),
+                    remote_image_urls: remote_image_urls.clone(),
+                    text_elements: text_elements.clone(),
+                    mention_bindings: mention_bindings.clone(),
+                },
+                history_record.clone(),
+                PendingSteerLifecycle::AwaitingAcceptance,
+            )
         });
         let personality = self
             .config
