@@ -264,14 +264,23 @@ impl ThreadEventStore {
                         started_at_ms: started.started_at_ms,
                     });
             }
-            ServerNotification::ItemCompleted(completed)
-                if matches!(&completed.item, ThreadItem::Reasoning { .. })
+            ServerNotification::ItemCompleted(notification) => {
+                if matches!(&notification.item, ThreadItem::Reasoning { .. })
                     && self.active_reasoning_item.as_ref().is_some_and(|started| {
-                        started.turn_id == completed.turn_id
-                            && started.item.id() == completed.item.id()
-                    }) =>
-            {
-                self.active_reasoning_item = None;
+                        started.turn_id == notification.turn_id
+                            && started.item.id() == notification.item.id()
+                    })
+                {
+                    self.active_reasoning_item = None;
+                }
+                if let ThreadItem::UserMessage {
+                    client_id: Some(client_user_message_id),
+                    ..
+                } = &notification.item
+                    && let Some(input_state) = self.input_state.as_mut()
+                {
+                    input_state.reconcile_committed_pending_steer(client_user_message_id);
+                }
             }
             _ => {}
         }

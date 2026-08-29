@@ -41,6 +41,8 @@ pub(super) struct InputQueueState {
     pub(super) rejected_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     /// Steers already submitted to core but not yet committed into history.
     pub(super) pending_steers: VecDeque<PendingSteer>,
+    /// Committed steers retained only until their buffered history items replay.
+    pub(super) committed_steers_for_replay: VecDeque<PendingSteer>,
     /// When set, the next interrupt should resubmit all pending steers as one
     /// fresh user turn instead of restoring them into the composer.
     pub(super) submit_pending_steers_after_interrupt: bool,
@@ -64,6 +66,7 @@ impl InputQueueState {
         self.rejected_steer_sources.clear();
         self.rejected_steer_history_records.clear();
         self.pending_steers.clear();
+        self.committed_steers_for_replay.clear();
         self.submit_pending_steers_after_interrupt = false;
         self.rate_limit_recovery_pending = false;
     }
@@ -120,14 +123,16 @@ mod tests {
             .rejected_steers_queue
             .push_back(UserMessage::from("rejected"));
         state.pending_steers.push_back(PendingSteer {
-            client_id: "test-submission".to_string(),
+            client_user_message_id: "client-pending".to_string(),
             user_message: UserMessage::from("pending"),
             history_record: UserMessageHistoryRecord::UserMessageText,
             source: UserMessageSource::Prompt,
-            compare_key: crate::chatwidget::user_messages::PendingSteerCompareKey {
-                message: "pending".to_string(),
-                image_count: 0,
-            },
+        });
+        state.committed_steers_for_replay.push_back(PendingSteer {
+            client_user_message_id: "client-committed".to_string(),
+            user_message: UserMessage::from("committed"),
+            history_record: UserMessageHistoryRecord::UserMessageText,
+            source: UserMessageSource::Prompt,
         });
 
         assert_eq!(
@@ -160,6 +165,7 @@ mod tests {
         assert!(state.rejected_steers_queue.is_empty());
         assert!(state.rejected_steer_history_records.is_empty());
         assert!(state.pending_steers.is_empty());
+        assert!(state.committed_steers_for_replay.is_empty());
         assert!(!state.submit_pending_steers_after_interrupt);
     }
 }
