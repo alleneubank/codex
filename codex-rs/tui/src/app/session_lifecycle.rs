@@ -756,7 +756,8 @@ impl App {
                     ThreadBufferedEvent::Request(request) => {
                         server_request_thread_id(request) == Some(thread_id)
                     }
-                    ThreadBufferedEvent::HistoryEntryResponse(_)
+                    ThreadBufferedEvent::LocalError(_)
+                    | ThreadBufferedEvent::HistoryEntryResponse(_)
                     | ThreadBufferedEvent::FeedbackSubmission(_) => true,
                 });
                 self.pending_app_server_requests.clear();

@@ -29,6 +29,8 @@ mod misalignment_policy;
 mod model_catalog;
 #[path = "tests/patch_approval_tests.rs"]
 mod patch_approval_tests;
+#[path = "tests/pending_steer_submission.rs"]
+mod pending_steer_submission;
 #[path = "tests/permission_shortcuts_tests.rs"]
 mod permission_shortcuts_tests;
 mod plugin_catalog;
