@@ -119,6 +119,8 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
+use codex_app_server_protocol::TurnWithdrawPendingInputParams;
+use codex_app_server_protocol::TurnWithdrawPendingInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_config::ConfigLayerSource;
 use codex_otel::TelemetryAuthMode;
@@ -1283,6 +1285,31 @@ impl AppServerSession {
                 },
             })
             .await
+    }
+
+    pub(crate) fn turn_withdraw_pending_input(
+        &mut self,
+        thread_id: ThreadId,
+        expected_turn_id: String,
+        client_user_message_id: String,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<TurnWithdrawPendingInputResponse, TypedRequestError>,
+    > + Send
+    + 'static {
+        let request_id = self.next_request_id();
+        let request_handle = self.request_handle();
+        async move {
+            request_handle
+                .request_typed(ClientRequest::TurnWithdrawPendingInput {
+                    request_id,
+                    params: TurnWithdrawPendingInputParams {
+                        thread_id: thread_id.to_string(),
+                        expected_turn_id,
+                        client_user_message_id,
+                    },
+                })
+                .await
+        }
     }
 
     pub(crate) async fn thread_set_name(
