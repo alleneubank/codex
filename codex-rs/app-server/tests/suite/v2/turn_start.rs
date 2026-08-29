@@ -33,6 +33,7 @@ use codex_app_server_protocol::FileChangeRequestApprovalResponse;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::PatchApplyStatus;
 use codex_app_server_protocol::PatchChangeKind;
@@ -4439,6 +4440,30 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected(
     .await??;
     assert_eq!(direct_steer_error.error.code, INVALID_REQUEST_ERROR_CODE);
     assert_eq!(direct_steer_error.error.message, ERROR_MESSAGE);
+
+    let direct_withdraw_req = mcp
+        .send_raw_request(
+            "turn/withdrawPendingInput",
+            Some(json!({
+                "threadId": child_thread_id.clone(),
+                "expectedTurnId": "any-active-turn",
+                "clientUserMessageId": "any-client-message",
+            })),
+        )
+        .await?;
+    let direct_withdraw_error: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(direct_withdraw_req)),
+    )
+    .await??;
+    assert_eq!(
+        direct_withdraw_error.error,
+        JSONRPCErrorError {
+            code: INVALID_REQUEST_ERROR_CODE,
+            message: ERROR_MESSAGE.to_string(),
+            data: None,
+        }
+    );
 
     let direct_guardian_req = mcp
         .send_raw_request(
