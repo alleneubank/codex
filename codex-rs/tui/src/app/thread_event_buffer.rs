@@ -69,7 +69,8 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(request) => self
                     .pending_interactive_replay
                     .note_evicted_server_request(request.as_ref()),
-                ThreadBufferedEvent::HistoryEntryResponse(_)
+                ThreadBufferedEvent::LocalError(_)
+                | ThreadBufferedEvent::HistoryEntryResponse(_)
                 | ThreadBufferedEvent::FeedbackSubmission(_) => {}
             }
         }

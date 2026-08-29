@@ -231,6 +231,7 @@ mod misalignment_policy;
 mod model_defaults;
 mod new_session;
 mod pending_interactive_replay;
+mod pending_steer_submission;
 mod permission_shortcuts;
 mod pets;
 mod platform_actions;

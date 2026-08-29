@@ -90,7 +90,8 @@ impl AgentStatusThreadPreview {
                     ServerNotification::ItemStarted(event) => &event.item,
                     _ => continue,
                 },
-                ThreadBufferedEvent::Request(_)
+                ThreadBufferedEvent::LocalError(_)
+                | ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
                 | ThreadBufferedEvent::FeedbackSubmission(_) => continue,
             };
