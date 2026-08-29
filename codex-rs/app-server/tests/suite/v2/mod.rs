@@ -122,6 +122,7 @@ mod turn_settings_update;
 mod turn_start;
 mod turn_start_zsh_fork;
 mod turn_steer;
+mod turn_withdraw_pending_input;
 mod user_attention;
 mod view_image;
 mod web_search;
