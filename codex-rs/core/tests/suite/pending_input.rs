@@ -7,6 +7,7 @@ use codex_core::TurnInput;
 use codex_core::TurnInputRequest;
 use codex_core::TurnInputSubmission;
 use codex_core::TurnStartOptions;
+use codex_core::WithdrawPendingInputResult;
 use codex_core::config::CurrentTimeReminderConfig;
 use codex_extension_items::ExtensionItem;
 use codex_extension_items::sleep::SleepItem;
@@ -371,6 +372,310 @@ async fn steer_user_input(codex: &CodexThread, text: &str) {
         .await
         .expect("steer user input");
     assert!(matches!(submission, TurnInputSubmission::Steered { .. }));
+}
+
+async fn steer_user_input_with_client_id(
+    codex: &CodexThread,
+    text: &str,
+    client_id: &str,
+) -> String {
+    let submission = codex
+        .start_or_steer_turn(TurnInputRequest::new(TurnInput::UserInput {
+            content: vec![UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            client_id: Some(client_id.to_string()),
+        }))
+        .await
+        .expect("steer user input with client id");
+    let TurnInputSubmission::Steered { turn_id } = submission else {
+        panic!("user input should steer the active turn");
+    };
+    turn_id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn withdraw_pending_input_removes_exact_match_and_preserves_queue_order() -> anyhow::Result<()>
+{
+    const INITIAL_PROMPT: &str = "initial prompt";
+    const FIRST_PENDING: &str = "first pending";
+    const WITHDRAWN_PENDING: &str = "withdrawn pending";
+    const LAST_PENDING: &str = "last pending";
+
+    let (release_first_response, first_response_gate) = oneshot::channel();
+    let first_chunks = vec![
+        chunk(ev_response_created("resp-1")),
+        gated_chunk(first_response_gate, vec![ev_completed("resp-1")]),
+    ];
+    let (server, _completions) =
+        start_streaming_sse_server(vec![first_chunks, response_completed_chunks("resp-2")]).await;
+    let config_server = responses::start_mock_server().await;
+    let base_url = format!("{}/v1", server.uri());
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .with_config(move |config| {
+            config.model_provider.base_url = Some(base_url);
+            let _ = config.features.disable(Feature::EnableRequestCompression);
+        })
+        .build_with_auto_env(&config_server)
+        .await?;
+
+    let TurnInputSubmission::Started { turn_id } = test
+        .codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: INITIAL_PROMPT.to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?
+    else {
+        panic!("initial input should start a turn");
+    };
+    server.wait_for_request_count(/*count*/ 1).await;
+    assert_eq!(
+        steer_user_input_with_client_id(&test.codex, FIRST_PENDING, "client-first").await,
+        turn_id
+    );
+    assert_eq!(
+        steer_user_input_with_client_id(&test.codex, WITHDRAWN_PENDING, "client-withdrawn").await,
+        turn_id
+    );
+    assert_eq!(
+        steer_user_input_with_client_id(&test.codex, LAST_PENDING, "client-last").await,
+        turn_id
+    );
+
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input(&turn_id, "client-withdrawn")
+            .await,
+        WithdrawPendingInputResult::Withdrawn {
+            turn_id: turn_id.clone(),
+        }
+    );
+    release_first_response
+        .send(())
+        .expect("first response should remain gated");
+    wait_for_turn_complete(&test.codex).await;
+
+    let requests = server.requests().await;
+    assert_eq!(requests.len(), 2);
+    let second: Value = from_slice(&requests[1])?;
+    let relevant_user_input = second["input"]
+        .as_array()
+        .expect("model input array")
+        .iter()
+        .filter(|item| {
+            item["role"] == "user"
+                && item["content"].as_array().is_some_and(|content| {
+                    content.iter().any(|span| {
+                        span["type"] == "input_text"
+                            && matches!(
+                                span["text"].as_str(),
+                                Some(
+                                    INITIAL_PROMPT
+                                        | FIRST_PENDING
+                                        | WITHDRAWN_PENDING
+                                        | LAST_PENDING
+                                )
+                            )
+                    })
+                })
+        })
+        .map(|item| {
+            responses::strip_metadata_from_json(responses::strip_response_item_ids_from_json(
+                item.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        relevant_user_input,
+        vec![
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": INITIAL_PROMPT}],
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": FIRST_PENDING}],
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": LAST_PENDING}],
+            }),
+        ]
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn withdraw_pending_input_rejects_wrong_turn_missing_and_duplicate_ids() -> anyhow::Result<()>
+{
+    const DUPLICATE_PENDING: &str = "duplicate pending";
+
+    let (release_first_response, first_response_gate) = oneshot::channel();
+    let first_chunks = vec![
+        chunk(ev_response_created("resp-1")),
+        gated_chunk(first_response_gate, vec![ev_completed("resp-1")]),
+    ];
+    let (server, _completions) =
+        start_streaming_sse_server(vec![first_chunks, response_completed_chunks("resp-2")]).await;
+    let config_server = responses::start_mock_server().await;
+    let base_url = format!("{}/v1", server.uri());
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .with_config(move |config| {
+            config.model_provider.base_url = Some(base_url);
+            let _ = config.features.disable(Feature::EnableRequestCompression);
+        })
+        .build_with_auto_env(&config_server)
+        .await?;
+
+    let TurnInputSubmission::Started { turn_id } = test
+        .codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "initial prompt".to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?
+    else {
+        panic!("initial input should start a turn");
+    };
+    server.wait_for_request_count(/*count*/ 1).await;
+    steer_user_input_with_client_id(&test.codex, DUPLICATE_PENDING, "client-duplicate").await;
+    steer_user_input_with_client_id(&test.codex, DUPLICATE_PENDING, "client-duplicate").await;
+
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input("wrong-turn", "client-duplicate")
+            .await,
+        WithdrawPendingInputResult::ExpectedTurnMismatch {
+            expected: "wrong-turn".to_string(),
+            actual: turn_id.clone(),
+        }
+    );
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input(&turn_id, "missing-client")
+            .await,
+        WithdrawPendingInputResult::NotPending {
+            turn_id: turn_id.clone(),
+        }
+    );
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input(&turn_id, "client-duplicate")
+            .await,
+        WithdrawPendingInputResult::AmbiguousClientId {
+            turn_id: turn_id.clone(),
+        }
+    );
+
+    release_first_response
+        .send(())
+        .expect("first response should remain gated");
+    wait_for_turn_complete(&test.codex).await;
+    let requests = server.requests().await;
+    assert_eq!(requests.len(), 2);
+    let second: Value = from_slice(&requests[1])?;
+    assert_eq!(
+        message_input_texts(&second, "user")
+            .into_iter()
+            .filter(|text| text == DUPLICATE_PENDING)
+            .collect::<Vec<_>>(),
+        vec![DUPLICATE_PENDING.to_string(); 2]
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn withdraw_pending_input_loses_to_an_already_drained_input() -> anyhow::Result<()> {
+    const DRAINED_PENDING: &str = "drained pending";
+
+    let (release_first_response, first_response_gate) = oneshot::channel();
+    let (release_second_response, second_response_gate) = oneshot::channel();
+    let first_chunks = vec![
+        chunk(ev_response_created("resp-1")),
+        gated_chunk(first_response_gate, vec![ev_completed("resp-1")]),
+    ];
+    let second_chunks = vec![
+        chunk(ev_response_created("resp-2")),
+        gated_chunk(second_response_gate, vec![ev_completed("resp-2")]),
+    ];
+    let (server, _completions) =
+        start_streaming_sse_server(vec![first_chunks, second_chunks]).await;
+    let config_server = responses::start_mock_server().await;
+    let base_url = format!("{}/v1", server.uri());
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .with_config(move |config| {
+            config.model_provider.base_url = Some(base_url);
+            let _ = config.features.disable(Feature::EnableRequestCompression);
+        })
+        .build_with_auto_env(&config_server)
+        .await?;
+
+    let TurnInputSubmission::Started { turn_id } = test
+        .codex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "initial prompt".to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await?
+    else {
+        panic!("initial input should start a turn");
+    };
+    server.wait_for_request_count(/*count*/ 1).await;
+    steer_user_input_with_client_id(&test.codex, DRAINED_PENDING, "client-drained").await;
+    release_first_response
+        .send(())
+        .expect("first response should remain gated");
+    server.wait_for_request_count(/*count*/ 2).await;
+
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input(&turn_id, "client-drained")
+            .await,
+        WithdrawPendingInputResult::NotPending {
+            turn_id: turn_id.clone(),
+        }
+    );
+    let requests = server.requests().await;
+    let second: Value = from_slice(&requests[1])?;
+    assert!(
+        message_input_texts(&second, "user")
+            .iter()
+            .any(|text| text == DRAINED_PENDING)
+    );
+
+    release_second_response
+        .send(())
+        .expect("second response should remain gated");
+    wait_for_turn_complete(&test.codex).await;
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn withdraw_pending_input_reports_no_active_turn() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let test = test_codex().build_with_auto_env(&server).await?;
+
+    assert_eq!(
+        test.codex
+            .withdraw_pending_input("expected-turn", "client-message")
+            .await,
+        WithdrawPendingInputResult::NoActiveTurn
+    );
+
+    Ok(())
 }
 
 async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
