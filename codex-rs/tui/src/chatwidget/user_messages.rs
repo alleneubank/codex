@@ -148,7 +148,7 @@ pub(crate) struct ThreadInputState {
     pub(super) composer: Option<ThreadComposerState>,
     pub(super) safety_buffering_prompt: Option<UserMessage>,
     pub(super) prompt_stash: Option<PromptStash>,
-    pub(super) pending_steers: VecDeque<PendingSteer>,
+    pub(crate) pending_steers: VecDeque<PendingSteer>,
     pub(super) committed_steers_for_replay: VecDeque<PendingSteer>,
     pub(super) rejected_steers_queue: VecDeque<UserMessage>,
     pub(super) rejected_steer_history_records: VecDeque<UserMessageHistoryRecord>,
