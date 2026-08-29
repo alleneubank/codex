@@ -1512,9 +1512,11 @@ impl BottomPane {
         &mut self,
         queued: Vec<String>,
         pending_steers: Vec<String>,
+        pending_steer_editable: bool,
         rejected_steers: Vec<String>,
     ) {
         self.pending_input_preview.pending_steers = pending_steers;
+        self.pending_input_preview.pending_steer_editable = pending_steer_editable;
         self.pending_input_preview.rejected_steers = rejected_steers;
         self.pending_input_preview.queued_messages = queued;
         self.request_redraw();
@@ -3074,6 +3076,7 @@ mod tests {
         pane.set_pending_input_preview(
             vec!["Queued follow-up question".to_string()],
             Vec::new(),
+            false,
             Vec::new(),
         );
 
@@ -3105,6 +3108,7 @@ mod tests {
         pane.set_pending_input_preview(
             vec!["Queued follow-up question".to_string()],
             Vec::new(),
+            false,
             Vec::new(),
         );
         pane.hide_status_indicator();
@@ -3137,6 +3141,7 @@ mod tests {
         pane.set_pending_input_preview(
             vec!["Queued follow-up question".to_string()],
             Vec::new(),
+            false,
             Vec::new(),
         );
 
