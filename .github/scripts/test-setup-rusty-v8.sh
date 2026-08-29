@@ -28,7 +28,10 @@ file_mtimes() {
 }
 
 target="x86_64-unknown-linux-gnu"
-version="$(python3 "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(fork_python_bin)"
+version="$("${python_bin}" "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
 release_tag="rusty-v8-v${version}"
 profile="ptrcomp_sandbox_release"
 archive_name="librusty_v8_${profile}_${target}.a.gz"
@@ -43,7 +46,7 @@ runner_temp="${test_root}/runner-temp"
 bad_curl_log="${test_root}/bad-curl.log"
 mkdir -p "${fixture_dir}" "${bad_fixture_dir}" "${fake_bin}" "${runner_temp}"
 mkdir -p "${workspace_root}/.github/scripts" "${workspace_root}/codex-rs" "${workspace_root}/third_party/v8"
-for support_file in fork-python.sh rusty_v8_bazel.py rusty_v8_module_bazel.py run_bazel_with_buildbuddy.py; do
+for support_file in fork-python.sh rusty_v8_bazel.py rusty_v8_module_bazel.py run_bazel.py; do
   cp "${repo_root}/.github/scripts/${support_file}" "${workspace_root}/.github/scripts/${support_file}"
 done
 cp "${repo_root}/codex-rs/Cargo.lock" "${workspace_root}/codex-rs/Cargo.lock"
