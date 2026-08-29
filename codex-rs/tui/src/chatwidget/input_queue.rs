@@ -6,7 +6,6 @@
 use std::collections::VecDeque;
 
 use super::PendingSteer;
-#[cfg(test)]
 use super::PendingSteerLifecycle;
 use super::QueuedUserMessage;
 use super::UserMessage;
@@ -17,6 +16,7 @@ use super::user_message_preview_text;
 pub(super) struct PendingInputPreview {
     pub(super) queued_messages: Vec<String>,
     pub(super) pending_steers: Vec<String>,
+    pub(super) pending_steer_editable: bool,
     pub(super) rejected_steers: Vec<String>,
 }
 
@@ -96,10 +96,21 @@ impl InputQueueState {
                 user_message_preview_text(message, self.rejected_steer_history_records.get(idx))
             })
             .collect();
+        let pending_steer_editable = !self.pending_steers.iter().any(|pending| {
+            matches!(
+                pending.lifecycle,
+                PendingSteerLifecycle::WithdrawalInFlight { .. }
+                    | PendingSteerLifecycle::WithdrawalUncertain { .. }
+            )
+        }) && self
+            .pending_steers
+            .iter()
+            .any(|pending| matches!(pending.lifecycle, PendingSteerLifecycle::Accepted { .. }));
 
         PendingInputPreview {
             queued_messages,
             pending_steers,
+            pending_steer_editable,
             rejected_steers,
         }
     }
@@ -140,9 +151,55 @@ mod tests {
             PendingInputPreview {
                 queued_messages: vec!["queued".to_string()],
                 pending_steers: vec!["pending".to_string()],
+                pending_steer_editable: false,
                 rejected_steers: vec!["rejected".to_string()],
             }
         );
+    }
+
+    #[test]
+    fn preview_marks_only_accepted_pending_steers_editable() {
+        for (lifecycle, pending_steer_editable) in [
+            (PendingSteerLifecycle::AwaitingAcceptance, false),
+            (
+                PendingSteerLifecycle::Accepted {
+                    turn_id: "turn".to_string(),
+                },
+                true,
+            ),
+            (
+                PendingSteerLifecycle::WithdrawalInFlight {
+                    accepted_turn_id: "turn".to_string(),
+                    request_id: "request".to_string(),
+                },
+                false,
+            ),
+            (
+                PendingSteerLifecycle::WithdrawalUncertain {
+                    accepted_turn_id: "turn".to_string(),
+                    request_id: "request".to_string(),
+                },
+                false,
+            ),
+        ] {
+            let mut state = InputQueueState::default();
+            state.pending_steers.push_back(PendingSteer {
+                client_user_message_id: "client".to_string(),
+                user_message: UserMessage::from("pending"),
+                history_record: UserMessageHistoryRecord::UserMessageText,
+                lifecycle,
+            });
+
+            assert_eq!(
+                state.preview(),
+                PendingInputPreview {
+                    queued_messages: Vec::new(),
+                    pending_steers: vec!["pending".to_string()],
+                    pending_steer_editable,
+                    rejected_steers: Vec::new(),
+                }
+            );
+        }
     }
 
     #[test]
