@@ -1763,9 +1763,11 @@ async fn restore_thread_input_state_applies_running_state_policy() {
         safety_buffering_prompt: Some(UserMessage::from("buffered prompt")),
         prompt_stash: None,
         pending_steers: VecDeque::from([PendingSteer {
+            client_user_message_id: "pending-client".to_string(),
+            user_message: UserMessage::from("submitted to the interrupted turn"),
             history_record: pending_history.clone(),
-            ..pending_steer("submitted to the interrupted turn")
         }]),
+        committed_steers_for_replay: VecDeque::new(),
         rejected_steers_queue: VecDeque::new(),
         rejected_steer_history_records: VecDeque::new(),
         queued_user_messages: VecDeque::from([UserMessage::from("already queued").into()]),
@@ -2283,7 +2285,12 @@ async fn task_mention_submission_and_transcript_preserve_the_visible_title() {
             }],
         });
 
-        let Op::UserTurn { items, .. } = next_submit_op(&mut ops) else {
+        let Op::UserTurn {
+            client_user_message_id,
+            items,
+            ..
+        } = next_submit_op(&mut ops)
+        else {
             panic!("expected user turn");
         };
         if !enabled {
@@ -2303,7 +2310,12 @@ async fn task_mention_submission_and_transcript_preserve_the_visible_title() {
                 path: "thread://task-123".to_string(),
             }]
         );
-        complete_user_message_for_inputs(&mut chat, "user-task-reference", items);
+        complete_user_message_with_client_id(
+            &mut chat,
+            "user-task-reference",
+            Some(&client_user_message_id),
+            items,
+        );
         let rendered = drain_insert_history(&mut events)
             .into_iter()
             .flatten()
@@ -2453,4 +2465,122 @@ async fn reconnect_holds_only_recovered_input_until_manually_edited() {
         assert!(chat.maybe_send_next_queued_input());
         assert_matches!(next_submit_op(&mut ops), Op::UserTurn { .. });
     }
+}
+
+#[tokio::test]
+async fn submissions_have_distinct_client_ids_and_pending_rows_retain_rich_state() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.submit_user_message(UserMessage::from("first"));
+    let first_id = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            ..
+        } => client_user_message_id,
+        other => panic!("expected first user turn, got {other:?}"),
+    };
+
+    handle_turn_started(&mut chat, "turn-1");
+    let text = "$skill inspect".to_string();
+    let rich_message = UserMessage {
+        text,
+        local_images: vec![LocalImageAttachment {
+            placeholder: "[Image #1]".to_string(),
+            path: PathBuf::from("/tmp/pending-local.png"),
+        }],
+        remote_image_urls: vec!["https://example.test/pending.png".to_string()],
+        text_elements: vec![TextElement::new((0..6).into(), /*placeholder*/ None)],
+        mention_bindings: vec![MentionBinding {
+            sigil: '$',
+            mention: "skill".to_string(),
+            path: "/tmp/skills/skill/SKILL.md".to_string(),
+        }],
+    };
+    let history_record = UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+        text: "history override".to_string(),
+        text_elements: vec![TextElement::new((0..7).into(), /*placeholder*/ None)],
+    });
+    assert!(
+        chat.submit_user_message_with_history_record(rich_message.clone(), history_record.clone(),)
+    );
+    let second_id = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            ..
+        } => client_user_message_id,
+        other => panic!("expected steer user turn, got {other:?}"),
+    };
+
+    assert!(!first_id.is_empty());
+    assert!(!second_id.is_empty());
+    assert_ne!(first_id, second_id);
+    assert_eq!(
+        chat.input_queue.pending_steers,
+        VecDeque::from([PendingSteer {
+            client_user_message_id: second_id,
+            user_message: rich_message,
+            history_record,
+        }])
+    );
+}
+
+#[tokio::test]
+async fn committed_user_messages_reconcile_identical_rows_by_client_id() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.input_queue.pending_steers = VecDeque::from([
+        PendingSteer {
+            client_user_message_id: "client-1".to_string(),
+            user_message: UserMessage::from("identical"),
+            history_record: UserMessageHistoryRecord::UserMessageText,
+        },
+        PendingSteer {
+            client_user_message_id: "client-2".to_string(),
+            user_message: UserMessage::from("identical"),
+            history_record: UserMessageHistoryRecord::UserMessageText,
+        },
+    ]);
+
+    complete_user_message_with_client_id(
+        &mut chat,
+        "item-2",
+        Some("client-2"),
+        vec![UserInput::Text {
+            text: "identical".to_string(),
+            text_elements: Vec::new(),
+        }],
+    );
+
+    assert_eq!(chat.input_queue.pending_steers.len(), 1);
+    assert_eq!(
+        chat.input_queue.pending_steers[0].client_user_message_id,
+        "client-1"
+    );
+
+    chat.input_queue.pending_steers.push_back(PendingSteer {
+        client_user_message_id: "client-3".to_string(),
+        user_message: UserMessage::from("identical"),
+        history_record: UserMessageHistoryRecord::UserMessageText,
+    });
+    chat.replay_thread_item(
+        ThreadItem::UserMessage {
+            id: "item-3".to_string(),
+            client_id: Some("client-3".to_string()),
+            content: vec![UserInput::Text {
+                text: "identical".to_string(),
+                text_elements: Vec::new(),
+            }],
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    assert_eq!(
+        chat.input_queue
+            .pending_steers
+            .iter()
+            .map(|pending| pending.client_user_message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["client-1"]
+    );
 }

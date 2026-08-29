@@ -169,6 +169,16 @@ impl ThreadEventStore {
                 self.active_turn_id = None;
                 self.pending_interrupt_turn_id = None;
             }
+            ServerNotification::ItemCompleted(notification) => {
+                if let ThreadItem::UserMessage {
+                    client_id: Some(client_user_message_id),
+                    ..
+                } = &notification.item
+                    && let Some(input_state) = self.input_state.as_mut()
+                {
+                    input_state.reconcile_committed_pending_steer(client_user_message_id);
+                }
+            }
             _ => {}
         }
 

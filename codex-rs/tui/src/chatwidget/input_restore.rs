@@ -496,8 +496,9 @@ impl ChatWidget {
         Some(ThreadInputState {
             composer: composer.has_content().then_some(composer),
             safety_buffering_prompt: self.safety_buffering_prompt.clone(),
-            pending_steers: self.input_queue.pending_steers.clone(),
             prompt_stash: self.prompt_stash.clone(),
+            pending_steers: self.input_queue.pending_steers.clone(),
+            committed_steers_for_replay: self.input_queue.committed_steers_for_replay.clone(),
             rejected_steers_queue: self.input_queue.rejected_steers_queue.clone(),
             rejected_steer_history_records: self.input_queue.rejected_steer_history_records.clone(),
             queued_user_messages: self.input_queue.queued_user_messages.clone(),
@@ -552,6 +553,7 @@ impl ChatWidget {
             self.refresh_model_dependent_surfaces();
             self.restore_composer_state(input_state.composer.unwrap_or_default());
             let pending_steers = input_state.pending_steers;
+            self.input_queue.committed_steers_for_replay = input_state.committed_steers_for_replay;
             let mut queued_user_messages = input_state.queued_user_messages;
             let mut queued_user_message_history_records =
                 input_state.queued_user_message_history_records;
@@ -559,10 +561,22 @@ impl ChatWidget {
                 self.input_queue.pending_steers = pending_steers;
             } else {
                 self.input_queue.pending_steers.clear();
-                for pending in pending_steers.into_iter().rev() {
-                    queued_user_messages.push_front(pending.user_message.into());
-                    queued_user_message_history_records.push_front(pending.history_record);
-                }
+                let (mut safety_retry_follow_ups, mut pending_steer_history_records): (
+                    VecDeque<_>,
+                    VecDeque<_>,
+                ) = pending_steers
+                    .into_iter()
+                    .map(|pending| {
+                        (
+                            QueuedUserMessage::from(pending.user_message),
+                            pending.history_record,
+                        )
+                    })
+                    .unzip();
+                safety_retry_follow_ups.append(&mut queued_user_messages);
+                queued_user_messages = safety_retry_follow_ups;
+                pending_steer_history_records.append(&mut queued_user_message_history_records);
+                queued_user_message_history_records = pending_steer_history_records;
             }
             self.input_queue.rejected_steers_queue = input_state.rejected_steers_queue;
             self.input_queue.rejected_steer_history_records =

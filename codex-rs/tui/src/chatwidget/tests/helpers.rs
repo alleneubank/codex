@@ -962,13 +962,9 @@ pub(super) fn complete_assistant_message(
 
 pub(super) fn pending_steer(text: &str) -> PendingSteer {
     PendingSteer {
-        client_id: "test-submission".to_string(),
+        client_user_message_id: format!("test-pending-{text}"),
         user_message: UserMessage::from(text),
         history_record: UserMessageHistoryRecord::UserMessageText,
-        compare_key: PendingSteerCompareKey {
-            message: text.to_string(),
-            image_count: 0,
-        },
     }
 }
 
@@ -988,6 +984,15 @@ pub(super) fn complete_user_message_for_inputs(
     item_id: &str,
     content: Vec<UserInput>,
 ) {
+    complete_user_message_with_client_id(chat, item_id, /*client_id*/ None, content);
+}
+
+pub(super) fn complete_user_message_with_client_id(
+    chat: &mut ChatWidget,
+    item_id: &str,
+    client_id: Option<&str>,
+    content: Vec<UserInput>,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: chat.thread_id.map(|id| id.to_string()).unwrap_or_default(),
@@ -995,7 +1000,7 @@ pub(super) fn complete_user_message_for_inputs(
             completed_at_ms: 0,
             item: AppServerThreadItem::UserMessage {
                 id: item_id.to_string(),
-                client_id: None,
+                client_id: client_id.map(str::to_string),
                 content,
             },
         }),
