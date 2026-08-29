@@ -232,6 +232,11 @@ impl ChatWidget {
         self.bottom_pane.composer_text_with_pending()
     }
 
+    #[cfg(test)]
+    pub(crate) fn composer_cursor(&self) -> usize {
+        self.bottom_pane.composer_cursor()
+    }
+
     pub(crate) fn apply_external_edit(&mut self, text: String) {
         self.bottom_pane.apply_external_edit(text);
         self.request_redraw();
