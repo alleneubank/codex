@@ -141,11 +141,11 @@ impl ChatWidget {
         let replay_kind = render_source.replay_kind();
         match item {
             ThreadItem::UserMessage {
-                content, client_id, ..
+                client_id, content, ..
             } => {
                 self.on_committed_user_message(
-                    &content,
                     client_id.as_deref(),
+                    &content,
                     from_replay,
                     &turn_id,
                 );
