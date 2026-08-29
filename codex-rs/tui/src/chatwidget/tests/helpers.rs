@@ -965,6 +965,7 @@ pub(super) fn pending_steer(text: &str) -> PendingSteer {
         client_user_message_id: format!("test-pending-{text}"),
         user_message: UserMessage::from(text),
         history_record: UserMessageHistoryRecord::UserMessageText,
+        lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
     }
 }
 
