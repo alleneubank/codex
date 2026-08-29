@@ -1002,6 +1002,7 @@ pub(super) fn pending_steer(text: &str) -> PendingSteer {
         user_message: UserMessage::from(text),
         history_record: UserMessageHistoryRecord::UserMessageText,
         source: UserMessageSource::Prompt,
+        lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
     }
 }
 

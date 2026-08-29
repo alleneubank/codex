@@ -1770,6 +1770,7 @@ async fn restore_thread_input_state_applies_running_state_policy() {
             user_message: UserMessage::from("submitted to the interrupted turn"),
             history_record: pending_history.clone(),
             source: UserMessageSource::Prompt,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         }]),
         committed_steers_for_replay: VecDeque::new(),
         rejected_steers_queue: VecDeque::new(),
@@ -2530,6 +2531,7 @@ async fn submissions_have_distinct_client_ids_and_pending_rows_retain_rich_state
             user_message: rich_message,
             history_record,
             source: UserMessageSource::Prompt,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         }])
     );
 }
@@ -2544,12 +2546,14 @@ async fn committed_user_messages_reconcile_identical_rows_by_client_id() {
             user_message: UserMessage::from("identical"),
             history_record: UserMessageHistoryRecord::UserMessageText,
             source: UserMessageSource::Prompt,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         },
         PendingSteer {
             client_user_message_id: "client-2".to_string(),
             user_message: UserMessage::from("identical"),
             history_record: UserMessageHistoryRecord::UserMessageText,
             source: UserMessageSource::Prompt,
+            lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
         },
     ]);
 
@@ -2574,6 +2578,7 @@ async fn committed_user_messages_reconcile_identical_rows_by_client_id() {
         user_message: UserMessage::from("identical"),
         history_record: UserMessageHistoryRecord::UserMessageText,
         source: UserMessageSource::Prompt,
+        lifecycle: PendingSteerLifecycle::AwaitingAcceptance,
     });
     chat.replay_thread_item(
         ThreadItem::UserMessage {
