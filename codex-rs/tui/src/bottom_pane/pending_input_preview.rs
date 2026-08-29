@@ -22,6 +22,7 @@ use crate::wrapping::adaptive_wrap_lines;
 /// configurable via [`set_edit_binding`](Self::set_edit_binding).
 pub(crate) struct PendingInputPreview {
     pub pending_steers: Vec<String>,
+    pub pending_steer_editable: bool,
     pub rejected_steers: Vec<String>,
     pub queued_messages: Vec<String>,
     /// Key combination rendered in the hint line.  Defaults to Alt+Up but may
@@ -37,6 +38,7 @@ impl PendingInputPreview {
     pub(crate) fn new() -> Self {
         Self {
             pending_steers: Vec::new(),
+            pending_steer_editable: false,
             rejected_steers: Vec::new(),
             queued_messages: Vec::new(),
             edit_binding: Some(key_hint::alt(KeyCode::Up).into()),
@@ -109,6 +111,16 @@ impl PendingInputPreview {
                         .subsequent_indent(Line::from("    ")),
                 );
                 Self::push_truncated_preview_lines(&mut lines, wrapped, Line::from("    …".dim()));
+            }
+            if self.pending_steer_editable {
+                lines.push(
+                    Line::from(vec![
+                        "    ".into(),
+                        key_hint::plain(KeyCode::Up).into(),
+                        " edit last pending message".into(),
+                    ])
+                    .dim(),
+                );
             }
         }
 
@@ -335,6 +347,7 @@ mod tests {
     fn render_one_pending_steer() {
         let mut queue = PendingInputPreview::new();
         queue.pending_steers.push("Please continue.".to_string());
+        queue.pending_steer_editable = true;
         let width = 48;
         let height = queue.desired_height(width);
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
@@ -361,6 +374,7 @@ mod tests {
     fn render_pending_steers_above_queued_messages() {
         let mut queue = PendingInputPreview::new();
         queue.pending_steers.push("Please continue.".to_string());
+        queue.pending_steer_editable = true;
         queue
             .pending_steers
             .push("Check the last command output.".to_string());

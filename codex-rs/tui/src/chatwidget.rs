@@ -394,6 +394,7 @@ mod model_popups;
 mod notifications;
 use self::notifications::Notification;
 mod pending_steer;
+mod pending_steer_edit;
 mod pending_steer_withdrawal;
 mod permission_popups;
 mod permission_shortcuts;
