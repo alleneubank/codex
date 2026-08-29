@@ -8,8 +8,7 @@ use crate::workspace_command::WorkspaceCommandExecutor;
 
 const MISSION_OUTPUT_BYTES: usize = 32 * 1024;
 const MISSION_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
-const MISSION_USAGE: &str =
-    "Usage: /mission [current|rubric|evidence|portfolio|resume|decision-review|handoff|landing]";
+const MISSION_USAGE: &str = "Usage: /mission [context|check|mission|inspect]";
 
 impl ChatWidget {
     pub(super) fn dispatch_mission_command(&mut self, args: &str) {
@@ -38,14 +37,11 @@ impl ChatWidget {
 
 fn mission_command(args: &str, root: &Path) -> Result<WorkspaceCommand, String> {
     let mut argv = vec!["missionctl".to_string()];
+    // Every view is a bounded missionctl projection; the loop body is never
+    // injected into the conversation.
     match args.split_whitespace().collect::<Vec<_>>().as_slice() {
-        [] | ["current"] => argv.push("current".to_string()),
-        ["rubric"] | ["evidence"] => argv.push("mission".to_string()),
-        ["portfolio"] => argv.push("portfolio".to_string()),
-        [action @ ("resume" | "decision-review" | "handoff" | "landing")] => {
-            argv.push("prompt".to_string());
-            argv.push((*action).to_string());
-        }
+        [] | ["context"] => argv.push("context".to_string()),
+        [view @ ("check" | "mission" | "inspect")] => argv.push((*view).to_string()),
         _ => return Err(MISSION_USAGE.to_string()),
     }
     argv.push("--root".to_string());

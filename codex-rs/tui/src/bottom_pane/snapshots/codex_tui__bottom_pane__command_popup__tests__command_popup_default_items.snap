@@ -25,7 +25,7 @@ expression: commands
 /init - create an AGENTS.md file with instructions for Codex
 /compact - summarize conversation to prevent hitting the context limit
 /recap - summarize the current conversation now
-/mission - view mission, campaign evidence, attention, or next prompt
+/mission - view the loop context, validation, mission, or legacy inspection
 /agents - view and switch between all active agent sessions
 /side - start a side conversation in an ephemeral fork
 /copy - copy the last response, code block, or quote
