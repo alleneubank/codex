@@ -19,6 +19,7 @@ pub(super) struct ThreadEventSnapshot {
 #[derive(Debug, Clone)]
 pub(super) enum ThreadBufferedEvent {
     Notification(Box<ServerNotification>),
+    LocalError(String),
     Request(Box<ServerRequest>),
     HistoryEntryResponse(HistoryLookupResponse),
     FeedbackSubmission(FeedbackThreadEvent),
@@ -56,7 +57,9 @@ pub(super) struct ThreadEventStore {
 impl ThreadEventStore {
     pub(super) fn event_survives_session_refresh(event: &ThreadBufferedEvent) -> bool {
         match event {
-            ThreadBufferedEvent::Request(_) | ThreadBufferedEvent::FeedbackSubmission(_) => true,
+            ThreadBufferedEvent::LocalError(_)
+            | ThreadBufferedEvent::Request(_)
+            | ThreadBufferedEvent::FeedbackSubmission(_) => true,
             ThreadBufferedEvent::Notification(notification) => matches!(
                 notification.as_ref(),
                 ServerNotification::HookStarted(_)
@@ -205,6 +208,7 @@ impl ThreadEventStore {
                 }
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
+                | ThreadBufferedEvent::LocalError(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
                 | ThreadBufferedEvent::FeedbackSubmission(_) => None,
             })
@@ -233,6 +237,7 @@ impl ThreadEventStore {
                         .pending_interactive_replay
                         .should_replay_snapshot_request(request.as_ref()),
                     ThreadBufferedEvent::Notification(_)
+                    | ThreadBufferedEvent::LocalError(_)
                     | ThreadBufferedEvent::HistoryEntryResponse(_)
                     | ThreadBufferedEvent::FeedbackSubmission(_) => true,
                 })

@@ -4,9 +4,12 @@
 //! channels, submits thread-scoped operations through the app server, and replays buffered events
 //! when the visible thread changes.
 
+use super::pending_steer_submission::PendingSteerSubmissionDiagnostic;
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
 use crate::app_event::ThreadTitleDestination;
+use crate::chatwidget::PendingSteerSubmissionEffect;
+use crate::chatwidget::PendingSteerSubmissionOutcome;
 use crate::chatwidget::ThreadInputStateRestoreMode;
 use crate::session_resume::read_session_model;
 use codex_app_server_protocol::ThreadStartedNotification;
@@ -687,14 +690,31 @@ impl App {
                             )
                             .await
                         {
-                            Ok(_) => return Ok(true),
+                            Ok(response) => {
+                                self.reconcile_pending_steer_submission(
+                                    thread_id,
+                                    client_user_message_id,
+                                    PendingSteerSubmissionOutcome::SteerAccepted {
+                                        turn_id: response.turn_id,
+                                    },
+                                    /*diagnostic*/ None,
+                                )
+                                .await?;
+                                return Ok(true);
+                            }
                             Err(error) => {
                                 if let Some(turn_error) =
                                     active_turn_not_steerable_turn_error(&error)
                                 {
-                                    if !self.chat_widget.enqueue_rejected_steer() {
-                                        self.chat_widget.add_error_message(turn_error.message);
-                                    }
+                                    self.reconcile_pending_steer_submission(
+                                        thread_id,
+                                        client_user_message_id,
+                                        PendingSteerSubmissionOutcome::DefinitivelyRejected,
+                                        Some(PendingSteerSubmissionDiagnostic::Error(
+                                            turn_error.message,
+                                        )),
+                                    )
+                                    .await?;
                                     return Ok(true);
                                 }
                                 match active_turn_steer_race(&error) {
@@ -733,11 +753,44 @@ impl App {
                                             self.thread_event_channels.get(&thread_id)
                                         {
                                             let mut store = channel.store.lock().await;
-                                            store.active_turn_id = Some(actual_turn_id);
+                                            store.active_turn_id = Some(actual_turn_id.clone());
                                         }
-                                        return Err(error.into());
+                                        self.reconcile_pending_steer_submission(
+                                            thread_id,
+                                            client_user_message_id,
+                                            PendingSteerSubmissionOutcome::DefinitivelyRejected,
+                                            Some(PendingSteerSubmissionDiagnostic::Error(
+                                                error.to_string(),
+                                            )),
+                                        )
+                                        .await?;
+                                        return Ok(true);
                                     }
-                                    None => return Err(error.into()),
+                                    None => {
+                                        let (outcome, diagnostic) = match &error {
+                                            TypedRequestError::Transport { .. }
+                                            | TypedRequestError::Deserialize { .. } => (
+                                                PendingSteerSubmissionOutcome::AcceptanceUncertain,
+                                                PendingSteerSubmissionDiagnostic::Warning(format!(
+                                                    "Could not confirm whether the message was submitted. It remains pending and cannot be edited until Codex confirms delivery or interruption: {error}"
+                                                )),
+                                            ),
+                                            TypedRequestError::Server { .. } => (
+                                                PendingSteerSubmissionOutcome::DefinitivelyRejected,
+                                                PendingSteerSubmissionDiagnostic::Error(
+                                                    error.to_string(),
+                                                ),
+                                            ),
+                                        };
+                                        self.reconcile_pending_steer_submission(
+                                            thread_id,
+                                            client_user_message_id,
+                                            outcome,
+                                            Some(diagnostic),
+                                        )
+                                        .await?;
+                                        return Ok(true);
+                                    }
                                 }
                             }
                         }
@@ -772,7 +825,52 @@ impl App {
                             *personality,
                             final_output_json_schema.clone(),
                         )
-                        .await?;
+                        .await;
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) => {
+                            let (outcome, diagnostic) = match error
+                                .downcast_ref::<TypedRequestError>()
+                            {
+                                Some(
+                                    typed_error @ (TypedRequestError::Transport { .. }
+                                    | TypedRequestError::Deserialize { .. }),
+                                ) => (
+                                    PendingSteerSubmissionOutcome::AcceptanceUncertain,
+                                    PendingSteerSubmissionDiagnostic::Warning(format!(
+                                        "Could not confirm whether the message was submitted. It remains pending and cannot be edited until Codex confirms delivery or interruption: {typed_error}"
+                                    )),
+                                ),
+                                Some(TypedRequestError::Server { .. }) | None => (
+                                    PendingSteerSubmissionOutcome::DefinitivelyRejected,
+                                    PendingSteerSubmissionDiagnostic::Error(format!(
+                                        "Failed to start turn: {error:#}"
+                                    )),
+                                ),
+                            };
+                            let effect = self
+                                .reconcile_pending_steer_submission(
+                                    thread_id,
+                                    client_user_message_id,
+                                    outcome,
+                                    Some(diagnostic),
+                                )
+                                .await?;
+                            if effect == PendingSteerSubmissionEffect::Noop {
+                                return Err(error);
+                            }
+                            return Ok(true);
+                        }
+                    };
+                    self.reconcile_pending_steer_submission(
+                        thread_id,
+                        client_user_message_id,
+                        PendingSteerSubmissionOutcome::StartAccepted {
+                            turn_id: response.turn.id.clone(),
+                        },
+                        /*diagnostic*/ None,
+                    )
+                    .await?;
                     if self.active_thread_id == Some(thread_id)
                         && self.chat_widget.thread_id() == Some(thread_id)
                     {
@@ -1368,6 +1466,9 @@ impl App {
                     self.enqueue_thread_notification(thread_id, *notification)
                         .await?;
                 }
+                ThreadBufferedEvent::LocalError(message) => {
+                    self.enqueue_thread_local_error(thread_id, message).await;
+                }
                 ThreadBufferedEvent::Request(request) => {
                     self.enqueue_thread_request(thread_id, *request).await?;
                 }
@@ -1730,6 +1831,9 @@ impl App {
                 self.chat_widget
                     .handle_server_notification(*notification, /*replay_kind*/ None);
             }
+            ThreadBufferedEvent::LocalError(message) => {
+                self.chat_widget.add_error_message(message);
+            }
             ThreadBufferedEvent::Request(request) => {
                 if self
                     .pending_app_server_requests
@@ -1764,6 +1868,9 @@ impl App {
             ThreadBufferedEvent::Notification(notification) => self
                 .chat_widget
                 .handle_server_notification(*notification, Some(ReplayKind::ThreadSnapshot)),
+            ThreadBufferedEvent::LocalError(message) => {
+                self.chat_widget.add_error_message(message);
+            }
             ThreadBufferedEvent::Request(request) => {
                 let may_open_protected_view =
                     self.startup_request_may_open_protected_view(request.as_ref());
