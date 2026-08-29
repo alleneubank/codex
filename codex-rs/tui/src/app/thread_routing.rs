@@ -7,6 +7,7 @@
 use super::pending_steer_submission::PendingSteerSubmissionDiagnostic;
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
+use crate::app_event::PendingSteerWithdrawalServerRejection;
 use crate::app_event::ThreadTitleDestination;
 use crate::chatwidget::PendingSteerSubmissionEffect;
 use crate::chatwidget::PendingSteerSubmissionOutcome;
@@ -658,6 +659,60 @@ impl App {
                             }
                         }
                     }
+                });
+                Ok(true)
+            }
+            AppCommand::WithdrawPendingSteer {
+                source_thread_id,
+                accepted_turn_id,
+                client_user_message_id,
+                request_id,
+            } => {
+                let source_thread_id = *source_thread_id;
+                let accepted_turn_id = accepted_turn_id.clone();
+                let client_user_message_id = client_user_message_id.clone();
+                let request_id = request_id.clone();
+                let request = app_server.turn_withdraw_pending_input(
+                    source_thread_id,
+                    accepted_turn_id.clone(),
+                    client_user_message_id.clone(),
+                );
+                let app_event_tx = self.app_event_tx.clone();
+                tokio::spawn(async move {
+                    let result = match request.await {
+                        Ok(response) => PendingSteerWithdrawalRequestResult::Withdrawn {
+                            turn_id: response.turn_id,
+                        },
+                        Err(TypedRequestError::Server { source, .. }) => {
+                            let data =
+                                source.data.and_then(|data| {
+                                    serde_json::from_value(data).map_err(|error| {
+                                    tracing::warn!(
+                                        %error,
+                                        "pending-input withdrawal returned malformed error data"
+                                    );
+                                }).ok()
+                                });
+                            PendingSteerWithdrawalRequestResult::Rejected(
+                                PendingSteerWithdrawalServerRejection {
+                                    code: source.code,
+                                    message: source.message,
+                                    data,
+                                },
+                            )
+                        }
+                        Err(
+                            error @ (TypedRequestError::Transport { .. }
+                            | TypedRequestError::Deserialize { .. }),
+                        ) => PendingSteerWithdrawalRequestResult::Uncertain(error.to_string()),
+                    };
+                    app_event_tx.send(AppEvent::PendingSteerWithdrawalResponse {
+                        source_thread_id,
+                        accepted_turn_id,
+                        client_user_message_id,
+                        request_id,
+                        result,
+                    });
                 });
                 Ok(true)
             }

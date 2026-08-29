@@ -9,6 +9,7 @@ use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_config::types::ApprovalsReviewer;
+use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
@@ -25,6 +26,12 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum AppCommand {
     Interrupt,
+    WithdrawPendingSteer {
+        source_thread_id: ThreadId,
+        accepted_turn_id: String,
+        client_user_message_id: String,
+        request_id: String,
+    },
     CleanBackgroundTerminals,
     RunUserShellCommand {
         command: String,

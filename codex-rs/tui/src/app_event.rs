@@ -35,6 +35,7 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadItemsListResponse;
+use codex_app_server_protocol::TurnWithdrawPendingInputError;
 use codex_connectors::AppInfo;
 use codex_file_search::FileMatch;
 use codex_message_history::HistoryBatchCursor;
@@ -52,6 +53,7 @@ use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::ConnectorScopeGeneration;
+use crate::chatwidget::PendingSteer;
 use crate::chatwidget::ThreadUsageOutcome;
 use crate::chatwidget::UserMessage;
 use crate::goal_files::GoalDraft;
@@ -220,6 +222,19 @@ pub(crate) struct AgentsOverviewThreadRefresh {
     pub(crate) threads: std::collections::HashMap<ThreadId, Option<Thread>>,
     pub(crate) last_messages: std::collections::HashMap<ThreadId, String>,
     pub(crate) recent_seed_complete: bool,
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingSteerWithdrawalServerRejection {
+    pub(crate) code: i64,
+    pub(crate) message: String,
+    pub(crate) data: Option<TurnWithdrawPendingInputError>,
+}
+
+#[derive(Debug)]
+pub(crate) enum PendingSteerWithdrawalRequestResult {
+    Withdrawn { turn_id: String },
+    Rejected(PendingSteerWithdrawalServerRejection),
+    Uncertain(String),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -485,6 +500,20 @@ pub(crate) enum AppEvent {
     /// Forward a command to the Agent. Using an `AppEvent` for this avoids
     /// bubbling channels through layers of widgets.
     CodexOp(AppCommand),
+
+    PendingSteerWithdrawalResponse {
+        source_thread_id: ThreadId,
+        accepted_turn_id: String,
+        client_user_message_id: String,
+        request_id: String,
+        result: PendingSteerWithdrawalRequestResult,
+    },
+
+    /// Retains the exact rich row for the composer-restore stage.
+    PendingSteerWithdrawn {
+        source_thread_id: ThreadId,
+        pending_steer: PendingSteer,
+    },
 
     /// Approve one retry of a recent auto-review denial selected in the TUI.
     ApproveRecentAutoReviewDenial {

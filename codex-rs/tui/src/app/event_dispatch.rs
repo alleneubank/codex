@@ -737,6 +737,30 @@ impl App {
                 self.chat_widget
                     .confirm_safety_buffered_retry(thread_id, turn_id, model, turn, prompt);
             }
+            AppEvent::PendingSteerWithdrawalResponse {
+                source_thread_id,
+                accepted_turn_id,
+                client_user_message_id,
+                request_id,
+                result,
+            } => {
+                if let crate::chatwidget::PendingSteerWithdrawalEffect::Withdrawn(pending_steer) =
+                    self.reconcile_pending_steer_withdrawal_response(
+                        source_thread_id,
+                        &accepted_turn_id,
+                        &client_user_message_id,
+                        &request_id,
+                        result,
+                    )
+                    .await?
+                {
+                    self.app_event_tx.send(AppEvent::PendingSteerWithdrawn {
+                        source_thread_id,
+                        pending_steer: *pending_steer,
+                    });
+                }
+            }
+            AppEvent::PendingSteerWithdrawn { .. } => {}
             AppEvent::RetrySafetyBufferedTurn {
                 thread_id,
                 turn_id,
