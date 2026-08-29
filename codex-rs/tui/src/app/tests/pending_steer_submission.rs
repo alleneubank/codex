@@ -884,6 +884,18 @@ async fn app_event_withdrawal_handoff_stays_bound_to_rich_source_row() -> Result
     expected_source_state
         .pending_steers
         .retain(|pending| pending.client_user_message_id != client_id);
+    let (mut expected_chat, _expected_tx, _expected_events, _expected_ops) =
+        make_chatwidget_manual_with_sender().await;
+    expected_chat.restore_thread_input_state(
+        Some(expected_source_state),
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: true,
+        },
+    );
+    expected_chat.restore_withdrawn_pending_steer(expected_row.clone());
+    let expected_source_state = expected_chat
+        .capture_thread_input_state()
+        .expect("expected restored source input state");
 
     let (mut app_server, _requests, server) = start_scripted_app_server(
         &app.config,
@@ -942,26 +954,41 @@ async fn app_event_withdrawal_handoff_stays_bound_to_rich_source_row() -> Result
 
     app.handle_event(&mut tui, &mut app_server, response)
         .await?;
-    let (handoff_thread_id, withdrawn) = loop {
-        if let Some(AppEvent::PendingSteerWithdrawn {
-            source_thread_id,
-            pending_steer,
-        }) = events.recv().await
-        {
-            break (source_thread_id, pending_steer);
+    let handoff = loop {
+        if let Some(event @ AppEvent::PendingSteerWithdrawn { .. }) = events.recv().await {
+            break event;
         }
     };
+    let AppEvent::PendingSteerWithdrawn {
+        source_thread_id: handoff_thread_id,
+        pending_steer: withdrawn,
+    } = &handoff
+    else {
+        unreachable!()
+    };
     assert_eq!(
-        (handoff_thread_id, withdrawn),
-        (source_thread_id, expected_row)
+        (*handoff_thread_id, withdrawn),
+        (source_thread_id, &expected_row)
     );
+    app.handle_event(&mut tui, &mut app_server, handoff).await?;
     assert_eq!(
         source_store.lock().await.input_state,
-        Some(expected_source_state)
+        Some(expected_source_state.clone())
     );
     assert_eq!(
         app.chat_widget.capture_thread_input_state(),
         displayed_state
+    );
+    app.active_thread_id = Some(source_thread_id);
+    app.chat_widget.restore_thread_input_state(
+        Some(expected_source_state.clone()),
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: true,
+        },
+    );
+    assert_eq!(
+        app.chat_widget.capture_thread_input_state(),
+        Some(expected_source_state)
     );
     app_server.shutdown().await?;
     server.await??;

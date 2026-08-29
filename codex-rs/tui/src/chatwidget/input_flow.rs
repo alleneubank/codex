@@ -251,6 +251,7 @@ impl ChatWidget {
         self.bottom_pane.set_pending_input_preview(
             preview.queued_messages,
             preview.pending_steers,
+            preview.pending_steer_editable,
             preview.rejected_steers,
         );
     }
