@@ -95,6 +95,81 @@ fn experimental_precomputed_exports_match_generated() -> Result<()> {
 }
 
 #[test]
+fn pending_input_withdrawal_exports_are_method_gated() -> Result<()> {
+    const METHOD: &str = "turn/withdrawPendingInput";
+    const TYPE_PATHS: &[&str] = &[
+        "v2/TurnWithdrawPendingInputParams",
+        "v2/TurnWithdrawPendingInputResponse",
+        "v2/TurnWithdrawPendingInputError",
+        "v2/TurnWithdrawPendingInputErrorReason",
+    ];
+
+    for experimental_api in [false, true] {
+        let output_dir = tempfile::tempdir().context("create schema gating temp dir")?;
+        let typescript_dir = output_dir.path().join("typescript");
+        let json_dir = output_dir.path().join("json");
+        generate_ts_with_options(
+            &typescript_dir,
+            /*prettier*/ None,
+            GenerateTsOptions {
+                generate_indices: false,
+                ensure_headers: false,
+                run_prettier: false,
+                experimental_api,
+            },
+        )?;
+        generate_json_with_experimental(&json_dir, experimental_api)?;
+
+        let typescript = collect_export_files_recursive(&typescript_dir)?;
+        let json_schema = collect_export_files_recursive(&json_dir)?;
+        assert_eq!(
+            typescript["ClientRequest.ts"].contains(METHOD),
+            experimental_api
+        );
+        assert_eq!(
+            json_schema["ClientRequest.json"].contains(METHOD),
+            experimental_api
+        );
+        for type_path in TYPE_PATHS {
+            assert_eq!(
+                typescript.contains_key(&format!("{type_path}.ts")),
+                experimental_api,
+                "TypeScript export mismatch for {type_path}"
+            );
+            assert_eq!(
+                json_schema.contains_key(&format!("{type_path}.json")),
+                experimental_api,
+                "JSON Schema export mismatch for {type_path}"
+            );
+        }
+
+        if experimental_api {
+            let reasons = &json_schema["v2/TurnWithdrawPendingInputErrorReason.json"];
+            for reason in [
+                "noActiveTurn",
+                "expectedTurnMismatch",
+                "notPending",
+                "ambiguousClientUserMessageId",
+            ] {
+                assert!(reasons.contains(reason), "missing error reason {reason}");
+            }
+            let error_schema: serde_json::Value =
+                serde_json::from_str(&json_schema["v2/TurnWithdrawPendingInputError.json"])?;
+            let required = error_schema["required"]
+                .as_array()
+                .context("withdrawal error schema should declare required fields")?;
+            for field in ["reason", "expectedTurnId", "actualTurnId"] {
+                assert!(
+                    required.iter().any(|required| required == field),
+                    "withdrawal error schema should require {field}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "invoked by `just write-app-server-schema`"]
 fn write_schema_fixtures_from_env() -> Result<()> {
     let schema_root = std::env::var_os("CODEX_APP_SERVER_SCHEMA_ROOT")

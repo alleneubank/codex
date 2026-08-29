@@ -57,6 +57,8 @@ const EXPERIMENTAL_CLIENT_METHOD_DEPENDENCY_TYPES: &[&str] = &[
     "ThreadSearchOccurrence",
     "ThreadSearchTextRange",
     "TurnSettingsUpdateStatus",
+    "TurnWithdrawPendingInputError",
+    "TurnWithdrawPendingInputErrorReason",
     "UserVerificationProof",
     "UserVerificationCancellationReason",
     "UserVerificationErrorDetails",
@@ -131,6 +133,7 @@ pub fn generate_ts_with_options(
 
     ClientRequest::export_all_to(out_dir)?;
     export_client_responses(out_dir)?;
+    crate::protocol::v2::TurnWithdrawPendingInputError::export_all_to(out_dir)?;
     ClientNotification::export_all_to(out_dir)?;
     crate::UserVerificationRpcError::export_all_to(out_dir)?;
 
@@ -236,6 +239,12 @@ pub fn generate_json_with_experimental(out_dir: &Path, experimental_api: bool) -
     )?);
     schemas.extend(export_client_param_schemas(out_dir)?);
     schemas.extend(export_client_response_schemas(out_dir)?);
+    schemas.push(write_json_schema_with_return::<
+        crate::protocol::v2::TurnWithdrawPendingInputError,
+    >(out_dir, "v2::TurnWithdrawPendingInputError")?);
+    let _ = write_json_schema_with_return::<
+        crate::protocol::v2::TurnWithdrawPendingInputErrorReason,
+    >(out_dir, "v2::TurnWithdrawPendingInputErrorReason")?;
     schemas.extend(export_server_param_schemas(out_dir)?);
     schemas.extend(export_server_response_schemas(out_dir)?);
     schemas.extend(export_client_notification_schemas(out_dir)?);

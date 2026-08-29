@@ -41,3 +41,26 @@ Complete the lifecycle for every selection, dismissal, and cancellation path:
 ```
 
 Both methods return `{}`. Completion is safe to retry. Closing the owning connection or tearing down the thread completes any remaining owned lifecycle exactly once. Hook failures do not suppress the client decision UI; clients should surface signaling failures separately and continue to present the decision.
+
+## Pending-input withdrawal (experimental)
+
+With `capabilities.experimentalApi = true`, `turn/withdrawPendingInput` atomically removes
+one still-pending user input from the expected active turn. Parent-owned Multi-Agent V2
+subagents reject direct withdrawal.
+
+Repeated `clientUserMessageId` values retain append semantics for ordinary steering. To remove a
+message for editing, use the experimental withdrawal method while it is still pending:
+
+```json
+{ "method": "turn/withdrawPendingInput", "id": 33, "params": {
+    "threadId": "thr_123",
+    "expectedTurnId": "turn_456",
+    "clientUserMessageId": "client_msg_124"
+} }
+{ "id": 33, "result": { "turnId": "turn_456" } }
+```
+
+Operational rejections use JSON-RPC code `-32600` with structured `data` containing `reason`,
+`expectedTurnId`, and nullable `actualTurnId`. Reasons are `noActiveTurn`,
+`expectedTurnMismatch`, `notPending`, and `ambiguousClientUserMessageId`. A rejection never removes
+another pending input and never falls back to `turn/start`, `turn/steer`, or `turn/interrupt`.
