@@ -11,8 +11,20 @@ use super::UserMessageHistoryRecord;
 pub(crate) enum PendingSteerLifecycle {
     AwaitingAcceptance,
     AcceptanceUncertain,
-    Accepted { turn_id: String },
-    AwaitingCommitAfterStart { turn_id: String },
+    Accepted {
+        turn_id: String,
+    },
+    AwaitingCommitAfterStart {
+        turn_id: String,
+    },
+    WithdrawalInFlight {
+        accepted_turn_id: String,
+        request_id: String,
+    },
+    WithdrawalUncertain {
+        accepted_turn_id: String,
+        request_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
