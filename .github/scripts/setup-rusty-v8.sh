@@ -13,13 +13,17 @@ target="$1"
 repo_root="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 runner_temp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 github_env="${GITHUB_ENV:-${runner_temp}/codex-rusty-v8.env}"
-version="$(python3 "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(fork_python_bin)"
+version="$("${python_bin}" "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
 release_tag="rusty-v8-v${version}"
 base_url="https://github.com/openai/codex/releases/download/${release_tag}"
 binding_dir="${runner_temp%/}/rusty_v8/${release_tag}/${target}"
-archive_name="librusty_v8_release_${target}.a.gz"
-binding_name="src_binding_release_${target}.rs"
-checksums_name="rusty_v8_release_${target}.sha256"
+profile="ptrcomp_sandbox_release"
+archive_name="librusty_v8_${profile}_${target}.a.gz"
+binding_name="src_binding_${profile}_${target}.rs"
+checksums_name="rusty_v8_${profile}_${target}.sha256"
 
 verify_binding_inputs() {
   [[ -f "${binding_dir}/${archive_name}" ]] || return 1
