@@ -132,7 +132,9 @@ impl SlashCommand {
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
-            SlashCommand::Mission => "view mission, campaign evidence, attention, or next prompt",
+            SlashCommand::Mission => {
+                "view the loop context, validation, mission, or legacy inspection"
+            }
             SlashCommand::Agents => "view and switch between all active agent sessions",
             SlashCommand::MultiAgents => "switch between this session's subagents",
             SlashCommand::Side | SlashCommand::Btw => {
