@@ -2367,11 +2367,9 @@ class ManagedHooksRequirements(BaseModel):
         populate_by_name=True,
     )
     interrupt: Annotated[list[ConfiguredHookMatcherGroup] | None, Field(alias="Interrupt")] = []
+    notification: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="Notification")]
     permission_request: Annotated[
         list[ConfiguredHookMatcherGroup], Field(alias="PermissionRequest")
-    ]
-    notification: Annotated[
-        list[ConfiguredHookMatcherGroup], Field(alias="Notification")
     ]
     post_compact: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="PostCompact")]
     post_tool_use: Annotated[list[ConfiguredHookMatcherGroup], Field(alias="PostToolUse")]
@@ -6230,6 +6228,13 @@ class TurnSteerResponse(BaseModel):
         populate_by_name=True,
     )
     turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class UserAttentionKind(RootModel[Literal["planImplementation"]]):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Literal["planImplementation"]
 
 
 class TextUserInput(BaseModel):
