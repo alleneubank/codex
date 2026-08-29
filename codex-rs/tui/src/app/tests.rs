@@ -38,6 +38,8 @@ mod model_defaults;
 mod pagination_completion_tests;
 #[path = "tests/patch_approval_tests.rs"]
 mod patch_approval_tests;
+#[path = "tests/pending_steer_full_path.rs"]
+mod pending_steer_full_path;
 #[path = "tests/pending_steer_submission.rs"]
 mod pending_steer_submission;
 #[path = "tests/permission_shortcuts_tests.rs"]
@@ -9103,6 +9105,7 @@ fn replay_primary_session(app: &mut App) {
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
             session: Some(session),
+            delegated_turns: Vec::new(),
             turns: Vec::new(),
             events: Vec::new(),
             active_reasoning_item: None,

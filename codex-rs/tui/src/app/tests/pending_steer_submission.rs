@@ -74,7 +74,7 @@ type ClientIds = Arc<Mutex<Vec<String>>>;
 type AppEvents = tokio::sync::mpsc::UnboundedReceiver<AppEvent>;
 type PendingFixture = (App, AppEvents, Op, ThreadId, String, String);
 
-fn pending_lifecycle(app: &App, client_id: &str) -> Option<PendingSteerLifecycle> {
+fn pending_lifecycle(app: &mut App, client_id: &str) -> Option<PendingSteerLifecycle> {
     app.chat_widget
         .capture_thread_input_state()?
         .pending_steers
@@ -175,8 +175,7 @@ async fn start_scripted_app_server(
         AppServerSession::new(
             client,
             crate::app_server_session::ThreadParamsMode::Embedded,
-        )
-        .with_startup_config(config),
+        ),
         requests,
         server,
     ))
@@ -219,7 +218,7 @@ async fn pending_submission_fixture_with_messages(
         _ => unreachable!(),
     };
     assert_eq!(
-        pending_lifecycle(&app, &client_user_message_id),
+        pending_lifecycle(&mut app, &client_user_message_id),
         Some(PendingSteerLifecycle::AwaitingAcceptance)
     );
     app.chat_widget.restore_user_message_to_composer(second);
@@ -284,7 +283,7 @@ async fn routing_accepts_steer_retry_and_start_fallback_with_one_stable_id() -> 
                 .await?
         );
         assert_eq!(
-            pending_lifecycle(&app, &client_id),
+            pending_lifecycle(&mut app, &client_id),
             Some(expected_lifecycle)
         );
         assert!(requests.lock().unwrap().iter().all(|id| id == &client_id));
@@ -340,9 +339,9 @@ async fn definitive_rejections_recover_exact_row_and_route_source_error() -> Res
         let diagnostic = app.active_thread_rx.as_mut().unwrap().try_recv()?;
         assert!(matches!(diagnostic, ThreadBufferedEvent::LocalError(_)));
         app.handle_thread_event_now(diagnostic);
-        assert_eq!(pending_lifecycle(&app, &client_id), None);
+        assert_eq!(pending_lifecycle(&mut app, &client_id), None);
         assert_eq!(
-            pending_lifecycle(&app, &second_client_id),
+            pending_lifecycle(&mut app, &second_client_id),
             Some(PendingSteerLifecycle::AwaitingAcceptance)
         );
         assert!(app.chat_widget.is_agent_turn_running());
@@ -378,7 +377,7 @@ async fn uncertain_submission_is_retained_and_warned_once() -> Result<()> {
                 .await?
         );
         assert_eq!(
-            pending_lifecycle(&app, &client_id),
+            pending_lifecycle(&mut app, &client_id),
             Some(PendingSteerLifecycle::AcceptanceUncertain)
         );
         assert!(matches!(
@@ -413,7 +412,7 @@ async fn commit_before_response_makes_late_routing_success_a_noop() -> Result<()
         }),
     )));
     let committed_state = app.chat_widget.capture_thread_input_state();
-    assert_eq!(pending_lifecycle(&app, &client_id), None);
+    assert_eq!(pending_lifecycle(&mut app, &client_id), None);
     let (mut app_server, _requests, server) = start_scripted_app_server(
         &app.config,
         vec![Step::result(
@@ -476,7 +475,7 @@ async fn offscreen_response_updates_source_store_not_displayed_widget() -> Resul
         }
     );
     assert_eq!(
-        pending_lifecycle(&app, &client_id),
+        pending_lifecycle(&mut app, &client_id),
         Some(PendingSteerLifecycle::AwaitingAcceptance)
     );
     app_server.shutdown().await?;
@@ -538,9 +537,9 @@ async fn offscreen_rejection_recovers_source_row_and_buffers_source_error() -> R
         },
     );
     app.handle_thread_event_replay(diagnostic);
-    assert_eq!(pending_lifecycle(&app, &client_id), None);
+    assert_eq!(pending_lifecycle(&mut app, &client_id), None);
     assert_eq!(
-        pending_lifecycle(&app, &second_client_id),
+        pending_lifecycle(&mut app, &second_client_id),
         Some(PendingSteerLifecycle::AwaitingAcceptance)
     );
     assert!(app.chat_widget.is_agent_turn_running());
@@ -703,7 +702,7 @@ async fn pending_steer_withdrawal_routes_success_rejection_and_uncertainty() -> 
             ));
             assert!(app.active_thread_rx.as_mut().unwrap().try_recv().is_err());
         }
-        let actual = pending_lifecycle(&app, &client_id).map(|lifecycle| match lifecycle {
+        let actual = pending_lifecycle(&mut app, &client_id).map(|lifecycle| match lifecycle {
             PendingSteerLifecycle::WithdrawalUncertain {
                 accepted_turn_id, ..
             } => PendingSteerLifecycle::WithdrawalUncertain {
@@ -754,7 +753,7 @@ async fn withdrawal_survives_completion_but_interrupt_invalidates_it() -> Result
             turn_completed_notification(thread_id, "turn-initial", status),
         )));
         assert_eq!(
-            pending_lifecycle(&app, &client_id).is_some(),
+            pending_lifecycle(&mut app, &client_id).is_some(),
             expected_present
         );
     }
