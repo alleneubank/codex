@@ -1,11 +1,53 @@
 //! Source-thread orchestration for one pending-steer withdrawal request.
 
 use super::*;
+use crate::chatwidget::PendingSteer;
 use crate::chatwidget::PendingSteerWithdrawalEffect;
 use crate::chatwidget::PendingSteerWithdrawalOutcome;
 use codex_app_server_protocol::WarningNotification;
 
 impl App {
+    pub(super) async fn restore_withdrawn_pending_steer(
+        &mut self,
+        source_thread_id: ThreadId,
+        pending_steer: PendingSteer,
+    ) {
+        let source_is_displayed = self.active_thread_id == Some(source_thread_id)
+            && self.chat_widget.thread_id() == Some(source_thread_id);
+        if source_is_displayed {
+            self.chat_widget
+                .restore_withdrawn_pending_steer(pending_steer);
+            return;
+        }
+
+        let mut pending_steer = Some(pending_steer);
+        let mut canonical_input_state = None;
+        if let Some(channel) = self.thread_event_channels.get(&source_thread_id) {
+            let mut store = channel.store.lock().await;
+            if let Some(input_state) = store.input_state.as_mut() {
+                if let Some(pending_steer) = pending_steer.take() {
+                    input_state.restore_withdrawn_pending_steer(pending_steer);
+                }
+                canonical_input_state = Some(input_state.clone());
+            }
+        }
+        if let Some(input_state) = canonical_input_state {
+            if self
+                .agents_overview
+                .input_states
+                .contains_key(&source_thread_id)
+            {
+                self.agents_overview
+                    .input_states
+                    .insert(source_thread_id, input_state);
+            }
+        } else if let Some(input_state) =
+            self.agents_overview.input_states.get_mut(&source_thread_id)
+            && let Some(pending_steer) = pending_steer
+        {
+            input_state.restore_withdrawn_pending_steer(pending_steer);
+        }
+    }
     pub(super) async fn reconcile_pending_steer_withdrawal_response(
         &mut self,
         source_thread_id: ThreadId,

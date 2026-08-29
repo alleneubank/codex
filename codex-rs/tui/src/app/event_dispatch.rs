@@ -784,7 +784,13 @@ impl App {
                     });
                 }
             }
-            AppEvent::PendingSteerWithdrawn { .. } => {}
+            AppEvent::PendingSteerWithdrawn {
+                source_thread_id,
+                pending_steer,
+            } => {
+                self.restore_withdrawn_pending_steer(source_thread_id, pending_steer)
+                    .await;
+            }
             AppEvent::RetrySafetyBufferedTurn {
                 thread_id,
                 turn_id,
