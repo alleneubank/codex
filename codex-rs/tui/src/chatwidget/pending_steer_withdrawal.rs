@@ -88,14 +88,6 @@ pub(super) fn reconcile_pending_steer_withdrawal(
 }
 
 impl ThreadInputState {
-    pub(crate) fn begin_pending_steer_withdrawal(
-        &mut self,
-        client_user_message_id: &str,
-        request_id: &str,
-    ) -> Option<String> {
-        begin_pending_steer_withdrawal(&mut self.pending_steers, client_user_message_id, request_id)
-    }
-
     pub(crate) fn reconcile_pending_steer_withdrawal(
         &mut self,
         client_user_message_id: &str,
