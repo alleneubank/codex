@@ -1203,18 +1203,23 @@ async fn plan_implementation_popup_skips_when_steer_follows_proposed_plan() {
         .set_composer_text("Please continue.".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => assert_eq!(
+    let (client_user_message_id, items) = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
             items,
-            vec![UserInput::Text {
-                text: "Please continue.".to_string(),
-                text_elements: Vec::new(),
-            }]
-        ),
+            ..
+        } => (client_user_message_id, items),
         other => panic!("expected Op::UserTurn, got {other:?}"),
-    }
+    };
+    assert_eq!(
+        items,
+        vec![UserInput::Text {
+            text: "Please continue.".to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
 
-    complete_user_message(&mut chat, "user-1", "Please continue.");
+    complete_user_message_with_client_id(&mut chat, "user-1", Some(&client_user_message_id), items);
     chat.on_task_complete(
         /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
@@ -1245,18 +1250,23 @@ async fn plan_implementation_popup_shows_after_new_plan_follows_steer() {
         .set_composer_text("Please revise.".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => assert_eq!(
+    let (client_user_message_id, items) = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
             items,
-            vec![UserInput::Text {
-                text: "Please revise.".to_string(),
-                text_elements: Vec::new(),
-            }]
-        ),
+            ..
+        } => (client_user_message_id, items),
         other => panic!("expected Op::UserTurn, got {other:?}"),
-    }
+    };
+    assert_eq!(
+        items,
+        vec![UserInput::Text {
+            text: "Please revise.".to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
 
-    complete_user_message(&mut chat, "user-1", "Please revise.");
+    complete_user_message_with_client_id(&mut chat, "user-1", Some(&client_user_message_id), items);
     chat.on_plan_item_completed(
         "- Revised plan
 "

@@ -2,8 +2,7 @@
 //!
 //! The app-server preserves user input as structured chunks, while chat history
 //! renders a single prompt row. This module owns the draft/message data models,
-//! merge/remap behavior, display projection, and the small compare key used to
-//! suppress duplicate rows for pending steers.
+//! merge/remap behavior, and display projection.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -26,6 +25,7 @@ use codex_utils_plugins::mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
 use codex_utils_plugins::mention_syntax::TOOL_MENTION_SIGIL;
 
 use super::ChatWidget;
+use super::pending_steer::PendingSteer;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UserMessage {
@@ -42,13 +42,13 @@ pub(crate) struct UserMessage {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum UserMessageHistoryRecord {
+pub(crate) enum UserMessageHistoryRecord {
     UserMessageText,
     Override(UserMessageHistoryOverride),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct UserMessageHistoryOverride {
+pub(crate) struct UserMessageHistoryOverride {
     pub(super) text: String,
     pub(super) text_elements: Vec<TextElement>,
 }
@@ -148,9 +148,8 @@ pub(crate) struct ThreadInputState {
     pub(super) composer: Option<ThreadComposerState>,
     pub(super) safety_buffering_prompt: Option<UserMessage>,
     pub(super) prompt_stash: Option<PromptStash>,
-    pub(super) pending_steers: VecDeque<UserMessage>,
-    pub(super) pending_steer_history_records: VecDeque<UserMessageHistoryRecord>,
-    pub(super) pending_steer_compare_keys: VecDeque<PendingSteerCompareKey>,
+    pub(super) pending_steers: VecDeque<PendingSteer>,
+    pub(super) committed_steers_for_replay: VecDeque<PendingSteer>,
     pub(super) rejected_steers_queue: VecDeque<UserMessage>,
     pub(super) rejected_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     pub(super) queued_user_messages: VecDeque<QueuedUserMessage>,
@@ -203,13 +202,6 @@ impl From<&str> for UserMessage {
             mention_bindings: Vec::new(),
         }
     }
-}
-
-#[derive(Debug)]
-pub(super) struct PendingSteer {
-    pub(super) user_message: UserMessage,
-    pub(super) history_record: UserMessageHistoryRecord,
-    pub(super) compare_key: PendingSteerCompareKey,
 }
 
 pub(crate) fn create_initial_user_message(
@@ -687,12 +679,6 @@ pub(crate) fn mention_bindings_from_user_inputs(
     mention_bindings
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct PendingSteerCompareKey {
-    pub(super) message: String,
-    pub(super) image_count: usize,
-}
-
 impl ChatWidget {
     pub(super) fn user_message_display_from_parts(
         message: String,
@@ -727,33 +713,6 @@ impl ChatWidget {
             remote_image_urls,
             local_images,
             text_elements,
-        }
-    }
-
-    /// Build the compare key for a submitted pending steer without invoking the
-    /// expensive request-serialization path. Pending steers only need to match the
-    /// committed app-server `UserMessage` item emitted after input drains, which
-    /// preserves flattened text and total image count.
-    pub(super) fn pending_steer_compare_key_from_items(
-        items: &[UserInput],
-    ) -> PendingSteerCompareKey {
-        let mut message = String::new();
-        let mut image_count = 0;
-
-        for item in items {
-            match item {
-                UserInput::Text { text, .. } => message.push_str(text),
-                UserInput::Image { .. } | UserInput::LocalImage { .. } => image_count += 1,
-                UserInput::Audio { .. } // TODO: Include audio inputs in pending steer comparison.
-                | UserInput::LocalAudio { .. } // TODO: Include audio inputs in pending steer comparison.
-                | UserInput::Skill { .. }
-                | UserInput::Mention { .. } => {}
-            }
-        }
-
-        PendingSteerCompareKey {
-            message,
-            image_count,
         }
     }
 
