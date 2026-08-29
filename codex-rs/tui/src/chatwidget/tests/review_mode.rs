@@ -358,16 +358,13 @@ async fn review_restores_context_window_indicator() {
 }
 
 #[tokio::test]
-async fn restore_thread_input_state_restores_pending_steers_without_downgrading_them() {
+async fn restore_thread_input_state_preserves_pending_and_committed_replay_rows() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut pending_steers = VecDeque::new();
-    pending_steers.push_back(UserMessage::from("pending steer"));
-    let expected_compare_key = PendingSteerCompareKey {
-        message: "hidden IDE context\npending steer".to_string(),
-        image_count: 0,
-    };
-    let mut pending_steer_compare_keys = VecDeque::new();
-    pending_steer_compare_keys.push_back(expected_compare_key.clone());
+    let pending_steers = VecDeque::from([PendingSteer {
+        client_user_message_id: "pending-client".to_string(),
+        user_message: UserMessage::from("pending steer"),
+        history_record: UserMessageHistoryRecord::UserMessageText,
+    }]);
     let mut rejected_steers_queue = VecDeque::new();
     rejected_steers_queue.push_back(UserMessage::from("already rejected"));
     let mut queued_user_messages = VecDeque::new();
@@ -379,8 +376,11 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
             safety_buffering_prompt: None,
             prompt_stash: None,
             pending_steers,
-            pending_steer_history_records: VecDeque::new(),
-            pending_steer_compare_keys,
+            committed_steers_for_replay: VecDeque::from([PendingSteer {
+                client_user_message_id: "committed-client".to_string(),
+                user_message: UserMessage::from("committed steer"),
+                history_record: UserMessageHistoryRecord::UserMessageText,
+            }]),
             rejected_steers_queue,
             rejected_steer_history_records: VecDeque::new(),
             queued_user_messages,
@@ -405,6 +405,11 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         vec!["already rejected", "queued draft"]
     );
     assert_eq!(chat.input_queue.pending_steers.len(), 1);
+    assert_eq!(chat.input_queue.committed_steers_for_replay.len(), 1);
+    assert_eq!(
+        chat.input_queue.preview().pending_steers,
+        vec!["pending steer".to_string()]
+    );
     assert_eq!(
         chat.input_queue
             .pending_steers
@@ -415,8 +420,12 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         "pending steer"
     );
     assert_eq!(
-        chat.input_queue.pending_steers.front().unwrap().compare_key,
-        expected_compare_key
+        chat.input_queue
+            .pending_steers
+            .front()
+            .unwrap()
+            .client_user_message_id,
+        "pending-client"
     );
 }
 
@@ -468,13 +477,24 @@ async fn steer_enter_uses_pending_steers_while_turn_is_running_without_streaming
             .text,
         "queued while running"
     );
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn { .. } => {}
+    let client_user_message_id = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            ..
+        } => client_user_message_id,
         other => panic!("expected Op::UserTurn, got {other:?}"),
-    }
+    };
     assert!(drain_insert_history(&mut rx).is_empty());
 
-    complete_user_message(&mut chat, "user-1", "queued while running");
+    complete_user_message_with_client_id(
+        &mut chat,
+        "user-1",
+        Some(&client_user_message_id),
+        vec![UserInput::Text {
+            text: "queued while running".to_string(),
+            text_elements: Vec::new(),
+        }],
+    );
 
     assert!(chat.input_queue.pending_steers.is_empty());
     let inserted = drain_insert_history(&mut rx);
@@ -509,13 +529,24 @@ async fn steer_enter_uses_pending_steers_while_final_answer_stream_is_active() {
             .text,
         "queued while streaming"
     );
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn { .. } => {}
+    let client_user_message_id = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            ..
+        } => client_user_message_id,
         other => panic!("expected Op::UserTurn, got {other:?}"),
-    }
+    };
     assert!(drain_insert_history(&mut rx).is_empty());
 
-    complete_user_message(&mut chat, "user-1", "queued while streaming");
+    complete_user_message_with_client_id(
+        &mut chat,
+        "user-1",
+        Some(&client_user_message_id),
+        vec![UserInput::Text {
+            text: "queued while streaming".to_string(),
+            text_elements: Vec::new(),
+        }],
+    );
 
     assert!(chat.input_queue.pending_steers.is_empty());
     let inserted = drain_insert_history(&mut rx);
@@ -543,7 +574,7 @@ async fn failed_pending_steer_submit_does_not_add_pending_preview() {
 }
 
 #[tokio::test]
-async fn item_completed_only_pops_front_pending_steer() {
+async fn item_completed_only_pops_id_matched_pending_steer() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.input_queue
         .pending_steers
@@ -569,7 +600,15 @@ async fn item_completed_only_pops_front_pending_steer() {
     assert_eq!(inserted.len(), 1);
     assert!(lines_to_single_string(&inserted[0]).contains("other"));
 
-    complete_user_message(&mut chat, "user-first", "first");
+    complete_user_message_with_client_id(
+        &mut chat,
+        "user-first",
+        Some("test-pending-first"),
+        vec![UserInput::Text {
+            text: "first".to_string(),
+            text_elements: Vec::new(),
+        }],
+    );
 
     assert_eq!(chat.input_queue.pending_steers.len(), 1);
     assert_eq!(
@@ -587,9 +626,10 @@ async fn item_completed_only_pops_front_pending_steer() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn item_completed_pops_pending_steer_with_local_image_and_text_elements() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.thread_id = Some(ThreadId::new());
+async fn offscreen_commit_replays_retained_rich_message_and_history_override() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
     chat.on_task_started();
 
     let temp = tempdir().expect("tempdir");
@@ -601,50 +641,103 @@ async fn item_completed_pops_pending_steer_with_local_image_and_text_elements() 
     ];
     std::fs::write(&image_path, TINY_PNG_BYTES).expect("write image");
 
-    let text = "note".to_string();
-    let text_elements = vec![TextElement::new((0..4).into(), Some("note".to_string()))];
-    chat.submit_user_message(UserMessage {
+    let text = "wire note".to_string();
+    let submitted_message = UserMessage {
         text: text.clone(),
         local_images: vec![LocalImageAttachment {
             placeholder: "[Image #1]".to_string(),
             path: image_path,
         }],
         remote_image_urls: Vec::new(),
-        text_elements,
+        text_elements: vec![TextElement::new((0..4).into(), Some("wire".to_string()))],
         mention_bindings: Vec::new(),
+    };
+    let history_record = UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+        text: "history override".to_string(),
+        text_elements: vec![TextElement::new((0..7).into(), Some("history".to_string()))],
     });
+    assert!(chat.submit_user_message_with_history_record(
+        submitted_message.clone(),
+        history_record.clone(),
+    ));
 
-    match next_submit_op(&mut op_rx) {
-        Op::UserTurn { .. } => {}
+    let client_user_message_id = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            ..
+        } => client_user_message_id,
         other => panic!("expected Op::UserTurn, got {other:?}"),
-    }
+    };
 
-    assert_eq!(chat.input_queue.pending_steers.len(), 1);
-    let pending = chat.input_queue.pending_steers.front().unwrap();
-    assert_eq!(pending.user_message.local_images.len(), 1);
-    assert_eq!(pending.user_message.text_elements.len(), 1);
-    assert_eq!(pending.compare_key.message, text);
-    assert_eq!(pending.compare_key.image_count, 1);
-
-    complete_user_message_for_inputs(
-        &mut chat,
-        "user-1",
-        vec![
-            UserInput::Image {
-                url: "data:image/png;base64,placeholder".to_string(),
-                detail: None,
-            },
-            UserInput::Text {
-                text,
-                text_elements: Vec::new(),
-            },
-        ],
+    let mut offscreen_input_state = chat
+        .capture_thread_input_state()
+        .expect("pending steer input state");
+    offscreen_input_state
+        .pending_steers
+        .push_front(PendingSteer {
+            client_user_message_id: "other-client".to_string(),
+            user_message: submitted_message.clone(),
+            history_record: UserMessageHistoryRecord::UserMessageText,
+        });
+    offscreen_input_state.reconcile_committed_pending_steer(&client_user_message_id);
+    assert_eq!(
+        offscreen_input_state
+            .pending_steers
+            .iter()
+            .map(|pending| pending.client_user_message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["other-client"]
+    );
+    assert_eq!(
+        offscreen_input_state.committed_steers_for_replay,
+        VecDeque::from([PendingSteer {
+            client_user_message_id: client_user_message_id.clone(),
+            user_message: submitted_message,
+            history_record,
+        }])
     );
 
-    assert!(chat.input_queue.pending_steers.is_empty());
+    let (mut replay_chat, mut replay_rx, _replay_op_rx) =
+        make_chatwidget_manual(/*model_override*/ None).await;
+    replay_chat.thread_id = Some(thread_id);
+    replay_chat.restore_thread_input_state(
+        Some(offscreen_input_state),
+        ThreadInputStateRestoreMode {
+            preserve_in_flight_turn: true,
+        },
+    );
+    assert_eq!(
+        replay_chat.input_queue.preview().pending_steers,
+        vec!["wire note".to_string()]
+    );
+    replay_chat.replay_thread_item(
+        AppServerThreadItem::UserMessage {
+            id: "user-1".to_string(),
+            client_id: Some(client_user_message_id),
+            content: vec![UserInput::Text {
+                text,
+                text_elements: Vec::new(),
+            }],
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    let canonical_input_state = replay_chat
+        .capture_thread_input_state()
+        .expect("replayed input state");
+    assert_eq!(
+        canonical_input_state
+            .pending_steers
+            .iter()
+            .map(|pending| pending.client_user_message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["other-client"]
+    );
+    assert!(canonical_input_state.committed_steers_for_replay.is_empty());
 
     let mut user_cell = None;
-    while let Ok(ev) = rx.try_recv() {
+    while let Ok(ev) = replay_rx.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = ev
             && let Some(cell) = cell.as_any().downcast_ref::<UserHistoryCell>()
         {
@@ -660,10 +753,10 @@ async fn item_completed_pops_pending_steer_with_local_image_and_text_elements() 
 
     let (stored_message, stored_elements, stored_images, stored_remote_image_urls) =
         user_cell.expect("expected pending steer user history cell");
-    assert_eq!(stored_message, "note");
+    assert_eq!(stored_message, "history override");
     assert_eq!(
         stored_elements,
-        vec![TextElement::new((0..4).into(), Some("note".to_string()))]
+        vec![TextElement::new((0..7).into(), Some("history".to_string()))]
     );
     assert_eq!(stored_images.len(), 1);
     assert!(stored_images[0].ends_with("pending-steer.png"));
@@ -707,8 +800,12 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
         "second follow-up"
     );
 
-    let first_items = match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => items,
+    let (first_client_user_message_id, first_items) = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            items,
+            ..
+        } => (client_user_message_id, items),
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
     assert_eq!(
@@ -718,8 +815,12 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
             text_elements: Vec::new(),
         }]
     );
-    let second_items = match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => items,
+    let (second_client_user_message_id, second_items) = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            client_user_message_id,
+            items,
+            ..
+        } => (client_user_message_id, items),
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
     assert_eq!(
@@ -731,7 +832,12 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
     );
     assert!(drain_insert_history(&mut rx).is_empty());
 
-    complete_user_message(&mut chat, "user-1", "first follow-up");
+    complete_user_message_with_client_id(
+        &mut chat,
+        "user-1",
+        Some(&first_client_user_message_id),
+        first_items,
+    );
 
     assert_eq!(chat.input_queue.pending_steers.len(), 1);
     assert_eq!(
@@ -747,7 +853,12 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
     assert_eq!(first_insert.len(), 1);
     assert!(lines_to_single_string(&first_insert[0]).contains("first follow-up"));
 
-    complete_user_message(&mut chat, "user-2", "second follow-up");
+    complete_user_message_with_client_id(
+        &mut chat,
+        "user-2",
+        Some(&second_client_user_message_id),
+        second_items,
+    );
 
     assert!(chat.input_queue.pending_steers.is_empty());
     let second_insert = drain_insert_history(&mut rx);

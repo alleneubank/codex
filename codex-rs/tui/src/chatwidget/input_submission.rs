@@ -1,6 +1,7 @@
 //! User-message and shell-prompt submission behavior for `ChatWidget`.
 
 use super::*;
+use uuid::Uuid;
 
 impl ChatWidget {
     pub(crate) fn set_task_mentions_enabled(&mut self, enabled: bool) {
@@ -347,7 +348,9 @@ impl ChatWidget {
         } else {
             None
         };
+        let client_user_message_id = Uuid::new_v4().to_string();
         let pending_steer = (!render_in_history).then(|| PendingSteer {
+            client_user_message_id: client_user_message_id.clone(),
             user_message: UserMessage {
                 text: text.clone(),
                 local_images: local_images.clone(),
@@ -356,7 +359,6 @@ impl ChatWidget {
                 mention_bindings: mention_bindings.clone(),
             },
             history_record: history_record.clone(),
-            compare_key: Self::pending_steer_compare_key_from_items(&items),
         });
         let personality = self
             .config
@@ -366,6 +368,7 @@ impl ChatWidget {
         let service_tier = self.service_tier_update_for_core();
         let active_permission_profile = self.config.permissions.active_permission_profile();
         let op = AppCommand::user_turn(
+            client_user_message_id,
             items,
             self.config.cwd.to_path_buf(),
             AskForApproval::from(self.config.permissions.approval_policy.value()),
