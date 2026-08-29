@@ -28,11 +28,15 @@ file_mtimes() {
 }
 
 target="test-target"
-version="$(python3 "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(fork_python_bin)"
+version="$("${python_bin}" "${repo_root}/.github/scripts/rusty_v8_bazel.py" resolved-v8-crate-version)"
 release_tag="rusty-v8-v${version}"
-archive_name="librusty_v8_release_${target}.a.gz"
-binding_name="src_binding_release_${target}.rs"
-checksums_name="rusty_v8_release_${target}.sha256"
+profile="ptrcomp_sandbox_release"
+archive_name="librusty_v8_${profile}_${target}.a.gz"
+binding_name="src_binding_${profile}_${target}.rs"
+checksums_name="rusty_v8_${profile}_${target}.sha256"
 fixture_dir="${test_root}/fixtures"
 fake_bin="${test_root}/bin"
 curl_log="${test_root}/curl.log"
