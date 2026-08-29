@@ -1,4 +1,5 @@
 use super::thread_input::ensure_direct_input_allowed;
+use super::turn_pending_input::map_withdraw_pending_input_result;
 use super::*;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
@@ -253,6 +254,40 @@ impl TurnRequestProcessor {
         self.turn_steer_inner(request_id, params)
             .await
             .map(|response| Some(response.into()))
+    }
+
+    pub(crate) async fn turn_withdraw_pending_input(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: TurnWithdrawPendingInputParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        if params.thread_id.is_empty() {
+            return Err(invalid_request("threadId must not be empty"));
+        }
+        if params.expected_turn_id.is_empty() {
+            return Err(invalid_request("expectedTurnId must not be empty"));
+        }
+        if params.client_user_message_id.is_empty() {
+            return Err(invalid_request("clientUserMessageId must not be empty"));
+        }
+
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|_| invalid_request("invalid thread id"))?;
+        let thread = self
+            .thread_manager
+            .get_thread(thread_id)
+            .await
+            .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
+        self.ensure_direct_input_allowed(request_id, thread.as_ref())
+            .await?;
+
+        map_withdraw_pending_input_result(
+            &params.expected_turn_id,
+            thread
+                .withdraw_pending_input(&params.expected_turn_id, &params.client_user_message_id)
+                .await,
+        )
+        .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn turn_interrupt(

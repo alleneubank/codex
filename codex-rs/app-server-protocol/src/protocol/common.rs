@@ -1009,6 +1009,12 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::TurnSteerResponse,
     },
+    #[experimental("turn/withdrawPendingInput")]
+    TurnWithdrawPendingInput => "turn/withdrawPendingInput" {
+        params: v2::TurnWithdrawPendingInputParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::TurnWithdrawPendingInputResponse,
+    },
     TurnInterrupt => "turn/interrupt" {
         params: v2::TurnInterruptParams,
         serialization: thread_id(params.thread_id),
