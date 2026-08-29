@@ -1,3 +1,4 @@
+use crate::WithdrawPendingInputResult;
 use crate::state::ActiveTurn;
 use crate::state::MailboxDeliveryPhase;
 use crate::state::TurnState;
@@ -73,6 +74,13 @@ pub(crate) enum InputQueueActivity {
 #[derive(Default)]
 pub(crate) struct TurnInputQueue {
     items: Vec<TurnInput>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingInputWithdrawal {
+    Withdrawn,
+    NotPending,
+    Ambiguous,
 }
 
 /// Session-scoped pending input storage and active-turn mailbox delivery coordination.
@@ -286,6 +294,48 @@ impl InputQueue {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
+    pub(crate) async fn withdraw_pending_input(
+        &self,
+        active_turn: &Mutex<Option<ActiveTurn>>,
+        expected_turn_id: &str,
+        client_user_message_id: &str,
+    ) -> WithdrawPendingInputResult {
+        let active = active_turn.lock().await;
+        let Some(active_turn) = active.as_ref() else {
+            return WithdrawPendingInputResult::NoActiveTurn;
+        };
+        let Some(task) = active_turn.task.as_ref() else {
+            return WithdrawPendingInputResult::NoActiveTurn;
+        };
+        let actual_turn_id = &task.turn_context.sub_id;
+        if actual_turn_id != expected_turn_id {
+            return WithdrawPendingInputResult::ExpectedTurnMismatch {
+                expected: expected_turn_id.to_string(),
+                actual: actual_turn_id.clone(),
+            };
+        }
+
+        let mut turn_state = active_turn.turn_state.lock().await;
+        match turn_state
+            .pending_input
+            .withdraw_user_input(client_user_message_id)
+        {
+            PendingInputWithdrawal::Withdrawn => WithdrawPendingInputResult::Withdrawn {
+                turn_id: actual_turn_id.clone(),
+            },
+            PendingInputWithdrawal::NotPending => WithdrawPendingInputResult::NotPending {
+                turn_id: actual_turn_id.clone(),
+            },
+            PendingInputWithdrawal::Ambiguous => WithdrawPendingInputResult::AmbiguousClientId {
+                turn_id: actual_turn_id.clone(),
+            },
+        }
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
     pub(crate) async fn get_pending_input(
         &self,
         active_turn: &Mutex<Option<ActiveTurn>>,
@@ -378,6 +428,28 @@ impl TurnInputQueue {
             )
         })
     }
+
+    fn withdraw_user_input(&mut self, client_user_message_id: &str) -> PendingInputWithdrawal {
+        let mut matches = self.items.iter().enumerate().filter_map(|(index, input)| {
+            matches!(
+                input,
+                TurnInput::UserInput {
+                    client_id: Some(client_id),
+                    ..
+                } if client_id == client_user_message_id
+            )
+            .then_some(index)
+        });
+        let Some(index) = matches.next() else {
+            return PendingInputWithdrawal::NotPending;
+        };
+        if matches.next().is_some() {
+            return PendingInputWithdrawal::Ambiguous;
+        }
+
+        self.items.remove(index);
+        PendingInputWithdrawal::Withdrawn
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +459,63 @@ mod tests {
     use codex_protocol::AgentPath;
     use codex_protocol::user_input::UserInput;
     use pretty_assertions::assert_eq;
+
+    fn user_input(text: &str, client_id: &str) -> TurnInput {
+        TurnInput::UserInput {
+            content: vec![UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            client_id: Some(client_id.to_string()),
+        }
+    }
+
+    #[test]
+    fn withdraw_user_input_removes_one_match_without_reordering_other_items() {
+        let before = TurnInput::ResponseItem(ResponseItem::Other.into());
+        let after = TurnInput::FunctionCallOutput(ResponseItem::Other);
+        let mut queue = TurnInputQueue {
+            items: vec![
+                before.clone(),
+                user_input("first", "first-client"),
+                user_input("withdraw", "withdraw-client"),
+                user_input("last", "last-client"),
+                after.clone(),
+            ],
+        };
+
+        assert_eq!(
+            queue.withdraw_user_input("withdraw-client"),
+            PendingInputWithdrawal::Withdrawn
+        );
+        assert_eq!(
+            queue.items,
+            vec![
+                before,
+                user_input("first", "first-client"),
+                user_input("last", "last-client"),
+                after,
+            ]
+        );
+    }
+
+    #[test]
+    fn withdraw_user_input_rejects_duplicate_ids_without_mutation() {
+        let items = vec![
+            user_input("first duplicate", "duplicate-client"),
+            user_input("middle", "middle-client"),
+            user_input("second duplicate", "duplicate-client"),
+        ];
+        let mut queue = TurnInputQueue {
+            items: items.clone(),
+        };
+
+        assert_eq!(
+            queue.withdraw_user_input("duplicate-client"),
+            PendingInputWithdrawal::Ambiguous
+        );
+        assert_eq!(queue.items, items);
+    }
 
     #[test]
     fn response_item_serde_preserves_legacy_shape_and_rejects_metadata() {

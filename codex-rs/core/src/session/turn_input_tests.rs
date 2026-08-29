@@ -14,6 +14,7 @@ use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
@@ -21,6 +22,7 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::turn_input::TurnInput as SubmittedTurnInput;
+use codex_protocol::user_input::TextElement;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::test_codex::local_selections;
@@ -869,6 +871,139 @@ async fn steer_only_enforces_expected_turn_id() {
             .1,
         Some(crate::session::input_queue::InputQueueActivity::Steer)
     );
+}
+
+#[derive(Clone, Copy)]
+enum PendingInputRaceWinner {
+    Withdrawal,
+    Drain,
+}
+
+fn rich_pending_user_input(text: &str, client_id: &str) -> TurnInput {
+    TurnInput::UserInput {
+        content: vec![
+            UserInput::Text {
+                text: format!("{text} [image]"),
+                text_elements: vec![TextElement::new(
+                    (text.len() + 1..text.len() + 8).into(),
+                    Some("[image]".to_string()),
+                )],
+            },
+            UserInput::Image {
+                image_url: "data:image/png;base64,cmljaA==".to_string(),
+                detail: Some(ImageDetail::Original),
+            },
+            UserInput::LocalImage {
+                path: std::path::PathBuf::from("rich-local-image.png"),
+                detail: Some(ImageDetail::High),
+            },
+            UserInput::Mention {
+                name: "example-app".to_string(),
+                path: "app://example-app".to_string(),
+            },
+        ],
+        client_id: Some(client_id.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn withdraw_pending_input_and_drain_have_one_lock_ordered_winner() {
+    for winner in [
+        PendingInputRaceWinner::Withdrawal,
+        PendingInputRaceWinner::Drain,
+    ] {
+        let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+        session
+            .spawn_task(
+                Arc::clone(&turn_context),
+                Vec::new(),
+                NeverEndingTask {
+                    kind: TaskKind::Regular,
+                    listen_to_cancellation_token: true,
+                },
+            )
+            .await;
+        let turn_state = session
+            .input_queue
+            .turn_state_for_sub_id(&session.active_turn, &turn_context.sub_id)
+            .await
+            .expect("active regular turn state");
+        let pending = vec![
+            TurnInput::ResponseItem(ResponseItem::Other.into()),
+            rich_pending_user_input("withdraw me", "withdraw-client"),
+            rich_pending_user_input("preserve me", "preserved-client"),
+            TurnInput::FunctionCallOutput(ResponseItem::Other),
+        ];
+        session
+            .input_queue
+            .extend_pending_input_for_turn_state(turn_state.as_ref(), pending.clone())
+            .await;
+
+        let active_turn_guard = session.active_turn.lock().await;
+        let mut withdrawal = Box::pin(session.input_queue.withdraw_pending_input(
+            &session.active_turn,
+            &turn_context.sub_id,
+            "withdraw-client",
+        ));
+        let mut drain = Box::pin(session.input_queue.get_pending_input(&session.active_turn));
+        {
+            let mut task_context = std::task::Context::from_waker(futures::task::noop_waker_ref());
+            match winner {
+                PendingInputRaceWinner::Withdrawal => {
+                    assert!(
+                        std::future::Future::poll(withdrawal.as_mut(), &mut task_context)
+                            .is_pending()
+                    );
+                    assert!(
+                        std::future::Future::poll(drain.as_mut(), &mut task_context).is_pending()
+                    );
+                }
+                PendingInputRaceWinner::Drain => {
+                    assert!(
+                        std::future::Future::poll(drain.as_mut(), &mut task_context).is_pending()
+                    );
+                    assert!(
+                        std::future::Future::poll(withdrawal.as_mut(), &mut task_context)
+                            .is_pending()
+                    );
+                }
+            }
+        }
+        drop(active_turn_guard);
+
+        match winner {
+            PendingInputRaceWinner::Withdrawal => {
+                assert_eq!(
+                    withdrawal.await,
+                    crate::WithdrawPendingInputResult::Withdrawn {
+                        turn_id: turn_context.sub_id.clone(),
+                    }
+                );
+                assert_eq!(
+                    drain.await.0,
+                    vec![pending[0].clone(), pending[2].clone(), pending[3].clone(),]
+                );
+            }
+            PendingInputRaceWinner::Drain => {
+                assert_eq!(drain.await.0, pending);
+                assert_eq!(
+                    withdrawal.await,
+                    crate::WithdrawPendingInputResult::NotPending {
+                        turn_id: turn_context.sub_id.clone(),
+                    }
+                );
+            }
+        }
+        assert_eq!(
+            session
+                .input_queue
+                .get_pending_input(&session.active_turn)
+                .await
+                .0,
+            Vec::<TurnInput>::new()
+        );
+        session.abort_all_tasks(TurnAbortReason::Interrupted).await;
+    }
 }
 
 #[tokio::test]
