@@ -19,48 +19,23 @@ use crate::workspace_command::WorkspaceCommandOutput;
 use crate::workspace_command::WorkspaceCommandOutputCap;
 
 #[test]
-fn mission_command_maps_views_and_canonical_prompt_actions() {
+fn mission_command_maps_bounded_projection_views() {
     let root = Path::new("/workspace");
 
     for (args, expected) in [
-        ("", vec!["missionctl", "current", "--root", "/workspace"]),
+        ("", vec!["missionctl", "context", "--root", "/workspace"]),
         (
-            "current",
-            vec!["missionctl", "current", "--root", "/workspace"],
+            "context",
+            vec!["missionctl", "context", "--root", "/workspace"],
         ),
+        ("check", vec!["missionctl", "check", "--root", "/workspace"]),
         (
-            "rubric",
+            "mission",
             vec!["missionctl", "mission", "--root", "/workspace"],
         ),
         (
-            "evidence",
-            vec!["missionctl", "mission", "--root", "/workspace"],
-        ),
-        (
-            "portfolio",
-            vec!["missionctl", "portfolio", "--root", "/workspace"],
-        ),
-        (
-            "resume",
-            vec!["missionctl", "prompt", "resume", "--root", "/workspace"],
-        ),
-        (
-            "decision-review",
-            vec![
-                "missionctl",
-                "prompt",
-                "decision-review",
-                "--root",
-                "/workspace",
-            ],
-        ),
-        (
-            "handoff",
-            vec!["missionctl", "prompt", "handoff", "--root", "/workspace"],
-        ),
-        (
-            "landing",
-            vec!["missionctl", "prompt", "landing", "--root", "/workspace"],
+            "inspect",
+            vec!["missionctl", "inspect", "--root", "/workspace"],
         ),
     ] {
         let command = mission_command(args, root).expect("valid mission command");
@@ -82,7 +57,7 @@ async fn mission_command_rejects_empty_success_output() {
         stderr: String::new(),
     });
 
-    let result = run_mission_command(&runner, Path::new("/workspace"), "current").await;
+    let result = run_mission_command(&runner, Path::new("/workspace"), "context").await;
 
     assert_eq!(result, Err("missionctl returned no output".to_string()));
 }
@@ -91,10 +66,15 @@ async fn mission_command_rejects_empty_success_output() {
 fn mission_command_rejects_unknown_or_extra_arguments() {
     let root = Path::new("/workspace");
 
-    let expected = "Usage: /mission [current|rubric|evidence|portfolio|resume|decision-review|handoff|landing]";
+    let expected = "Usage: /mission [context|check|mission|inspect]";
     assert_eq!(mission_command("score", root).unwrap_err(), expected);
+    assert_eq!(mission_command("portfolio", root).unwrap_err(), expected);
     assert_eq!(
-        mission_command("portfolio extra", root).unwrap_err(),
+        mission_command("prompt resume", root).unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        mission_command("context extra", root).unwrap_err(),
         expected
     );
 }
@@ -104,15 +84,15 @@ async fn mission_command_surfaces_verifier_failures() {
     let runner = StubRunner::new(WorkspaceCommandOutput {
         exit_code: 2,
         stdout: String::new(),
-        stderr: "LOOP.md targets unknown rubric id QUALITY-404\n".to_string(),
+        stderr: "LOOP.md: error target.spec-unknown targets.spec[0]: REQ-QUALITY-404 is not in SPEC.md\n".to_string(),
     });
 
-    let result = run_mission_command(&runner, Path::new("/workspace"), "current").await;
+    let result = run_mission_command(&runner, Path::new("/workspace"), "context").await;
 
     assert_eq!(
         result,
         Err(
-            "missionctl failed (exit 2): LOOP.md targets unknown rubric id QUALITY-404".to_string()
+            "missionctl failed (exit 2): LOOP.md: error target.spec-unknown targets.spec[0]: REQ-QUALITY-404 is not in SPEC.md".to_string()
         )
     );
 }
@@ -123,13 +103,13 @@ async fn mission_slash_command_dispatches_workspace_projection() {
         crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
     let runner = Arc::new(StubRunner::new(WorkspaceCommandOutput {
         exit_code: 0,
-        stdout: "QUALITY-003 passing via oracle-7\n".to_string(),
+        stdout: "LOOP widget-pagination [active] phase=TDD iteration=3/8\n".to_string(),
         stderr: String::new(),
     }));
     chat.workspace_command_runner = Some(runner.clone());
     chat.current_cwd = Some("/workspace".into());
 
-    chat.dispatch_command_with_args(SlashCommand::Mission, "evidence".to_string(), Vec::new());
+    chat.dispatch_command_with_args(SlashCommand::Mission, "context".to_string(), Vec::new());
 
     let event = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 1), rx.recv())
         .await
@@ -139,13 +119,13 @@ async fn mission_slash_command_dispatches_workspace_projection() {
         event,
         AppEvent::MissionResult { cwd, result }
             if cwd == Path::new("/workspace")
-                && result == Ok("QUALITY-003 passing via oracle-7".to_string())
+                && result == Ok("LOOP widget-pagination [active] phase=TDD iteration=3/8".to_string())
     );
     let commands = runner.commands.lock().expect("commands mutex");
     let command = commands.first().expect("captured mission command");
     assert_eq!(
         command.argv,
-        vec!["missionctl", "mission", "--root", "/workspace"]
+        vec!["missionctl", "context", "--root", "/workspace"]
     );
 }
 
