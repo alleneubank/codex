@@ -46,6 +46,17 @@ case "${target}" in
 esac
 
 mkdir -p "${runner_temp}" "${output_dir}"
+# Upstream package scripts call bare `python3` and need 3.10+ (scripts/pyproject.toml); a local
+# macOS builder may resolve that to the system 3.9. Put a shim for the probed interpreter first on
+# PATH for this build only, so nothing else on the host changes.
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(command -v "$(fork_python_bin)")"
+python_shim_dir="${runner_temp%/}/python-shim"
+mkdir -p "${python_shim_dir}"
+ln -sf "${python_bin}" "${python_shim_dir}/python3"
+PATH="${python_shim_dir}:${PATH}"
+export PATH
 : > "${github_env}"
 
 if [[ "${include_bwrap}" == true ]]; then
