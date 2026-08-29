@@ -134,7 +134,9 @@ impl SlashCommand {
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Voice => "start or stop voice; use /voice settings to choose a voice",
             SlashCommand::Goal => "set or view the goal for a long-running task",
-            SlashCommand::Mission => "view mission, campaign evidence, attention, or next prompt",
+            SlashCommand::Mission => {
+                "view the loop context, validation, mission, or legacy inspection"
+            }
             SlashCommand::Agents => "view and switch between all active agent sessions",
             SlashCommand::MultiAgents => "switch between this session's subagents",
             SlashCommand::Side | SlashCommand::Btw => {
