@@ -252,6 +252,7 @@ mod luna_reserve_usage_tests;
 mod mcp_startup;
 #[path = "tests/misalignment_policy_tests.rs"]
 mod misalignment_policy;
+mod pending_steer_edit;
 #[path = "tests/permission_shortcuts_tests.rs"]
 mod permission_shortcuts_tests;
 mod permissions;
@@ -259,11 +260,11 @@ mod plan_mode;
 #[path = "tests/plugin_catalog_tests.rs"]
 mod plugin_catalog;
 mod popups_and_settings;
+mod prompt_stash;
 #[path = "tests/rate_limit_recovery_tests.rs"]
 mod rate_limit_recovery_tests;
 #[path = "tests/replay_render_tests.rs"]
 mod replay_render_tests;
-mod prompt_stash;
 mod review_mode;
 mod side;
 mod slash_commands;
