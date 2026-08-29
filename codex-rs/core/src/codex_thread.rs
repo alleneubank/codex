@@ -213,6 +213,16 @@ pub struct CodexThread {
     _diagnostics_guard: GaugeGuard,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum WithdrawPendingInputResult {
+    Withdrawn { turn_id: String },
+    NoActiveTurn,
+    ExpectedTurnMismatch { expected: String, actual: String },
+    NotPending { turn_id: String },
+    AmbiguousClientId { turn_id: String },
+}
+
 #[derive(Default)]
 struct OutOfBandElicitations {
     count: i64,
@@ -517,6 +527,22 @@ impl CodexThread {
                 unreachable!("steer-only submission cannot start a turn")
             }
         }
+    }
+
+    /// Withdraws one user input that has not yet been drained into a model request.
+    pub async fn withdraw_pending_input(
+        &self,
+        expected_turn_id: &str,
+        client_user_message_id: &str,
+    ) -> WithdrawPendingInputResult {
+        self.session
+            .input_queue
+            .withdraw_pending_input(
+                &self.session.active_turn,
+                expected_turn_id,
+                client_user_message_id,
+            )
+            .await
     }
 
     async fn submit_turn_input_with_mode(
