@@ -851,6 +851,65 @@ async fn pipe_terminate_reaps_child() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pipe_terminate_kills_descendant_that_starts_a_new_session() -> anyhow::Result<()> {
+    if !setsid_available() {
+        eprintln!(
+            "setsid not available; skipping pipe_terminate_kills_descendant_that_starts_a_new_session"
+        );
+        return Ok(());
+    }
+
+    let env_map: HashMap<String, String> = std::env::vars().collect();
+    let (program, args) = shell_command("setsid sh -c 'echo $$; exec sleep 60' & wait");
+    let spawned = spawn_pipe_process(&program, &args, Path::new("."), &env_map, &None, &[]).await?;
+    let (session, mut output_rx, exit_rx) = combine_spawned_output(spawned);
+
+    let mut output = Vec::new();
+    while !output.contains(&b'\n') {
+        let chunk = tokio::time::timeout(tokio::time::Duration::from_secs(5), output_rx.recv())
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out waiting for descendant PID"))??;
+        output.extend_from_slice(&chunk);
+    }
+    let descendant_pid = std::str::from_utf8(&output)?
+        .trim()
+        .parse::<libc::pid_t>()?;
+
+    session.terminate();
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), exit_rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out waiting for terminated root to be reaped"))?
+        .map_err(|_| anyhow::anyhow!("root waiter was aborted before reaping"))?;
+
+    let mut descendant_exited = false;
+    for _ in 0..50 {
+        let stat = std::fs::read_to_string(format!("/proc/{descendant_pid}/stat"));
+        if stat.as_deref().is_ok_and(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, fields)| fields.split_whitespace().next())
+                == Some("Z")
+        }) || stat.is_err()
+        {
+            descendant_exited = true;
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+    if !descendant_exited {
+        unsafe {
+            libc::kill(descendant_pid, libc::SIGKILL);
+        }
+    }
+    assert!(
+        descendant_exited,
+        "new-session descendant process with pid {descendant_pid} survived termination"
+    );
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipe_drop_reaps_child() -> anyhow::Result<()> {
     let env_map: HashMap<String, String> = std::env::vars().collect();
