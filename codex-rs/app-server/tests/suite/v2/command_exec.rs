@@ -1529,17 +1529,28 @@ async fn wait_for_process_marker(marker: &str, should_exist: bool) -> Result<()>
         }
         if Instant::now() >= deadline {
             let expectation = if should_exist { "appear" } else { "exit" };
-            anyhow::bail!("process marker {marker:?} did not {expectation} before timeout");
+            let matching_processes = processes_with_marker(marker)?;
+            anyhow::bail!(
+                "process marker {marker:?} did not {expectation} before timeout; matches: {matching_processes:?}"
+            );
         }
         sleep(Duration::from_millis(50)).await;
     }
 }
 
 fn process_with_marker_exists(marker: &str) -> Result<bool> {
+    Ok(!processes_with_marker(marker)?.is_empty())
+}
+
+fn processes_with_marker(marker: &str) -> Result<Vec<String>> {
     let output = std::process::Command::new("ps")
-        .args(["-axo", "command"])
+        .args(["-axo", "pid=,ppid=,pgid=,sid=,stat=,command="])
         .output()
-        .context("spawn ps -axo command")?;
+        .context("spawn process listing")?;
     let stdout = String::from_utf8(output.stdout).context("decode ps output")?;
-    Ok(stdout.lines().any(|line| line.contains(marker)))
+    Ok(stdout
+        .lines()
+        .filter(|line| line.contains(marker))
+        .map(str::to_string)
+        .collect())
 }
