@@ -49,8 +49,13 @@ use tempfile::TempDir;
 fn assert_seatbelt_denied(stderr: &[u8], path: &Path) {
     let stderr = String::from_utf8_lossy(stderr);
     let expected = format!("bash: {}: Operation not permitted\n", path.display());
+    let expected_with_line = format!(
+        "bash: line 1: {}: Operation not permitted\n",
+        path.display()
+    );
     assert!(
         stderr == expected
+            || stderr == expected_with_line
             || stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted"),
         "unexpected stderr: {stderr}"
     );
@@ -67,6 +72,48 @@ fn seatbelt_policy_arg(args: &[String]) -> &str {
         .expect("seatbelt args should include -p");
     args.get(policy_index + 1)
         .expect("seatbelt args should include policy text")
+}
+
+fn assert_writable_root_exclusions(args: &[String], root_index: usize, expected_paths: &[PathBuf]) {
+    let prefix = format!("-DWRITABLE_ROOT_{root_index}_EXCLUDED_");
+    let mut indexed_paths = args
+        .iter()
+        .filter_map(|arg| {
+            let definition = arg.strip_prefix(&prefix)?;
+            let (index, path) = definition
+                .split_once('=')
+                .expect("writable-root exclusion should include a path");
+            Some((
+                index
+                    .parse::<usize>()
+                    .expect("writable-root exclusion should use a numeric index"),
+                PathBuf::from(path),
+            ))
+        })
+        .collect::<Vec<_>>();
+    indexed_paths.sort_by_key(|(index, _)| *index);
+
+    let actual_indices = indexed_paths
+        .iter()
+        .map(|(index, _)| *index)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_indices,
+        (0..expected_paths.len()).collect::<Vec<_>>(),
+        "writable-root exclusion indices should be contiguous in {args:#?}"
+    );
+
+    let mut actual_paths = indexed_paths
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect::<Vec<_>>();
+    actual_paths.sort();
+    let mut expected_paths = expected_paths.to_vec();
+    expected_paths.sort();
+    assert_eq!(
+        actual_paths, expected_paths,
+        "unexpected writable-root exclusions in {args:#?}"
+    );
 }
 
 #[cfg(unix)]
@@ -1712,60 +1759,38 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
         "expected empty root metadata protection regex requirements in policy:\n{policy_text}",
     );
 
-    let expected_definitions = [
-        format!(
-            "-DWRITABLE_ROOT_0={}",
-            cwd.canonicalize()
-                .expect("canonicalize cwd")
-                .to_string_lossy()
-        ),
-        format!(
-            "-DWRITABLE_ROOT_0_EXCLUDED_0={}",
-            cwd.canonicalize()
-                .expect("canonicalize cwd")
-                .join(".codex")
-                .display()
-        ),
-        format!(
-            "-DWRITABLE_ROOT_0_EXCLUDED_1={}",
-            cwd.canonicalize()
-                .expect("canonicalize cwd")
-                .join(".git")
-                .display()
-        ),
-        format!(
-            "-DWRITABLE_ROOT_0_EXCLUDED_2={}",
-            cwd.canonicalize()
-                .expect("canonicalize cwd")
-                .join(".agents")
-                .display()
-        ),
+    let cwd_canonical = cwd.canonicalize().expect("canonicalize cwd");
+    for expected_root in [
+        format!("-DWRITABLE_ROOT_0={}", cwd_canonical.to_string_lossy()),
         format!(
             "-DWRITABLE_ROOT_1={}",
             vulnerable_root_canonical.to_string_lossy()
         ),
         format!(
-            "-DWRITABLE_ROOT_1_EXCLUDED_0={}",
-            dot_git_canonical.to_string_lossy()
-        ),
-        format!(
-            "-DWRITABLE_ROOT_1_EXCLUDED_1={}",
-            dot_codex_canonical.to_string_lossy()
-        ),
-        format!(
             "-DWRITABLE_ROOT_2={}",
             empty_root_canonical.to_string_lossy()
         ),
-    ];
-    let writable_definitions: Vec<String> = args
-        .iter()
-        .filter(|arg| arg.starts_with("-DWRITABLE_ROOT_"))
-        .cloned()
-        .collect();
-    assert_eq!(
-        writable_definitions, expected_definitions,
-        "unexpected writable-root parameter definitions in {args:#?}"
+    ] {
+        assert!(
+            args.contains(&expected_root),
+            "missing {expected_root}: {args:#?}"
+        );
+    }
+    assert_writable_root_exclusions(
+        &args,
+        /*root_index*/ 0,
+        &[
+            cwd_canonical.join(".git"),
+            cwd_canonical.join(".agents"),
+            cwd_canonical.join(".codex"),
+        ],
     );
+    assert_writable_root_exclusions(
+        &args,
+        /*root_index*/ 1,
+        &[dot_git_canonical.clone(), dot_codex_canonical.clone()],
+    );
+    assert_writable_root_exclusions(&args, /*root_index*/ 2, /*expected_paths*/ &[]);
     let command_index = args
         .iter()
         .position(|arg| arg == "--")
@@ -2582,29 +2607,10 @@ fn create_seatbelt_args_for_cwd_as_git_repo() {
         args.contains(&expected_root),
         "missing {expected_root}: {args:#?}"
     );
-    let expected_dot_git = format!(
-        "-DWRITABLE_ROOT_0_EXCLUDED_0={}",
-        dot_git_canonical.to_string_lossy()
-    );
-    assert!(
-        args.contains(&expected_dot_git),
-        "missing {expected_dot_git}: {args:#?}"
-    );
-    let expected_dot_codex = format!(
-        "-DWRITABLE_ROOT_0_EXCLUDED_1={}",
-        dot_codex_canonical.to_string_lossy()
-    );
-    assert!(
-        args.contains(&expected_dot_codex),
-        "missing {expected_dot_codex}: {args:#?}"
-    );
-    let expected_dot_agents = format!(
-        "-DWRITABLE_ROOT_0_EXCLUDED_2={}",
-        dot_agents_canonical.to_string_lossy()
-    );
-    assert!(
-        args.contains(&expected_dot_agents),
-        "missing {expected_dot_agents}: {args:#?}"
+    assert_writable_root_exclusions(
+        &args,
+        /*root_index*/ 0,
+        &[dot_git_canonical, dot_agents_canonical, dot_codex_canonical],
     );
     let expected_slash_tmp = format!("-DWRITABLE_ROOT_1={}", slash_tmp.to_string_lossy());
     assert!(
