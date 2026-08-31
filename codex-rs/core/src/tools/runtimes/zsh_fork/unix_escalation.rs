@@ -18,6 +18,7 @@ use codex_execpolicy::Policy;
 use codex_execpolicy::RuleMatch;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -50,6 +51,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock as SyncRwLock;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -58,6 +60,7 @@ use uuid::Uuid;
 pub(crate) struct PreparedUnifiedExecZshFork {
     pub(crate) exec_request: ExecRequest,
     pub(crate) escalation_session: EscalationSession,
+    pub(crate) rejection_reason: Arc<SyncRwLock<Option<String>>>,
 }
 
 const PROMPT_CONFLICT_REASON: &str =
@@ -142,6 +145,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         codex_linux_sandbox_exe: ctx.step_context.turn.config.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: req.turn_environment.config().use_legacy_landlock,
     };
+    let rejection_reason = Arc::new(SyncRwLock::new(None));
     let escalation_policy = CoreShellActionProvider {
         policy: Arc::clone(&exec_policy),
         session: Arc::clone(&ctx.session),
@@ -159,6 +163,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         ),
         prompt_permissions: req.additional_permissions.clone(),
         stopwatch: Stopwatch::unlimited(),
+        rejection_reason: Arc::clone(&rejection_reason),
     };
 
     let escalate_server = EscalateServer::new(
@@ -174,6 +179,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
     Ok(Some(PreparedUnifiedExecZshFork {
         exec_request,
         escalation_session,
+        rejection_reason,
     }))
 }
 
@@ -191,6 +197,7 @@ struct CoreShellActionProvider {
     approval_sandbox_permissions: SandboxPermissions,
     prompt_permissions: Option<AdditionalPermissionProfile>,
     stopwatch: Stopwatch,
+    rejection_reason: Arc<SyncRwLock<Option<String>>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -221,6 +228,18 @@ fn execve_prompt_is_rejected_by_policy(
 }
 
 impl CoreShellActionProvider {
+    fn record_rejection(&self, reason: String) {
+        *self
+            .rejection_reason
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
+    }
+
+    fn decline(&self, reason: String) -> EscalationDecision {
+        self.record_rejection(reason.clone());
+        EscalationDecision::deny(Some(reason))
+    }
+
     fn decision_driven_by_policy(matched_rules: &[RuleMatch], decision: Decision) -> bool {
         matched_rules.iter().any(|rule_match| {
             !matches!(rule_match, RuleMatch::HeuristicsRuleMatch { .. })
@@ -310,6 +329,12 @@ impl CoreShellActionProvider {
         {
             Ok(decision) => Ok(decision),
             Err(ToolError::Rejected(rejection)) => Ok(ReviewDecision::denied(rejection)),
+            Err(ToolError::Codex(err))
+                if matches!(err.details(), CodexErrorDetails::TurnAborted) =>
+            {
+                self.record_rejection("exec command rejected by user".to_string());
+                Err(err.into())
+            }
             Err(ToolError::Codex(err)) => Err(err.into()),
         }
     }
@@ -327,14 +352,12 @@ impl CoreShellActionProvider {
         decision_source: DecisionSource,
     ) -> anyhow::Result<EscalationDecision> {
         let action = match decision {
-            Decision::Forbidden => {
-                EscalationDecision::deny(Some("Execution forbidden by policy".to_string()))
-            }
+            Decision::Forbidden => self.decline("Execution forbidden by policy".to_string()),
             Decision::Prompt => {
                 if execve_prompt_is_rejected_by_policy(self.approval_policy, &decision_source)
                     .is_some()
                 {
-                    EscalationDecision::deny(Some("Execution forbidden by policy".to_string()))
+                    self.decline("Execution forbidden by policy".to_string())
                 } else {
                     let decision = self
                         .prompt(program, argv, workdir, &self.stopwatch, prompt_permissions)
@@ -360,11 +383,15 @@ impl CoreShellActionProvider {
                                 }
                             }
                             NetworkPolicyRuleAction::Deny => {
-                                EscalationDecision::deny(Some("User denied execution".to_string()))
+                                self.decline("User denied execution".to_string())
                             }
                         },
                         ReviewDecision::Denied { rejection } => {
-                            EscalationDecision::deny(Some(rejection))
+                            self.decline(if rejection == "rejected by user" {
+                                "exec command rejected by user".to_string()
+                            } else {
+                                rejection
+                            })
                         }
                         ReviewDecision::TimedOut => EscalationDecision::deny(Some(
                             crate::guardian::guardian_timeout_message(
@@ -379,7 +406,7 @@ impl CoreShellActionProvider {
                             ))
                         }
                         ReviewDecision::Abort => {
-                            EscalationDecision::deny(Some("User cancelled execution".to_string()))
+                            self.decline("exec command rejected by user".to_string())
                         }
                     }
                 }

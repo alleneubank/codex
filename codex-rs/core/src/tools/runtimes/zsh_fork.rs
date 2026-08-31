@@ -38,10 +38,13 @@ mod imp {
     use crate::unified_exec::SpawnLifecycle;
     use codex_shell_escalation::ESCALATE_SOCKET_ENV_VAR;
     use codex_shell_escalation::EscalationSession;
+    use std::sync::Arc;
+    use std::sync::RwLock;
 
     #[derive(Debug)]
     struct ZshForkSpawnLifecycle {
         escalation_session: EscalationSession,
+        rejection_reason: Arc<RwLock<Option<String>>>,
     }
 
     impl SpawnLifecycle for ZshForkSpawnLifecycle {
@@ -56,6 +59,13 @@ mod imp {
 
         fn after_spawn(&mut self) {
             self.escalation_session.close_client_socket();
+        }
+
+        fn rejection_reason(&self) -> Option<String> {
+            self.rejection_reason
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
         }
     }
 
@@ -83,6 +93,7 @@ mod imp {
             exec_request: prepared.exec_request,
             spawn_lifecycle: Box::new(ZshForkSpawnLifecycle {
                 escalation_session: prepared.escalation_session,
+                rejection_reason: prepared.rejection_reason,
             }),
         }))
     }
