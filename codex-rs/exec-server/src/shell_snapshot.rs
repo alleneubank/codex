@@ -194,14 +194,26 @@ impl ShellSnapshotCache {
         let shell_start = prepared.command.len() - params.argv.len();
         // Automatic startup files run before the restoration script and could
         // reintroduce environment variables that the snapshot already filtered.
-        let (shell_flag, startup) = match shell_type {
-            ShellType::Bash => ("-pc", "set +o privileged\n"),
-            ShellType::Zsh => ("-fc", "setopt RCS\n"),
-            ShellType::Sh => ("-c", ""),
+        let (command_index, startup) = match shell_type {
+            ShellType::Bash => {
+                // Bash may read .bashrc for a non-interactive command when it
+                // detects a remote-shell transport. The snapshot already
+                // contains that profile state, so suppress the second read.
+                prepared.command[shell_start + 1] = "--norc".to_string();
+                prepared.command.insert(shell_start + 2, "-pc".to_string());
+                (shell_start + 3, "set +o privileged\n")
+            }
+            ShellType::Zsh => {
+                prepared.command[shell_start + 1] = "-fc".to_string();
+                (shell_start + 2, "setopt RCS\n")
+            }
+            ShellType::Sh => {
+                prepared.command[shell_start + 1] = "-c".to_string();
+                (shell_start + 2, "")
+            }
             ShellType::PowerShell | ShellType::Cmd => unreachable!(),
         };
-        prepared.command[shell_start + 1] = shell_flag.to_string();
-        prepared.command[shell_start + 2] = format!(
+        prepared.command[command_index] = format!(
             "{startup}if ! eval \"unset {state_variables}\n{state_expansion}\" >/dev/null; then printf 'failed to restore shell snapshot\\n' >&2; fi\n{}",
             params.argv[2]
         );
