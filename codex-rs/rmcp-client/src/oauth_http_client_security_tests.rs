@@ -149,6 +149,24 @@ async fn same_origin_redirects_preserve_timeout_and_response_body_limits() -> Re
             )?,
             &resource_url,
         );
+        Mock::given(method("GET"))
+            .and(path("/warmup"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let warmup = adapter
+            .execute_request(
+                oauth2::http::Request::builder()
+                    .method("GET")
+                    .uri(format!("{}/warmup", server.uri()))
+                    .body(Vec::new())?,
+                OAuthHttpRedirectPolicy::Stop,
+                /*timeout*/ None,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error))?;
+        assert_eq!(warmup.status(), oauth2::http::StatusCode::NO_CONTENT);
         let error = adapter
             .execute_request(
                 oauth2::http::Request::builder()
