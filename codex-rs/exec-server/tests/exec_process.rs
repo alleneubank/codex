@@ -135,7 +135,7 @@ async fn shell_snapshot_v2_filters_profile_exports_and_stays_in_memory(
 ) -> Result<()> {
     if use_sandbox
         && let Some(warning) =
-            codex_sandboxing::system_bwrap_warning(&PermissionProfile::read_only())
+            codex_sandboxing::system_bwrap_warning(&PermissionProfile::workspace_write())
     {
         eprintln!("skipping sandbox test: {warning}");
         return Ok(());
@@ -243,9 +243,9 @@ async fn shell_snapshot_v2_filters_profile_exports_and_stays_in_memory(
                 tty,
                 pipe_stdin: false,
                 arg0: None,
-                sandbox: (use_sandbox && attempt == 0).then(|| {
+                sandbox: use_sandbox.then(|| {
                     FileSystemSandboxContext::from_permission_profile_with_cwd(
-                        PermissionProfile::read_only(),
+                        PermissionProfile::workspace_write(),
                         cwd.clone(),
                     )
                 }),
