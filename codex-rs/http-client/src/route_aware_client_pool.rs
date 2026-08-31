@@ -33,6 +33,7 @@ use crate::route_aware_redirect::redirect_request;
 use crate::route_aware_redirect::redirect_url;
 use crate::route_aware_redirect::remove_sensitive_headers;
 use crate::tls_backend_fallback::RustlsClientCache;
+use crate::tls_backend_fallback::is_tls_error;
 use crate::tls_backend_fallback::should_retry_with_rustls;
 
 const MAX_CACHED_ROUTES: usize = 16;
@@ -128,6 +129,12 @@ impl RouteAwareRequestError {
                 return Some(RouteFailureClass::ProxyAuthenticationRequired);
             }
             source = error.source();
+        }
+
+        if let Self::Request(error) = self
+            && is_tls_error(error)
+        {
+            return Some(RouteFailureClass::TlsError);
         }
 
         match self {
