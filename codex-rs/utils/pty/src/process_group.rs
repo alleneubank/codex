@@ -9,6 +9,8 @@
 //! - `kill_process_group_by_pid` targets the whole group (children/grandchildren)
 //! - `kill_process_group` targets a known process group ID directly
 //!   instead of a single PID.
+//! - `kill_process_tree` additionally finds Linux descendants that escaped into
+//!   another session or process group before terminating the original group.
 //! - `set_parent_death_signal` (Linux only) arranges for the child to receive a
 //!   `SIGTERM` when the parent exits, and re-checks the parent PID to avoid
 //!   races during fork/exec.
@@ -16,6 +18,9 @@
 //! On non-Unix platforms these helpers are no-ops.
 
 use std::io;
+
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 
 use tokio::process::Child;
 
@@ -264,6 +269,93 @@ pub fn interrupt_process_group(_process_group_id: u32) -> io::Result<()> {
 /// Kill a specific process group ID (best-effort).
 pub fn kill_process_group(process_group_id: u32) -> io::Result<()> {
     signal_process_group_id(process_group_id as libc::pid_t, libc::SIGKILL).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn process_parent_id(process_id: libc::pid_t) -> io::Result<libc::pid_t> {
+    let stat = std::fs::read_to_string(format!("/proc/{process_id}/stat"))?;
+    let fields = stat
+        .rsplit_once(')')
+        .map(|(_, fields)| fields)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process stat"))?;
+    fields
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing parent process ID"))?
+        .parse()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+#[cfg(target_os = "linux")]
+fn descendant_process_ids(root_process_id: libc::pid_t) -> io::Result<Vec<libc::pid_t>> {
+    let mut children_by_parent = HashMap::<libc::pid_t, Vec<libc::pid_t>>::new();
+    for entry in std::fs::read_dir("/proc")? {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Ok(process_id) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+            continue;
+        };
+        match process_parent_id(process_id) {
+            Ok(parent_id) => children_by_parent
+                .entry(parent_id)
+                .or_default()
+                .push(process_id),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut descendants = Vec::new();
+    let mut parents = vec![root_process_id];
+    while let Some(parent_id) = parents.pop() {
+        let Some(children) = children_by_parent.remove(&parent_id) else {
+            continue;
+        };
+        for process_id in children {
+            descendants.push(process_id);
+            parents.push(process_id);
+        }
+    }
+    Ok(descendants)
+}
+
+#[cfg(target_os = "linux")]
+/// Kill a process group and descendants that escaped into another group.
+pub fn kill_process_tree(root_process_id: u32) -> io::Result<()> {
+    let root_process_id = libc::pid_t::try_from(root_process_id)
+        .ok()
+        .filter(|process_id| *process_id > 1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid root process ID"))?;
+    let descendants = descendant_process_ids(root_process_id);
+    let mut first_error = kill_process_group(root_process_id as u32).err();
+
+    match descendants {
+        Ok(descendants) => {
+            for process_id in descendants.into_iter().rev() {
+                if unsafe { libc::kill(process_id, libc::SIGKILL) } == -1 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) && first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        Err(error) if first_error.is_none() => first_error = Some(error),
+        Err(_) => {}
+    }
+
+    first_error.map_or(Ok(()), Err)
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+/// Kill a process group and all descendants represented by that group.
+pub fn kill_process_tree(root_process_id: u32) -> io::Result<()> {
+    kill_process_group(root_process_id)
 }
 
 #[cfg(target_os = "macos")]
