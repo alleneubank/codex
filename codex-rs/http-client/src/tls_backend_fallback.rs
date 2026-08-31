@@ -105,6 +105,38 @@ pub(crate) fn should_retry_with_rustls(error: &reqwest::Error) -> bool {
     error.is_connect() && !error.is_timeout() && error.source().is_some_and(has_retryable_tls_error)
 }
 
+pub(crate) fn is_tls_error(error: &reqwest::Error) -> bool {
+    error.is_connect() && error.source().is_some_and(has_tls_error)
+}
+
+fn has_tls_error(error: &(dyn Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if error.downcast_ref::<rustls::Error>().is_some()
+            || error.downcast_ref::<native_tls::Error>().is_some()
+        {
+            return true;
+        }
+        let message = error.to_string().to_ascii_lowercase();
+        if [
+            "certificate",
+            "unknownissuer",
+            "unknown issuer",
+            "unknown ca",
+            "received fatal alert",
+            "tlsv1 alert",
+            "bad protocol version",
+        ]
+        .iter()
+        .any(|marker| message.contains(marker))
+        {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
     let mut source = Some(error);
     let mut recognized_negotiation_failure = false;
@@ -132,6 +164,9 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
         let is_macos_protocol_version_error = message.contains("bad protocol version");
         // Linux OpenSSL reports the peer's "tlsv1 alert protocol version".
         let is_linux_protocol_version_error = message.contains("tlsv1 alert protocol version");
+        // Linux rustls can be wrapped by std::io::Error, which hides its concrete
+        // type while retaining the alert name in its display representation.
+        let is_rustls_protocol_version_error = message.contains("protocolversion");
         // Windows Schannel may expose the protocol alert as a raw or formatted OS error.
         let is_schannel_protocol_version_error = error
             .downcast_ref::<std::io::Error>()
@@ -141,6 +176,7 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
             || message.contains("0x80090302");
         if is_macos_protocol_version_error
             || is_linux_protocol_version_error
+            || is_rustls_protocol_version_error
             || is_schannel_protocol_version_error
         {
             recognized_negotiation_failure = true;
