@@ -47,6 +47,11 @@ pub(crate) trait SpawnLifecycle: std::fmt::Debug + Send + Sync {
     }
 
     fn after_spawn(&mut self) {}
+
+    /// Returns the reason an intercepted child command was rejected, if any.
+    fn rejection_reason(&self) -> Option<String> {
+        None
+    }
 }
 
 pub(crate) type SpawnLifecycleHandle = Box<dyn SpawnLifecycle>;
@@ -98,7 +103,7 @@ pub(crate) struct UnifiedExecProcess {
     output_task: Option<JoinHandle<()>>,
     sandbox_type: SandboxType,
     timed_out: AtomicBool,
-    _spawn_lifecycle: Option<SpawnLifecycleHandle>,
+    spawn_lifecycle: Option<SpawnLifecycleHandle>,
 }
 
 impl std::fmt::Debug for UnifiedExecProcess {
@@ -139,8 +144,14 @@ impl UnifiedExecProcess {
             output_task: None,
             sandbox_type,
             timed_out: AtomicBool::new(false),
-            _spawn_lifecycle: spawn_lifecycle,
+            spawn_lifecycle,
         }
+    }
+
+    pub(super) fn rejection_reason(&self) -> Option<String> {
+        self.spawn_lifecycle
+            .as_ref()
+            .and_then(|lifecycle| lifecycle.rejection_reason())
     }
 
     pub(super) async fn write(&self, data: &[u8]) -> Result<(), UnifiedExecError> {

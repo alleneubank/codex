@@ -235,6 +235,7 @@ pub(crate) fn spawn_exit_watcher(
                 exit_code,
                 duration,
                 timed_out,
+                process.rejection_reason(),
             )
             .await;
         }
@@ -347,6 +348,7 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
     exit_code: i32,
     duration: Duration,
     timed_out: bool,
+    rejection_reason: Option<String>,
 ) {
     let aggregated_output = resolve_aggregated_output(&transcript, fallback_output).await;
     let output = ExecToolCallOutput {
@@ -370,15 +372,17 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
         process_id,
         plugin_attribution,
     );
-    emitter
-        .emit(
-            event_ctx,
-            ToolEventStage::Success {
-                output,
-                applied_patch_delta: None,
-            },
-        )
-        .await;
+    let stage = match rejection_reason {
+        Some(message) if exit_code != 0 => ToolEventStage::Failure(ToolEventFailure::Rejected {
+            message,
+            applied_patch_delta: None,
+        }),
+        Some(_) | None => ToolEventStage::Success {
+            output,
+            applied_patch_delta: None,
+        },
+    };
+    emitter.emit(event_ctx, stage).await;
 }
 
 #[allow(clippy::too_many_arguments)]
