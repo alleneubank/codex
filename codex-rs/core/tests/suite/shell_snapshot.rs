@@ -14,6 +14,7 @@ use codex_network_proxy::NetworkProxyConfig;
 #[cfg(unix)]
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
 #[cfg(unix)]
@@ -787,6 +788,8 @@ async fn shell_snapshot_v2_filters_profile_secrets_without_creating_files() -> R
                 .permissions
                 .shell_environment_policy
                 .ignore_default_excludes = false;
+            config.permissions.shell_environment_policy.exclude =
+                vec![EnvironmentVariablePattern::new_case_insensitive("BASH_ENV")];
             config.permissions.shell_environment_policy.r#set = HashMap::from([
                 ("HOME".to_string(), configured_home),
                 ("PROFILE_ALLOWED".to_string(), "policy".to_string()),
