@@ -198,7 +198,11 @@ async fn shell_snapshot_v2_filters_profile_exports_and_stays_in_memory(
     let policy = ExecEnvPolicy {
         inherit: ShellEnvironmentPolicyInherit::All,
         ignore_default_excludes: false,
-        exclude: vec!["PROFILE_DENIED".to_string()],
+        exclude: vec![
+            "BASH_ENV".to_string(),
+            "ENV".to_string(),
+            "PROFILE_DENIED".to_string(),
+        ],
         r#set: configured_environment,
         include_only: vec![
             "BASH_ENV".to_string(),

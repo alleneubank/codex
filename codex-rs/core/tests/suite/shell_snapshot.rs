@@ -4,6 +4,7 @@ use codex_core::TurnInputRequest;
 use codex_core::shell::get_shell_by_model_provided_path;
 use codex_features::Feature;
 use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::PermissionProfile;
@@ -327,6 +328,8 @@ async fn shell_snapshot_v2_filters_profile_secrets_without_creating_files() -> R
                 .permissions
                 .shell_environment_policy
                 .ignore_default_excludes = false;
+            config.permissions.shell_environment_policy.exclude =
+                vec![EnvironmentVariablePattern::new_case_insensitive("BASH_ENV")];
             config.permissions.shell_environment_policy.r#set = HashMap::from([
                 ("HOME".to_string(), configured_home),
                 ("PROFILE_ALLOWED".to_string(), "policy".to_string()),
