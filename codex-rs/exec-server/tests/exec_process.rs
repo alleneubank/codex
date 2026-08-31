@@ -482,23 +482,22 @@ async fn remote_sandboxed_process_preserves_custom_arg0() -> Result<()> {
 
     let context = create_process_context(/*use_remote*/ true).await?;
     let workspace = TempDir::new()?;
-    let outside_workspace = TempDir::new()?;
-    let denied_file = outside_workspace.path().join("denied.txt");
+    let denied_file = workspace.path().join("denied.txt");
     std::fs::write(&denied_file, b"denied")?;
     let cwd = PathUri::from_host_native_path(workspace.path())?;
     let policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
-                value: FileSystemSpecialPath::Minimal,
+                value: FileSystemSpecialPath::Root,
             },
             access: FileSystemAccessMode::Read,
             missing_path_behavior: None,
         },
         FileSystemSandboxEntry {
-            path: FileSystemPath::Special {
-                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+            path: FileSystemPath::Path {
+                path: PathUri::from_host_native_path(&denied_file)?,
             },
-            access: FileSystemAccessMode::Read,
+            access: FileSystemAccessMode::Deny,
             missing_path_behavior: None,
         },
     ]);
