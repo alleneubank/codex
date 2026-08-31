@@ -775,6 +775,7 @@ impl UnifiedExecProcessManager {
                 exit,
                 wall_time,
                 process.timed_out(),
+                process.rejection_reason(),
             )
             .await;
 
