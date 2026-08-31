@@ -111,7 +111,7 @@ alias -p
 echo ''
 # Capture exported variables
 export_lines=$(
-  while IFS= read -r name; do
+  while IFS='=' read -r -d '' name _; do
     if [[ "$name" =~ ^(EXCLUDED_EXPORTS)$ ]]; then
       continue
     fi
@@ -119,7 +119,7 @@ export_lines=$(
       continue
     fi
     declare -xp "$name" 2>/dev/null || true
-  done < <(compgen -e)
+  done < <(/usr/bin/env -0)
 )
 export_count=$(printf '%s\n' "$export_lines" | sed '/^$/d' | wc -l | tr -d ' ')
 echo "# exports $export_count"

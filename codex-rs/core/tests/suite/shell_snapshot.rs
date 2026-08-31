@@ -14,6 +14,7 @@ use codex_network_proxy::NetworkProxyConfig;
 #[cfg(unix)]
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
 #[cfg(unix)]
@@ -131,7 +132,10 @@ async fn wait_for_file_contents(path: &Path, expected: &str) -> Result<()> {
 }
 
 fn policy_set_path_for_test() -> HashMap<String, String> {
-    HashMap::from([("PATH".to_string(), POLICY_PATH_FOR_TEST.to_string())])
+    HashMap::from([(
+        "PATH".to_string(),
+        format!("/usr/bin:/bin:{POLICY_PATH_FOR_TEST}"),
+    )])
 }
 
 fn snapshot_override_content_for_policy_test() -> String {
@@ -784,6 +788,8 @@ async fn shell_snapshot_v2_filters_profile_secrets_without_creating_files() -> R
                 .permissions
                 .shell_environment_policy
                 .ignore_default_excludes = false;
+            config.permissions.shell_environment_policy.exclude =
+                vec![EnvironmentVariablePattern::new_case_insensitive("BASH_ENV")];
             config.permissions.shell_environment_policy.r#set = HashMap::from([
                 ("HOME".to_string(), configured_home),
                 ("PROFILE_ALLOWED".to_string(), "policy".to_string()),

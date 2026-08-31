@@ -30,6 +30,29 @@ fn bash_snapshot_filters_invalid_exports() -> Result<()> {
 }
 
 #[test]
+fn bash_snapshot_does_not_require_compgen() -> Result<()> {
+    let script = format!(
+        "enable -n compgen 2>/dev/null || true\n{}",
+        snapshot_script(ShellType::Bash).expect("bash supports snapshots")
+    );
+    let output = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(script)
+        .env("BASH_ENV", "/dev/null")
+        .output()?;
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("PATH"),
+        "snapshot should capture PATH without compgen"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn bash_snapshot_preserves_multiline_exports() -> Result<()> {
     let multiline_cert = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----";
     let output = Command::new("/bin/bash")
