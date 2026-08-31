@@ -7,14 +7,20 @@ pub(super) fn script(shell_type: ShellType) -> String {
     let script = match shell_type {
         ShellType::Bash => {
             r#"(
-  while IFS= read -r __codex_snapshot_export_name; do
+  while IFS='=' read -r -d '' __codex_snapshot_export_name _; do
     case "$__codex_snapshot_export_name" in
       ""|[0-9]*|*[!A-Za-z0-9_]*|PWD|OLDPWD) continue ;;
     esac
     RECORD_START
     declare -xp "$__codex_snapshot_export_name" 2>/dev/null || true
     RECORD_END
-  done < <(compgen -e)
+  done < <(
+    if command -v env >/dev/null 2>&1; then
+      "env" -0
+    else
+      "$(PATH="$(command -p getconf PATH)" command -v env)" -0
+    fi
+  )
 )
 "#
         }

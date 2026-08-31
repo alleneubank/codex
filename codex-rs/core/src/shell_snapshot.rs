@@ -579,16 +579,11 @@ async fn capture_snapshot(
         },
     )
     .ok_or_else(|| anyhow!("Shell snapshotting is not yet supported for {shell_type:?}"))?;
-    let shell_mode = if credential_broker.is_none_or(|broker| broker.allow_login_shell) {
-        SnapshotShellMode::Login
-    } else {
-        SnapshotShellMode::NonLogin
-    };
     let raw_snapshot = run_script_with_timeout(
         shell,
         &script,
         SNAPSHOT_TIMEOUT,
-        shell_mode,
+        SnapshotShellMode::NonLogin,
         cwd,
         credential_broker,
         sandbox,
@@ -976,7 +971,6 @@ fn remove_env_value(env: &mut HashMap<String, String>, key: &str) {
 
 #[derive(Clone, Copy)]
 enum SnapshotShellMode<'a> {
-    Login,
     NonLogin,
     Validation(&'a AbsolutePathBuf),
 }
@@ -1014,7 +1008,12 @@ async fn run_script_with_timeout(
 ) -> Result<String> {
     let suppress_startup_files =
         credential_broker.is_some() && matches!(shell_mode, SnapshotShellMode::Validation(_));
-    let mut args = shell.derive_exec_args(script, matches!(shell_mode, SnapshotShellMode::Login));
+    let mut args = shell.derive_exec_args(script, /*use_login_shell*/ false);
+    if shell.shell_type == ShellType::Bash {
+        // Bash may read .bashrc when it detects a remote-shell transport. Snapshot capture
+        // sources that profile explicitly, while validation should not source it at all.
+        args.insert(1, "--norc".to_string());
+    }
     if suppress_startup_files && shell.shell_type == ShellType::Zsh {
         args[1] = "-fc".to_string();
     }
@@ -1033,7 +1032,7 @@ async fn run_script_with_timeout(
     if let Some(sandbox) = sandbox {
         let snapshot_read_path = match shell_mode {
             SnapshotShellMode::Validation(path) => Some(path),
-            SnapshotShellMode::Login | SnapshotShellMode::NonLogin => None,
+            SnapshotShellMode::NonLogin => None,
         };
         return sandbox
             .run(

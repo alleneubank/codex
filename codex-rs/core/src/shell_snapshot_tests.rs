@@ -20,6 +20,8 @@ use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::process::Command;
@@ -1641,7 +1643,7 @@ async fn snapshot_shell_does_not_inherit_stdin() -> Result<()> {
 
     let home_display = home.display();
     let script = format!(
-        "HOME=\"{home_display}\"; export HOME; {}",
+        "unset BASH_ENV; HOME=\"{home_display}\"; export HOME; {}",
         snapshot_capture_script(
             ShellType::Bash,
             SnapshotCaptureOptions {
@@ -1656,7 +1658,7 @@ async fn snapshot_shell_does_not_inherit_stdin() -> Result<()> {
         &shell,
         &script,
         Duration::from_secs(2),
-        SnapshotShellMode::Login,
+        SnapshotShellMode::NonLogin,
         &home,
         /*credential_broker*/ None,
         /*sandbox*/ None,
@@ -1676,6 +1678,58 @@ async fn snapshot_shell_does_not_inherit_stdin() -> Result<()> {
         output.contains("# Snapshot file"),
         "expected snapshot marker in output; output={output:?}"
     );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn non_login_snapshot_shell_sources_bashrc_once_when_profile_chains_it() -> Result<()> {
+    let dir = tempdir()?;
+    let home = dir.path().abs();
+    fs::write(
+        home.join(".bashrc"),
+        "printf x >> \"$HOME/captures\"\nprofile_helper() { printf helper; }\n",
+    )
+    .await?;
+    fs::write(home.join(".bash_profile"), ". \"$HOME/.bashrc\"\n").await?;
+
+    let shell_path = home.join("bash-with-fixture-home");
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nunset BASH_ENV ENV\nHOME=${0%/*}\nexport HOME\nexec /bin/bash \"$@\"\n",
+    )
+    .await?;
+    let mut permissions = fs::metadata(&shell_path).await?.permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&shell_path, permissions).await?;
+
+    let shell = Shell {
+        shell_type: ShellType::Bash,
+        shell_path: shell_path.into_path_buf(),
+    };
+    let script = snapshot_capture_script(
+        ShellType::Bash,
+        SnapshotCaptureOptions {
+            startup: SnapshotStartup::Interactive,
+            declarations: true,
+            environment: false,
+        },
+    )
+    .expect("bash supports snapshots");
+    let output = run_script_with_timeout(
+        &shell,
+        &script,
+        SNAPSHOT_TIMEOUT,
+        SnapshotShellMode::NonLogin,
+        &home,
+        /*credential_broker*/ None,
+        /*sandbox*/ None,
+    )
+    .await?;
+
+    assert_eq!(fs::read_to_string(home.join("captures")).await?, "x");
+    assert!(output.contains("profile_helper"));
 
     Ok(())
 }
@@ -1701,7 +1755,7 @@ async fn timed_out_snapshot_shell_is_terminated() -> Result<()> {
         &shell,
         &script,
         Duration::from_secs(1),
-        SnapshotShellMode::Login,
+        SnapshotShellMode::NonLogin,
         &dir.path().abs(),
         /*credential_broker*/ None,
         /*sandbox*/ None,
