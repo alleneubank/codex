@@ -261,9 +261,10 @@ async fn snapshot_for_config_merges_extension_host_and_legacy_plugin_roots() {
         vec![plugin_skill_root],
         config_layer_stack,
     );
-    let skills_service = HostSkillsService::new(
+    let skills_service = HostSkillsService::new_with_home_dir(
         codex_home.path().abs(),
         /*bundled_skills_enabled*/ false,
+        codex_home.path().abs(),
     );
 
     let snapshot = skills_service
@@ -305,9 +306,10 @@ async fn snapshot_for_config_preserves_host_precedence_for_symlinked_plugin_root
     )
     .expect("symlink user skills root to plugin skills root");
     let config_layer_stack = config_stack(&codex_home, "[skills.bundled]\nenabled = false\n");
-    let skills_service = HostSkillsService::new(
+    let skills_service = HostSkillsService::new_with_home_dir(
         codex_home.path().abs(),
         /*bundled_skills_enabled*/ false,
+        codex_home.path().abs(),
     );
 
     let outcome = skills_for_config_with_stack(
