@@ -266,7 +266,7 @@ async fn run_shell_script(shell: &Shell, script: &str, cwd: &AbsolutePathBuf) ->
         shell,
         script,
         SNAPSHOT_TIMEOUT,
-        /*use_login_shell*/ true,
+        /*use_login_shell*/ false,
         cwd,
     )
     .await
@@ -279,7 +279,13 @@ async fn run_script_with_timeout(
     use_login_shell: bool,
     cwd: &AbsolutePathBuf,
 ) -> Result<String> {
-    let args = shell.derive_exec_args(script, use_login_shell);
+    let mut args = shell.derive_exec_args(script, use_login_shell);
+    if shell.shell_type == ShellType::Bash && !use_login_shell {
+        // Bash may read .bashrc when it detects a remote-shell transport. The
+        // snapshot script sources that profile explicitly, so suppress the
+        // automatic read to keep capture and validation single-shot.
+        args.insert(1, "--norc".to_string());
+    }
     let shell_name = shell.name();
 
     // Handler is kept as guard to control the drop. The `mut` pattern is required because .args()

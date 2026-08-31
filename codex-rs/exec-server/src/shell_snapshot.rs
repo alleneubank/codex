@@ -231,7 +231,26 @@ async fn capture_snapshot(
         .ok_or_else(|| invalid_params("unsupported shell snapshot script".to_string()))?;
     let shell_start = prepared.command.len() - params.argv.len();
     let mut argv = prepared.command.clone();
-    argv[shell_start + 2] = script;
+    // Snapshot scripts source the shell's interactive profile explicitly. Avoid
+    // Bash remote-shell heuristics changing the prepared environment before
+    // that explicit profile is read. Zsh must keep the requested login mode so
+    // startup state such as .zshenv is captured once; restoration suppresses a
+    // second read.
+    match shell_type {
+        ShellType::Bash => {
+            argv[shell_start + 1] = "--norc".to_string();
+            argv.insert(shell_start + 2, "-c".to_string());
+            argv[shell_start + 3] = script;
+        }
+        ShellType::Zsh => {
+            argv[shell_start + 2] = script;
+        }
+        ShellType::Sh => {
+            argv[shell_start + 1] = "-c".to_string();
+            argv[shell_start + 2] = script;
+        }
+        ShellType::PowerShell | ShellType::Cmd => unreachable!(),
+    }
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| internal_error("missing shell snapshot command".to_string()))?;
