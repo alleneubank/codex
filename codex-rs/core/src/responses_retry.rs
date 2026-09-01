@@ -6,16 +6,23 @@ use crate::client::ModelClientSession;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
+use crate::util::positive_jitter;
 use codex_client::RetryOperation;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::WarningEvent;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(60);
+const SERVER_OVERLOADED_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(30),
+    Duration::from_secs(120),
+    Duration::from_secs(300),
+];
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResponsesStreamRequest {
@@ -26,7 +33,16 @@ pub(crate) enum ResponsesStreamRequest {
 pub(crate) struct ResponsesStreamRetryState {
     retries: u64,
     connection_retries: u64,
+    server_overloaded_retries: usize,
     connection_retry_delay: Duration,
+}
+
+pub(crate) struct ResponsesStreamRetryContext<'a> {
+    pub(crate) client_session: &'a mut ModelClientSession,
+    pub(crate) sess: &'a Session,
+    pub(crate) turn_context: &'a TurnContext,
+    pub(crate) request: ResponsesStreamRequest,
+    pub(crate) cancellation_token: &'a CancellationToken,
 }
 
 impl Default for ResponsesStreamRetryState {
@@ -34,6 +50,7 @@ impl Default for ResponsesStreamRetryState {
         Self {
             retries: 0,
             connection_retries: 0,
+            server_overloaded_retries: 0,
             connection_retry_delay: INITIAL_CONNECTION_RETRY_DELAY,
         }
     }
@@ -45,11 +62,15 @@ pub(crate) async fn handle_retryable_response_stream_error(
     retry_state: &mut ResponsesStreamRetryState,
     max_retries: u64,
     err: CodexErr,
-    client_session: &mut ModelClientSession,
-    sess: &Session,
-    turn_context: &TurnContext,
-    request: ResponsesStreamRequest,
+    context: ResponsesStreamRetryContext<'_>,
 ) -> Result<(), CodexErr> {
+    let ResponsesStreamRetryContext {
+        client_session,
+        sess,
+        turn_context,
+        request,
+        cancellation_token,
+    } = context;
     let operation = match request {
         ResponsesStreamRequest::Sampling => RetryOperation::Sampling,
         ResponsesStreamRequest::RemoteCompactionV2 => RetryOperation::RemoteCompactionV2,
@@ -82,7 +103,9 @@ pub(crate) async fn handle_retryable_response_stream_error(
         return Ok(());
     }
 
-    if retry_state.retries >= max_retries
+    let is_server_overloaded = matches!(err.details(), CodexErrorDetails::ServerOverloaded);
+    if !is_server_overloaded
+        && retry_state.retries >= max_retries
         && client_session.try_switch_fallback_transport(
             &turn_context.session_telemetry,
             turn_context.model_info(),
@@ -99,33 +122,53 @@ pub(crate) async fn handle_retryable_response_stream_error(
         return Ok(());
     }
 
-    if retry_state.retries < max_retries {
+    let (retry_count, retry_limit, delay) = if is_server_overloaded {
+        let Some(retry_delay) = SERVER_OVERLOADED_RETRY_DELAYS
+            .get(retry_state.server_overloaded_retries)
+            .copied()
+        else {
+            return Err(err);
+        };
+        retry_state.server_overloaded_retries += 1;
+        (
+            retry_state.server_overloaded_retries as u64,
+            SERVER_OVERLOADED_RETRY_DELAYS.len() as u64,
+            positive_jitter(retry_delay),
+        )
+    } else if retry_state.retries < max_retries {
         retry_state.retries += 1;
         let retry_count = retry_state.retries;
-        let delay = err.retry_delay().unwrap_or_else(|| backoff(retry_count));
-        log_retry(request, turn_context, &err, retry_count, max_retries, delay);
+        (
+            retry_count,
+            max_retries,
+            err.retry_delay().unwrap_or_else(|| backoff(retry_count)),
+        )
+    } else {
+        return Err(err);
+    };
+    log_retry(request, turn_context, &err, retry_count, retry_limit, delay);
 
-        // In release builds, hide the first websocket retry notification to reduce noisy
-        // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
-        let report_error = retry_count > 1
-            || cfg!(debug_assertions)
-            || !sess.services.model_client.responses_websocket_enabled();
-        if report_error {
-            // Surface retry information to any UI/front-end so the user understands what is
-            // happening instead of staring at a seemingly frozen screen.
-            sess.notify_stream_error(
-                turn_context,
-                format!("Reconnecting... {retry_count}/{max_retries}"),
-                err,
-            )
-            .await;
-        }
-        codex_client::record_retry!(retry_count, delay, operation);
-        tokio::time::sleep(delay).await;
-        return Ok(());
+    // In release builds, hide the first websocket retry notification to reduce noisy
+    // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
+    let report_error = is_server_overloaded
+        || retry_count > 1
+        || cfg!(debug_assertions)
+        || !sess.services.model_client.responses_websocket_enabled();
+    if report_error {
+        // Surface retry information to any UI/front-end so the user understands what is
+        // happening instead of staring at a seemingly frozen screen.
+        sess.notify_stream_error(
+            turn_context,
+            format!("Reconnecting... {retry_count}/{retry_limit}"),
+            err,
+        )
+        .await;
     }
-
-    Err(err)
+    codex_client::record_retry!(retry_count, delay, operation);
+    tokio::select! {
+        () = tokio::time::sleep(delay) => Ok(()),
+        () = cancellation_token.cancelled() => Err(CodexErr::TurnAborted),
+    }
 }
 
 fn log_retry(
