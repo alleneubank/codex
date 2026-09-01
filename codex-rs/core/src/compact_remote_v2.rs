@@ -24,6 +24,7 @@ use crate::hook_runtime::run_pre_compact_hooks;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CompactionTurnMetadata;
 use crate::responses_retry::ResponsesStreamRequest;
+use crate::responses_retry::ResponsesStreamRetryContext;
 use crate::responses_retry::ResponsesStreamRetryState;
 use crate::responses_retry::handle_retryable_response_stream_error;
 use crate::session::session::Session;
@@ -382,6 +383,7 @@ async fn run_remote_compaction_request_v2(
         .stream_max_retries()
         .min(MAX_REMOTE_COMPACTION_V2_STREAM_RETRIES);
     let mut retry_state = ResponsesStreamRetryState::default();
+    let cancellation_token = CancellationToken::new();
     loop {
         let result = match client_session
             .stream(
@@ -408,10 +410,13 @@ async fn run_remote_compaction_request_v2(
                     &mut retry_state,
                     max_retries,
                     err,
-                    client_session,
-                    sess,
-                    turn_context,
-                    ResponsesStreamRequest::RemoteCompactionV2,
+                    ResponsesStreamRetryContext {
+                        client_session,
+                        sess,
+                        turn_context,
+                        request: ResponsesStreamRequest::RemoteCompactionV2,
+                        cancellation_token: &cancellation_token,
+                    },
                 )
                 .await?;
             }
