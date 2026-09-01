@@ -711,11 +711,17 @@ async fn fs_watch_directory_reports_changed_child_paths_and_unwatch_stops_notifi
     // Kernel file watching is not reliable in every sandboxed test environment.
     // Keep validating notification shape when the backend does emit, but do not
     // fail the whole suite if no OS event arrives.
-    if let Some(changed) = maybe_fs_changed_notification(&mut mcp).await? {
-        assert_eq!(changed.watch_id, watch_id.clone());
+    if let Some(mut changed) = maybe_fs_changed_notification(&mut mcp).await? {
+        // macOS can report the watched directory alongside the changed child.
+        // Normalize that platform event while still rejecting unrelated paths.
+        let watch_root = absolute_path(git_dir.clone());
+        changed.changed_paths.retain(|path| path != &watch_root);
         assert_eq!(
-            changed.changed_paths,
-            vec![absolute_path(fetch_head.clone())]
+            changed,
+            FsChangedNotification {
+                watch_id: watch_id.clone(),
+                changed_paths: vec![absolute_path(fetch_head.clone())],
+            }
         );
     }
     while timeout(
