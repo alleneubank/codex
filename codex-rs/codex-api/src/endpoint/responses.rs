@@ -2,6 +2,7 @@ use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
 use crate::endpoint::session::EndpointSession;
+use crate::endpoint::session::ServerOverloadRetryOwner;
 use crate::error::ApiError;
 use crate::provider::Provider;
 use crate::requests::Compression;
@@ -50,6 +51,7 @@ pub struct ResponsesClient<T: HttpTransport> {
     session: EndpointSession<T>,
     sse_telemetry: Option<Arc<dyn SseTelemetry>>,
     endpoint: ResponsesEndpoint,
+    server_overload_retry_owner: ServerOverloadRetryOwner,
 }
 
 #[derive(Default)]
@@ -68,6 +70,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
             session: EndpointSession::new(transport, provider, auth),
             sse_telemetry: None,
             endpoint: ResponsesEndpoint::Responses,
+            server_overload_retry_owner: ServerOverloadRetryOwner::Transport,
         }
     }
 
@@ -86,7 +89,14 @@ impl<T: HttpTransport> ResponsesClient<T> {
             session: self.session.with_request_telemetry(request),
             sse_telemetry: sse,
             endpoint: self.endpoint,
+            server_overload_retry_owner: self.server_overload_retry_owner,
         }
+    }
+
+    /// Returns capacity-coded 503s to a caller that applies a slower retry policy.
+    pub fn defer_server_overload_retries_to_caller(mut self) -> Self {
+        self.server_overload_retry_owner = ServerOverloadRetryOwner::Caller;
+        self
     }
 
     #[instrument(
@@ -172,6 +182,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
                 self.endpoint.path(),
                 extra_headers,
                 Some(body),
+                self.server_overload_retry_owner,
                 |req| {
                     req.headers.insert(
                         http::header::ACCEPT,

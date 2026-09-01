@@ -3128,7 +3128,13 @@ async fn guardian_review_retries_transient_session_failure_then_approves() -> an
         metadata.guardian_session_kind,
         Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
     ));
-    assert_eq!(request_log.requests().len(), 2);
+    let requests = request_log.requests();
+    assert_eq!(requests.len(), 2);
+    assert_ne!(
+        requests[0].body_json()["client_metadata"]["turn_id"],
+        requests[1].body_json()["client_metadata"]["turn_id"],
+        "Guardian should retry as a fresh review turn without capacity backoff"
+    );
     Ok(())
 }
 

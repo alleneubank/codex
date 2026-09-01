@@ -32,6 +32,7 @@ use crate::plugins::build_plugin_injections;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_retry::ResponsesStreamRequest;
+use crate::responses_retry::ResponsesStreamRetryContext;
 use crate::responses_retry::ResponsesStreamRetryState;
 use crate::responses_retry::handle_retryable_response_stream_error;
 use crate::session::PreviousTurnSettings;
@@ -1512,7 +1513,10 @@ async fn run_sampling_request(
             original_input = Some(prompt.input);
         }
 
-        if !err.is_retryable() {
+        let should_retry_server_overload =
+            matches!(err.details(), CodexErrorDetails::ServerOverloaded)
+                && !crate::guardian::is_basic_session_source(&turn_context.session_source);
+        if !err.is_retryable() && !should_retry_server_overload {
             return Err(err);
         }
 
@@ -1520,10 +1524,13 @@ async fn run_sampling_request(
             &mut retry_state,
             max_retries,
             err,
-            client_session,
-            &sess,
-            &turn_context,
-            ResponsesStreamRequest::Sampling,
+            ResponsesStreamRetryContext {
+                client_session,
+                sess: &sess,
+                turn_context: &turn_context,
+                request: ResponsesStreamRequest::Sampling,
+                cancellation_token: &cancellation_token,
+            },
         )
         .await?;
         turn_context.turn_timing_state.record_sampling_retry();
@@ -2304,20 +2311,38 @@ async fn try_run_sampling_request(
         .features
         .enabled(Feature::ConcurrentReasoningSummaries)
         && turn_context.provider.info().is_openai();
-    let mut stream = client_session
-        .stream(
-            prompt,
-            &step_context.settings.model_info,
-            &step_context.session_telemetry,
-            step_context.settings.reasoning_effort().cloned(),
-            step_context.settings.reasoning_summary,
-            step_context.settings.service_tier.clone(),
-            responses_metadata,
-            &inference_trace,
-        )
-        .instrument(trace_span!("stream_request"))
-        .or_cancel(&cancellation_token)
-        .await??;
+    let mut stream = async {
+        if crate::guardian::is_basic_session_source(&turn_context.session_source) {
+            client_session
+                .stream(
+                    prompt,
+                    &step_context.settings.model_info,
+                    &step_context.session_telemetry,
+                    step_context.settings.reasoning_effort().cloned(),
+                    step_context.settings.reasoning_summary,
+                    step_context.settings.service_tier.clone(),
+                    responses_metadata,
+                    &inference_trace,
+                )
+                .await
+        } else {
+            client_session
+                .stream_with_turn_managed_server_overload_retries(
+                    prompt,
+                    &step_context.settings.model_info,
+                    &step_context.session_telemetry,
+                    step_context.settings.reasoning_effort().cloned(),
+                    step_context.settings.reasoning_summary,
+                    step_context.settings.service_tier.clone(),
+                    responses_metadata,
+                    &inference_trace,
+                )
+                .await
+        }
+    }
+    .instrument(trace_span!("stream_request"))
+    .or_cancel(&cancellation_token)
+    .await??;
     let mut in_flight: FuturesOrdered<InFlightFuture<'static>> = FuturesOrdered::new();
     let mut needs_follow_up = false;
     let mut last_agent_message: Option<String> = None;
