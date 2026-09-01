@@ -90,6 +90,13 @@ pub fn backoff(attempt: u64) -> Duration {
     Duration::from_millis((base as f64 * jitter) as u64)
 }
 
+/// Adds bounded positive jitter without allowing a retry before the base delay.
+pub(crate) fn positive_jitter(delay: Duration) -> Duration {
+    let max_jitter_nanos = u64::try_from(delay.as_nanos()).unwrap_or(u64::MAX);
+    let jitter_nanos = rand::rng().random_range(1..=max_jitter_nanos.max(1));
+    delay.saturating_add(Duration::from_nanos(jitter_nanos))
+}
+
 pub(crate) fn error_or_panic(message: impl std::string::ToString) {
     if cfg!(debug_assertions) {
         panic!("{}", message.to_string());

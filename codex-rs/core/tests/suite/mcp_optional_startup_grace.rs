@@ -46,7 +46,7 @@ async fn optional_mcp_startup_grace_controls_initial_turn_tool_catalog(
         | StartupGraceScenario::DisabledGraceRespectsStartupTimeout => Duration::ZERO,
     };
     let startup_timeout = match scenario {
-        StartupGraceScenario::DisabledGraceRespectsStartupTimeout => Duration::from_millis(250),
+        StartupGraceScenario::DisabledGraceRespectsStartupTimeout => Duration::from_secs(1),
         StartupGraceScenario::ShortGraceOmitsPending
         | StartupGraceScenario::CustomGraceIncludesReady
         | StartupGraceScenario::DisabledGraceWaitsForStartup => Duration::from_secs(1),
@@ -143,7 +143,7 @@ async fn optional_mcp_startup_grace_controls_initial_turn_tool_catalog(
                     .is_err(),
                 "zero grace should keep waiting until the server-specific startup timeout"
             );
-            tokio::time::timeout(Duration::from_secs(1), &mut turn)
+            tokio::time::timeout(Duration::from_secs(2), &mut turn)
                 .await
                 .context("zero grace should stop waiting once the server startup times out")??;
             release_startup

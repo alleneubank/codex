@@ -1,3 +1,4 @@
+use crate::api_bridge::is_server_overloaded_transport_error;
 use crate::auth::SharedAuthProvider;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -15,6 +16,21 @@ use http::Method;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::instrument;
+
+#[derive(Clone, Copy)]
+pub(crate) enum ServerOverloadRetryOwner {
+    Transport,
+    Caller,
+}
+
+impl ServerOverloadRetryOwner {
+    fn allows_transport_retry(self, err: &TransportError) -> bool {
+        match self {
+            Self::Transport => true,
+            Self::Caller => !is_server_overloaded_transport_error(err),
+        }
+    }
+}
 
 pub(crate) struct EndpointSession<T: HttpTransport> {
     transport: T,
@@ -107,6 +123,7 @@ impl<T: HttpTransport> EndpointSession<T> {
                     transport.execute(req).await
                 }
             },
+            |_| true,
         )
         .await?;
 
@@ -125,6 +142,7 @@ impl<T: HttpTransport> EndpointSession<T> {
         path: &str,
         extra_headers: HeaderMap,
         body: Option<EncodedJsonBody>,
+        server_overload_retry_owner: ServerOverloadRetryOwner,
         configure: C,
     ) -> Result<StreamResponse, ApiError>
     where
@@ -148,6 +166,7 @@ impl<T: HttpTransport> EndpointSession<T> {
                     transport.stream(req).await
                 }
             },
+            move |err| server_overload_retry_owner.allows_transport_retry(err),
         )
         .await?;
 
