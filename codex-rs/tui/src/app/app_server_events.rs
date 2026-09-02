@@ -358,9 +358,7 @@ impl App {
                         if input
                             .pending_steers
                             .front()
-                            .is_some_and(|pending| {
-                                pending.client_user_message_id == *client_id
-                            })
+                            .is_some_and(|pending| pending.client_user_message_id == *client_id)
                         {
                             input.pending_steers.pop_front();
                         }

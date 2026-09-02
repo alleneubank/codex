@@ -34,6 +34,7 @@ impl From<&Config> for LocalSettings {
                 raw_output_mode: config.tui_raw_output_mode,
                 alternate_screen: config.tui_alternate_screen,
                 status_line: config.tui_status_line.clone(),
+                custom_status_line: config.tui_custom_status_line.clone(),
                 status_line_use_colors: config.tui_status_line_use_colors,
                 terminal_title: config.tui_terminal_title.clone(),
                 theme: config.tui_theme.clone(),

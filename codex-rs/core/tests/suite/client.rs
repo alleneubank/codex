@@ -66,6 +66,7 @@ use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::user_input::UserInput;
+use codex_rollout::parse_rollout_line;
 use core_test_support::TestCodexResponsesRequestKind;
 use core_test_support::apps_test_server::AppsTestServer;
 use core_test_support::load_default_config_for_test;
@@ -127,7 +128,7 @@ fn rollout_account_change_fence_marker_count(rollout_path: &std::path::Path) -> 
     std::fs::read_to_string(rollout_path)
         .expect("rollout should be readable")
         .lines()
-        .filter_map(|line| serde_json::from_str::<RolloutLine>(line).ok())
+        .filter_map(|line| parse_rollout_line(line).ok())
         .filter(|line| {
             matches!(
                 &line.item,

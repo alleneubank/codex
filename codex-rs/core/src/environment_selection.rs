@@ -916,11 +916,14 @@ impl TurnEnvironmentSnapshot {
     pub(crate) fn selections_including_starting(&self) -> Vec<TurnEnvironmentSelection> {
         self.environments
             .iter()
-            .map(|environment| match environment {
-                TurnEnvironmentState::Ready(environment) => environment.selection(),
-                TurnEnvironmentState::Starting(environment) => environment
-                    .config_origin
-                    .into_input_selection(environment.selection.clone()),
+            .filter_map(|environment| match environment {
+                TurnEnvironmentState::Ready(environment) => Some(environment.selection()),
+                TurnEnvironmentState::Starting(environment) => Some(
+                    environment
+                        .config_origin
+                        .into_input_selection(environment.selection.clone()),
+                ),
+                TurnEnvironmentState::Failed => None,
             })
             .collect()
     }

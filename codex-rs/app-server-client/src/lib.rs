@@ -706,13 +706,6 @@ impl AppServerClient {
         }
     }
 
-    pub fn platform_os(&self) -> Option<&str> {
-        match self {
-            Self::InProcess(client) => Some(client.platform_os.as_str()),
-            Self::Remote(client) => client.platform_os(),
-        }
-    }
-
     pub async fn request(&self, request: ClientRequest) -> IoResult<RequestResult> {
         match self {
             Self::InProcess(client) => client.request(request).await,
@@ -963,6 +956,7 @@ mod tests {
             serde_json::json!({
                 "userAgent": "codex_cli_rs/9.8.7-test (Test OS; x86_64) rust",
                 "codexHome": "/server/.codex",
+                "platformOs": "windows",
             }),
         )
         .await;

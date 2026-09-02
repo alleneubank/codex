@@ -708,7 +708,7 @@ fn ensure_worktree_paths_writable(
     paths: &[PathBuf],
 ) -> Result<(), FunctionCallError> {
     for path in paths {
-        if !file_system_sandbox_policy.can_write_path_with_cwd(path, cwd) {
+        if !file_system_sandbox_policy.can_write_local_path_with_cwd(path, cwd) {
             return Err(worktree_model_error(format!(
                 "{tool_name} requires filesystem write permission for `{}` before it can change the session workdir; additional permissions or configuration are required",
                 path.display()

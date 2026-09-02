@@ -250,9 +250,9 @@ stream_max_retries = 0
         unreachable!("user turn");
     };
     let expected_client_id = client_user_message_id.clone();
-    let pending_input = app.chat_widget.capture_thread_input_state();
     app.submit_thread_op(&mut app_server, thread_id, steer)
         .await?;
+    let accepted_input = app.chat_widget.capture_thread_input_state();
     let other_id = ThreadId::from_string(
         &app_test_support::create_fake_rollout(
             app.config.codex_home.as_path(),
@@ -323,7 +323,7 @@ stream_max_retries = 0
             };
             if let Some(release_response) = release_response.take() {
                 assert_ne!(client_id, expected_client_id);
-                assert_eq!(saved_input, pending_input);
+                assert_eq!(saved_input, accepted_input);
                 let _ = release_response.send(());
             } else {
                 assert_eq!(client_id, expected_client_id);

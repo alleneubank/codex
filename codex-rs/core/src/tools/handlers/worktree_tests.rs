@@ -65,7 +65,9 @@ fn entering_worktree_does_not_grant_git_common_dir_write_access() {
     );
     let policy = FileSystemSandboxPolicy::workspace_write(&workspace_roots, true, true);
 
-    assert!(!policy.can_write_path_with_cwd(&common_dir.join("config"), worktree_path.as_path()));
+    assert!(
+        !policy.can_write_local_path_with_cwd(&common_dir.join("config"), worktree_path.as_path(),)
+    );
 }
 
 #[test]
