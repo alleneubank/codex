@@ -51,6 +51,23 @@ async fn negotiates_after_early_packet_loss_and_slow_tcp_connect() {
 async fn check_negotiation(runtime: Arc<dyn webrtc::runtime::Runtime>) {
     for tcp in [false, true] {
         timeout(Duration::from_secs(/*secs*/ 30), async {
+            let mut local = Transport::with_runtime(runtime.clone()).await.unwrap();
+            let offer = RTCSessionDescription::offer(local.offer().await.unwrap()).unwrap();
+            // Bind one interface shared with the real transport so fixture candidates stay
+            // bounded even when the host has many container or VPN interfaces.
+            let remote_ip = offer
+                .sdp
+                .lines()
+                .filter_map(|line| line.strip_prefix("a=candidate:"))
+                .map(|candidate| {
+                    rtc::ice::candidate::unmarshal_candidate(candidate)
+                        .unwrap()
+                        .addr()
+                        .ip()
+                })
+                .find(std::net::IpAddr::is_ipv4)
+                .expect("the transport should advertise an IPv4 interface");
+            let remote_address = std::net::SocketAddr::new(remote_ip, /*port*/ 0);
             let (sender, mut channels) = mpsc::channel(/*buffer*/ 1);
             let gathered = Arc::new(Notify::new());
             let mut settings = webrtc::peer_connection::SettingEngine::default();
@@ -61,16 +78,14 @@ async fn check_negotiation(runtime: Arc<dyn webrtc::runtime::Runtime>) {
                 .with_setting_engine(settings)
                 .with_handler(Arc::new(RemoteEvents(sender, gathered.clone())));
             let remote = if tcp {
-                builder.with_tcp_addrs(vec!["0.0.0.0:0"])
+                builder.with_tcp_addrs(vec![remote_address])
             } else {
-                builder.with_udp_addrs(vec!["0.0.0.0:0"])
+                builder.with_udp_addrs(vec![remote_address])
             }
             .build()
             .await
             .unwrap();
             remote.add_track(remote_audio.track.clone()).await.unwrap();
-            let mut local = Transport::with_runtime(runtime.clone()).await.unwrap();
-            let offer = RTCSessionDescription::offer(local.offer().await.unwrap()).unwrap();
             remote.set_remote_description(offer).await.unwrap();
             let answer = remote.create_answer(/*options*/ None).await.unwrap();
             remote.set_local_description(answer).await.unwrap();
@@ -82,7 +97,11 @@ async fn check_negotiation(runtime: Arc<dyn webrtc::runtime::Runtime>) {
                 .map(str::to_owned)
                 .collect();
             // Normal generated UDP/TCP answers still connect at the admission boundary.
-            assert!(!candidates.is_empty() && candidates.len() <= MAX_REMOTE_CANDIDATES);
+            assert!(
+                !candidates.is_empty() && candidates.len() <= MAX_REMOTE_CANDIDATES,
+                "tcp={tcp}: generated {} remote candidates",
+                candidates.len()
+            );
             for _ in candidates.len()..MAX_REMOTE_CANDIDATES {
                 answer.push_str(&format!("{}\r\n", candidates[0]));
             }
@@ -90,7 +109,7 @@ async fn check_negotiation(runtime: Arc<dyn webrtc::runtime::Runtime>) {
                 .apply_answer(answer)
                 .await
                 .unwrap_or_else(|error| panic!("tcp={tcp}: {error}"));
-            assert_eq!(outcome, super::AnswerOutcome::Ready);
+            assert_eq!(outcome, super::AnswerOutcome::Ready, "tcp={tcp}");
             let channel = channels.recv().await.unwrap();
             assert_eq!(
                 (
