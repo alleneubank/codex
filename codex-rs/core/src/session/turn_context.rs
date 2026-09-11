@@ -30,6 +30,7 @@ use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadHistoryMode;
+use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::turn_input::CyberAccessProgram;
 use codex_sandboxing::policy_transforms::effective_permission_profile;
@@ -303,10 +304,12 @@ pub struct TurnContext {
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) provider: SharedModelProvider,
     pub(crate) session_source: SessionSource,
+    pub(crate) thread_source: Option<ThreadSource>,
     pub(crate) history_mode: ThreadHistoryMode,
     pub(crate) parent_thread_id: Option<ThreadId>,
     pub(crate) originator: String,
     pub(crate) environments: TurnEnvironmentSnapshot,
+    pub(crate) worktree_transition_revision: u64,
     /// The session's absolute working directory. All relative paths provided
     /// by the model as well as sandbox policies are resolved against this path
     /// instead of `std::env::current_dir()`.
@@ -601,10 +604,12 @@ impl TurnContext {
             session_telemetry,
             provider: self.provider.clone(),
             session_source: self.session_source.clone(),
+            thread_source: self.thread_source.clone(),
             history_mode: self.history_mode,
             parent_thread_id: self.parent_thread_id,
             originator: self.originator.clone(),
             environments: self.environments.clone(),
+            worktree_transition_revision: self.worktree_transition_revision,
             #[allow(deprecated)]
             cwd: self.cwd.clone(),
             current_date: self.current_date.clone(),
@@ -718,6 +723,12 @@ fn local_time_context() -> (String, String) {
     }
 }
 
+struct CapturedTurnState {
+    configuration: SessionConfiguration,
+    environments: TurnEnvironmentSnapshot,
+    worktree_transition_revision: u64,
+}
+
 impl Session {
     /// Don't expand the number of mutated arguments on config. We are in the process of getting rid of it.
     pub(crate) fn build_per_turn_config(
@@ -725,13 +736,25 @@ impl Session {
         session_configuration: &SessionConfiguration,
         cwd: AbsolutePathBuf,
     ) -> Config {
+        self.build_per_turn_config_with_workspace_roots(
+            session_configuration,
+            cwd,
+            self.services.turn_environments.primary_workspace_roots(),
+        )
+    }
+
+    fn build_per_turn_config_with_workspace_roots(
+        &self,
+        session_configuration: &SessionConfiguration,
+        cwd: AbsolutePathBuf,
+        workspace_roots: Vec<AbsolutePathBuf>,
+    ) -> Config {
         // todo(aibrahim): store this state somewhere else so we don't need to mut config
         let config = session_configuration.original_config_do_not_use.clone();
         let mut per_turn_config = (*config).clone();
         per_turn_config.cwd = cwd;
         per_turn_config.permissions.approval_policy =
             session_configuration.step_settings.approval_policy.clone();
-        let workspace_roots = self.services.turn_environments.primary_workspace_roots();
         per_turn_config.workspace_roots = workspace_roots.clone();
         per_turn_config
             .permissions
@@ -875,10 +898,12 @@ impl Session {
             session_telemetry: session_telemetry_for_context,
             provider,
             session_source,
+            thread_source: session_configuration.thread_source.clone(),
             history_mode: session_configuration.history_mode,
             parent_thread_id: session_configuration.parent_thread_id,
             originator: session_configuration.originator.clone(),
             environments,
+            worktree_transition_revision: 0,
             #[allow(deprecated)]
             cwd,
             current_date: Some(current_date),
@@ -948,27 +973,37 @@ impl Session {
                 return Err(CodexErr::InvalidRequest(message));
             }
         };
-        let mut configuration = commit.configuration;
+        let SessionSettingsCommit {
+            mut configuration,
+            snapshot,
+            environment_snapshot,
+            worktree_transition_revision,
+        } = commit;
         // Apply the override only to the turn's copy, after persisting thread settings.
         if let Some(service_tier) = service_tier_for_turn {
             Arc::make_mut(&mut configuration.step_settings).service_tier = Some(service_tier);
         }
+        let captured_state = CapturedTurnState {
+            configuration,
+            environments: environment_snapshot.await,
+            worktree_transition_revision,
+        };
         let turn_context = self
-            .new_turn_from_configuration(sub_id, configuration, options)
+            .new_turn_from_configuration(sub_id, captured_state, options)
             .await;
-        Ok(Some((turn_context, commit.snapshot)))
+        Ok(Some((turn_context, snapshot)))
     }
 
     /// Constructs a turn from the exact committed settings without starting a task.
     async fn new_turn_from_configuration(
         &self,
         sub_id: String,
-        session_configuration: SessionConfiguration,
+        captured_state: CapturedTurnState,
         options: NewTurnContextOptions,
     ) -> Arc<TurnContext> {
         self.new_turn_context_from_configuration(
             sub_id,
-            session_configuration,
+            captured_state,
             options,
             TurnMultiAgentRuntime::ResolveAndStore,
             self.git_enrichment_policy,
@@ -979,11 +1014,11 @@ impl Session {
     async fn new_startup_prewarm_turn_from_configuration(
         &self,
         sub_id: String,
-        session_configuration: SessionConfiguration,
+        captured_state: CapturedTurnState,
     ) -> Arc<TurnContext> {
         self.new_turn_context_from_configuration(
             sub_id,
-            session_configuration,
+            captured_state,
             NewTurnContextOptions::default(),
             TurnMultiAgentRuntime::Preview,
             GitEnrichmentPolicy::Skip,
@@ -991,16 +1026,60 @@ impl Session {
         .await
     }
 
+    pub(super) async fn host_skills_snapshot_for_config(
+        &self,
+        config: &Config,
+        turn_environments: &TurnEnvironmentSnapshot,
+        disabled_plugin_ids: &[String],
+    ) -> (HostSkillsSnapshot, TrustedPluginRoots) {
+        let plugins_input = config.plugins_config_input();
+        let plugin_outcome = self
+            .services
+            .plugins_manager
+            .plugins_for_config(&plugins_input)
+            .await
+            .without_plugins(disabled_plugin_ids);
+        let trusted_plugin_roots = TrustedPluginRoots::from_plugin_load_outcome(
+            &plugin_outcome,
+            config.codex_home.as_path(),
+        );
+        let skills_snapshot = if config.features.enabled(Feature::SkipHostSkillDiscovery)
+            && !self.services.extensions.requires_host_skill_discovery()
+        {
+            HostSkillsSnapshot::new(Arc::new(SkillLoadOutcome::default()))
+        } else {
+            let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
+            let plugin_skill_snapshots = self
+                .services
+                .plugins_manager
+                .plugin_skill_snapshots_for_config(&plugins_input);
+            let skills_input = skills_load_input_from_config(config, effective_skill_roots)
+                .with_plugin_skill_snapshots(plugin_skill_snapshots);
+            let fs = turn_environments
+                .primary()
+                .map(|environment| environment.environment.get_filesystem());
+            self.services
+                .skills_service
+                .snapshot_for_config(&skills_input, fs)
+                .await
+        };
+        (skills_snapshot, trusted_plugin_roots)
+    }
+
     #[instrument(name = "turn_context.build", level = "trace", skip_all)]
     async fn new_turn_context_from_configuration(
         &self,
         sub_id: String,
-        session_configuration: SessionConfiguration,
+        captured_state: CapturedTurnState,
         options: NewTurnContextOptions,
         multi_agent_runtime: TurnMultiAgentRuntime,
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
-        let turn_environments = self.services.turn_environments.snapshot().await;
+        let CapturedTurnState {
+            configuration: session_configuration,
+            environments: turn_environments,
+            worktree_transition_revision,
+        } = captured_state;
         let primary_turn_environment = turn_environments.primary();
         // TODO(anp): Migrate per-turn config and legacy TurnContext cwd consumers to PathUri so
         // a foreign primary environment does not fall back to the session's host cwd.
@@ -1008,7 +1087,20 @@ impl Session {
             .as_ref()
             .and_then(|turn_environment| turn_environment.cwd().to_abs_path().ok())
             .unwrap_or_else(|| session_configuration.cwd().clone());
-        let per_turn_config = self.build_per_turn_config(&session_configuration, cwd.clone());
+        let workspace_roots = primary_turn_environment
+            .map(|environment| {
+                environment
+                    .workspace_roots()
+                    .iter()
+                    .filter_map(|root| root.to_abs_path().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let per_turn_config = self.build_per_turn_config_with_workspace_roots(
+            &session_configuration,
+            cwd.clone(),
+            workspace_roots,
+        );
         let network_permission_profile = primary_turn_environment
             .map(TurnEnvironment::permission_profile)
             .cloned()
@@ -1034,40 +1126,13 @@ impl Session {
                     .or(model_info.multi_agent_version),
             ),
         };
-        let plugins_input = per_turn_config.plugins_config_input();
-        let plugin_outcome = self
-            .services
-            .plugins_manager
-            .plugins_for_config(&plugins_input)
-            .await
-            .without_plugins(&session_configuration.disabled_plugin_ids);
-        let trusted_plugin_roots = TrustedPluginRoots::from_plugin_load_outcome(
-            &plugin_outcome,
-            per_turn_config.codex_home.as_path(),
-        );
-        let skills_snapshot = if per_turn_config
-            .features
-            .enabled(Feature::SkipHostSkillDiscovery)
-            && !self.services.extensions.requires_host_skill_discovery()
-        {
-            // Executor and orchestrator catalogs are supplied independently of host skills.
-            HostSkillsSnapshot::new(Arc::new(SkillLoadOutcome::default()))
-        } else {
-            let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
-            let plugin_skill_snapshots = self
-                .services
-                .plugins_manager
-                .plugin_skill_snapshots_for_config(&plugins_input);
-            let skills_input =
-                skills_load_input_from_config(&per_turn_config, effective_skill_roots)
-                    .with_plugin_skill_snapshots(plugin_skill_snapshots);
-            let fs = primary_turn_environment
-                .map(|turn_environment| turn_environment.environment.get_filesystem());
-            self.services
-                .skills_service
-                .snapshot_for_config(&skills_input, fs)
-                .await
-        };
+        let (skills_snapshot, trusted_plugin_roots) = self
+            .host_skills_snapshot_for_config(
+                &per_turn_config,
+                &turn_environments,
+                &session_configuration.disabled_plugin_ids,
+            )
+            .await;
         let step_settings = Arc::new(ResolvedStepSettings::new(
             Arc::clone(&session_configuration.step_settings),
             Arc::new(model_info),
@@ -1102,6 +1167,7 @@ impl Session {
             sub_id,
             skills_snapshot,
         );
+        turn_context.worktree_transition_revision = worktree_transition_revision;
         turn_context.code_mode_available = self.services.code_mode_service.is_available();
         turn_context.extension_data.insert(trusted_plugin_roots);
         turn_context.realtime_active = self.conversation.running_state().await.is_some();
@@ -1174,8 +1240,8 @@ impl Session {
         sub_id: String,
         options: NewTurnContextOptions,
     ) -> Arc<TurnContext> {
-        let session_configuration = self.default_turn_configuration().await;
-        self.new_turn_from_configuration(sub_id, session_configuration, options)
+        let captured_state = self.default_turn_state().await;
+        self.new_turn_from_configuration(sub_id, captured_state, options)
             .await
     }
 
@@ -1183,13 +1249,24 @@ impl Session {
         &self,
         sub_id: String,
     ) -> Arc<TurnContext> {
-        let session_configuration = self.default_turn_configuration().await;
-        self.new_startup_prewarm_turn_from_configuration(sub_id, session_configuration)
+        let captured_state = self.default_turn_state().await;
+        self.new_startup_prewarm_turn_from_configuration(sub_id, captured_state)
             .await
     }
 
-    async fn default_turn_configuration(&self) -> SessionConfiguration {
-        let state = self.state.lock().await;
-        state.session_configuration.clone()
+    async fn default_turn_state(&self) -> CapturedTurnState {
+        let (session_configuration, environment_snapshot, worktree_transition_revision) = {
+            let state = self.state.lock().await;
+            (
+                state.session_configuration.clone(),
+                self.services.turn_environments.snapshot(),
+                self.worktree_transition_revision(),
+            )
+        };
+        CapturedTurnState {
+            configuration: session_configuration,
+            environments: environment_snapshot.await,
+            worktree_transition_revision,
+        }
     }
 }

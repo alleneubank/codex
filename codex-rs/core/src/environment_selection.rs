@@ -806,16 +806,25 @@ impl ThreadEnvironments {
         })
     }
 
+    pub(crate) fn snapshot(
+        &self,
+    ) -> impl std::future::Future<Output = TurnEnvironmentSnapshot> + Send + 'static {
+        let selected = self.environments.load_full();
+        Self::resolve_snapshot(selected, self.non_blocking_snapshots)
+    }
+
     #[tracing::instrument(
         name = "environments.snapshot",
         skip_all,
         fields(
-            environment_count = self.environments.load().len(),
-            non_blocking = self.non_blocking_snapshots,
+            environment_count = selected.len(),
+            non_blocking,
         )
     )]
-    pub(crate) async fn snapshot(&self) -> TurnEnvironmentSnapshot {
-        let selected = self.environments.load_full();
+    async fn resolve_snapshot(
+        selected: Arc<Vec<SelectedTurnEnvironment>>,
+        non_blocking: bool,
+    ) -> TurnEnvironmentSnapshot {
         let mut environments = Vec::with_capacity(selected.len());
         for environment in selected.iter() {
             if let EnvironmentConfigState::Failed(error) = &environment.selection.config {
@@ -834,7 +843,7 @@ impl ThreadEnvironments {
                 config_origin: environment.config_origin,
                 resolution: environment.resolution.clone(),
             };
-            let resolved = if self.non_blocking_snapshots || pending {
+            let resolved = if non_blocking || pending {
                 starting.resolution.clone().now_or_never()
             } else {
                 Some(match starting.wait_until_ready().await {
@@ -1044,6 +1053,21 @@ impl TurnEnvironmentSnapshot {
     pub(crate) fn to_selections(&self) -> Vec<TurnEnvironmentSelection> {
         self.turn_environments()
             .map(TurnEnvironment::selection)
+            .collect()
+    }
+
+    pub(crate) fn selections_including_starting(&self) -> Vec<TurnEnvironmentSelection> {
+        self.environments
+            .iter()
+            .filter_map(|environment| match environment {
+                TurnEnvironmentState::Ready(environment) => Some(environment.selection()),
+                TurnEnvironmentState::Starting(environment) => Some(
+                    environment
+                        .config_origin
+                        .into_input_selection(environment.selection.clone()),
+                ),
+                TurnEnvironmentState::Failed { .. } => None,
+            })
             .collect()
     }
 
@@ -1374,6 +1398,36 @@ url = "ws://127.0.0.1:8765"
     }
 
     #[tokio::test]
+    async fn snapshot_keeps_selections_present_when_future_is_created() {
+        let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+        let first = TurnEnvironmentSelection {
+            environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+            cwd: PathUri::from_abs_path(&cwd),
+            workspace_roots: Vec::new(),
+            config: EnvironmentConfigState::FromThread,
+        };
+        let environments = ThreadEnvironments::new(
+            Arc::new(EnvironmentManager::default_for_tests()),
+            crate::shell::default_user_shell(),
+            test_environment_config(),
+            ShellSnapshot::disabled(),
+            TurnEnvironmentSnapshot::default(),
+            /*non_blocking_snapshots*/ false,
+        );
+        environments.update_selections(std::slice::from_ref(&first), &test_environment_config());
+        let snapshot = environments.snapshot();
+        environments.update_selections(
+            &[TurnEnvironmentSelection {
+                cwd: PathUri::from_abs_path(&cwd.join("next")),
+                ..first.clone()
+            }],
+            &test_environment_config(),
+        );
+
+        assert_eq!(snapshot.await.to_selections(), vec![first]);
+    }
+
+    #[tokio::test]
     async fn resolved_environment_selections_use_first_selection_as_primary() {
         let cwd = AbsolutePathBuf::current_dir().expect("cwd");
         let selected_cwd = cwd.join("selected");
@@ -1616,6 +1670,10 @@ url = "ws://127.0.0.1:8765"
             vec![resolved_remote.clone()]
         );
         assert_eq!(starting.to_selections(), vec![local.clone()]);
+        assert_eq!(
+            starting.selections_including_starting(),
+            vec![remote.clone(), local.clone()]
+        );
         assert!(starting.single_local_environment().is_none());
 
         let next_config = EnvironmentConfig {

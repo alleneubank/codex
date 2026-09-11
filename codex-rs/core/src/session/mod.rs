@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -267,6 +268,8 @@ use self::session::Session;
 use self::session::SessionConfiguration;
 use self::session::SessionSettingsCommit;
 pub(crate) use self::session::SessionSettingsUpdate;
+pub(crate) use self::thread_settings::acquire_persistence_lock as acquire_thread_settings_persistence_lock;
+pub(crate) use self::thread_settings::applied_event_from_snapshot as thread_settings_applied_event_from_snapshot;
 #[cfg(test)]
 use self::turn::AssistantMessageStreamParsers;
 use self::turn::agent_message_text;
@@ -1821,6 +1824,8 @@ impl Session {
                 snapshot: state
                     .session_configuration
                     .thread_settings_snapshot(&self.services.turn_environments.selections()),
+                environment_snapshot: self.services.turn_environments.snapshot().boxed(),
+                worktree_transition_revision: self.worktree_transition_revision(),
             };
             (
                 commit,
@@ -3718,16 +3723,45 @@ impl Session {
             settings.model_info.as_ref(),
         );
         let session_telemetry = settings.telemetry(&turn_context.session_telemetry);
-        // Keep selections fixed for the turn while allowing their startup work to finish.
-        let environments = turn_context.environments.refresh_readiness();
+        let worktree_transitioned_during_turn =
+            self.worktree_transition_revision() != turn_context.worktree_transition_revision;
+        // Keep selections fixed for the turn while allowing startup work to finish. Entering or
+        // exiting a worktree is the sole mid-turn transition that deliberately retargets tools.
+        let (environments, config) = if worktree_transitioned_during_turn {
+            let (environment_snapshot, config) = {
+                let state = self.state.lock().await;
+                (
+                    self.services.turn_environments.snapshot(),
+                    Arc::clone(&state.session_configuration.original_config_do_not_use),
+                )
+            };
+            (environment_snapshot.await, config)
+        } else {
+            (
+                turn_context.environments.refresh_readiness(),
+                Arc::clone(&turn_context.config),
+            )
+        };
         let (loaded_agents_md, warnings) = self
             .services
             .agents_md_manager
-            .refresh(&turn_context.config, &environments)
+            .refresh(&config, &environments)
             .or_cancel(cancellation_token)
             .await?;
         self.emit_instruction_warnings(warnings).await;
         let loaded_agents_md = loaded_agents_md?;
+        if worktree_transitioned_during_turn {
+            let (host_skills_snapshot, trusted_plugin_roots) = self
+                .host_skills_snapshot_for_config(
+                    &config,
+                    &environments,
+                    &turn_context.disabled_plugin_ids,
+                )
+                .or_cancel(cancellation_token)
+                .await?;
+            turn_context.extension_data.insert(host_skills_snapshot);
+            turn_context.extension_data.insert(trusted_plugin_roots);
+        }
         let selected_capability_roots = self
             .resolve_selected_capability_roots_for_step(&environments)
             .await;
@@ -3735,7 +3769,7 @@ impl Session {
             Self::ready_selected_capability_roots(&selected_capability_roots);
         let executor_capability_discovery = self
             .executor_capability_discovery_for_step(
-                &turn_context.config,
+                &config,
                 &ready_selected_capability_roots,
                 &environments,
             )

@@ -97,7 +97,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
 }
 
 /// Acquires the shared permit before capturing or changing persistent settings.
-pub(super) async fn acquire_persistence_lock(session: &Session) -> SemaphorePermit<'_> {
+pub(crate) async fn acquire_persistence_lock(session: &Session) -> SemaphorePermit<'_> {
     session
         .thread_settings_persistence
         .acquire()
@@ -123,10 +123,7 @@ pub(super) async fn emit_applied(
     submission_id: String,
     snapshot: ThreadSettingsSnapshot,
 ) {
-    let msg = EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
-        thread_id: Some(session.thread_id()),
-        thread_settings: snapshot,
-    });
+    let msg = applied_event_from_snapshot(session, snapshot);
     session
         .send_event_raw_without_materializing_rollout(Event {
             id: submission_id,
@@ -135,10 +132,17 @@ pub(super) async fn emit_applied(
         .await;
 }
 
-/// Builds a current thread-owned snapshot for storage checkpoints.
-pub(super) async fn applied_event(session: &Session) -> EventMsg {
+pub(crate) fn applied_event_from_snapshot(
+    session: &Session,
+    snapshot: ThreadSettingsSnapshot,
+) -> EventMsg {
     EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
         thread_id: Some(session.thread_id()),
-        thread_settings: session.thread_settings_snapshot().await,
+        thread_settings: snapshot,
     })
+}
+
+/// Builds a current thread-owned snapshot for storage, fork, and compaction persistence.
+pub(crate) async fn applied_event(session: &Session) -> EventMsg {
+    applied_event_from_snapshot(session, session.thread_settings_snapshot().await)
 }
