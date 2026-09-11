@@ -12,6 +12,7 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::worktree_spec::ENTER_WORKTREE_TOOL_NAME;
 use crate::tools::handlers::worktree_spec::EXIT_WORKTREE_TOOL_NAME;
 use crate::tools::handlers::worktree_spec::create_enter_worktree_tool;
+use crate::tools::handlers::worktree_spec::create_exit_worktree_tool;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_git_utils::ManagedWorktree;
@@ -21,6 +22,7 @@ use codex_git_utils::inspect_worktree;
 use codex_git_utils::managed_worktree_path;
 use codex_git_utils::managed_worktrees_dir;
 use codex_git_utils::remove_created_managed_worktree;
+use codex_git_utils::remove_managed_worktree;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::protocol::TurnEnvironmentSelections;
@@ -37,11 +39,15 @@ use std::path::PathBuf;
 mod worktree_discovery;
 #[path = "worktree_enter.rs"]
 mod worktree_enter;
+#[path = "worktree_exit.rs"]
+mod worktree_exit;
 #[path = "worktree_helpers.rs"]
 mod worktree_helpers;
 use worktree_discovery::active_or_derived_worktree;
+use worktree_discovery::active_or_derived_worktree_for_exit;
 use worktree_discovery::managed_worktree_name;
 use worktree_enter::enter_worktree;
+use worktree_exit::exit_worktree;
 use worktree_helpers::bound_worktree_error;
 use worktree_helpers::canonicalize_for_worktree_check;
 use worktree_helpers::ensure_current_cwd_matches_active_worktree;
@@ -77,6 +83,17 @@ struct EnterWorktreeArgs {
     path: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitWorktreeArgs {
+    #[serde(default = "default_keep_worktree")]
+    keep: bool,
+}
+
+fn default_keep_worktree() -> bool {
+    true
+}
+
 #[derive(Serialize)]
 struct WorktreeOutput {
     cwd: String,
@@ -85,6 +102,18 @@ struct WorktreeOutput {
     branch: Option<String>,
     name: Option<String>,
     created: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct ExitWorktreeOutput {
+    cwd: String,
+    worktree_path: String,
+    original_cwd: String,
+    branch: Option<String>,
+    name: Option<String>,
+    created: Option<bool>,
+    keep: bool,
+    removed: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -141,6 +170,31 @@ impl ToolExecutor<ToolInvocation> for EnterWorktreeHandler {
 }
 
 impl CoreToolRuntime for EnterWorktreeHandler {}
+
+pub(crate) struct ExitWorktreeHandler;
+
+impl ToolExecutor<ToolInvocation> for ExitWorktreeHandler {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain(EXIT_WORKTREE_TOOL_NAME)
+    }
+
+    fn spec(&self) -> ToolSpec {
+        create_exit_worktree_tool()
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        false
+    }
+
+    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+    where
+        ToolInvocation: 'a,
+    {
+        Box::pin(exit_worktree(invocation))
+    }
+}
+
+impl CoreToolRuntime for ExitWorktreeHandler {}
 
 fn local_primary_environment<'a>(
     tool_name: &str,
@@ -383,6 +437,13 @@ async fn create_or_reuse_managed_worktree_blocking(
     name: String,
 ) -> Result<ManagedWorktree, FunctionCallError> {
     git_blocking(move || create_or_reuse_managed_worktree(&repository_path, &name)).await
+}
+
+async fn remove_managed_worktree_blocking(
+    repository_path: PathBuf,
+    worktree_path: PathBuf,
+) -> Result<(), FunctionCallError> {
+    git_blocking(move || remove_managed_worktree(&repository_path, &worktree_path)).await
 }
 
 async fn remove_created_managed_worktree_blocking(

@@ -15,6 +15,7 @@ use crate::tools::handlers::DynamicToolHandler;
 use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
@@ -1148,6 +1149,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         Some(codex_protocol::protocol::ThreadSource::Feature(feature)) if feature == "system"
     ) {
         registry.add_with_exposure(EnterWorktreeHandler, ToolExposure::DirectModelOnly);
+        registry.add_with_exposure(ExitWorktreeHandler, ToolExposure::DirectModelOnly);
     }
 
     if features.enabled(Feature::DeferredExecutor) {

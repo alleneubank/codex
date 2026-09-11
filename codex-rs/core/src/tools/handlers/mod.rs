@@ -84,6 +84,7 @@ pub use view_image::ViewImageHandler;
 pub(crate) use wait_for_environment::WaitForEnvironmentHandler;
 pub use wait_for_environment::WaitForEnvironmentToolConfig;
 pub(crate) use worktree::EnterWorktreeHandler;
+pub(crate) use worktree::ExitWorktreeHandler;
 
 pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
