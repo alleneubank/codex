@@ -4,6 +4,9 @@
 use crate::agents_md::LoadedAgentsMd;
 use crate::agents_md::load_project_instructions;
 use crate::config::Config;
+use crate::context::ContextualUserFragment;
+use crate::context::UserInstructions;
+use crate::context::world_state::AGENTS_MD_REPLACEMENT_NOTICE;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use codex_extension_api::Instructions;
 use codex_extension_api::ThreadInstructionsProvider;
@@ -128,8 +131,9 @@ impl AgentsMdManager {
             } else {
                 cached.as_deref().cloned().unwrap_or_default()
             }
-            .with_instructions(instructions.user.clone(), instructions.thread.clone())
-            .map(Arc::new);
+            .with_instructions(instructions.user.clone(), instructions.thread.clone());
+            validate_combined_instruction_size(loaded.as_ref())?;
+            let loaded = loaded.map(Arc::new);
             let mut state = self.state.lock().await;
             state.instructions = instructions;
             state.cache = AgentsMdCache {
@@ -157,10 +161,11 @@ impl AgentsMdManager {
     }
 }
 
-// Bound the new host-provided contribution independently of project_doc_max_bytes,
-// which controls repository discovery. Existing global and combined instruction
-// size policy is unchanged; reject oversized thread input rather than truncate it.
+// Bound host-provided and final combined instructions independently of
+// project_doc_max_bytes, which only controls repository discovery. Reject
+// oversized input instead of silently truncating standing instructions.
 const MAX_THREAD_INSTRUCTIONS_TOKENS: usize = 10_000;
+const MAX_COMBINED_INSTRUCTIONS_TOKENS: usize = 10_000;
 
 fn validate_thread_instruction_size(bytes: usize) -> CodexResult<()> {
     if bytes > approx_bytes_for_tokens(MAX_THREAD_INSTRUCTIONS_TOKENS) {
@@ -172,6 +177,29 @@ fn validate_thread_instruction_size(bytes: usize) -> CodexResult<()> {
     Ok(())
 }
 
+fn validate_combined_instruction_size(loaded: Option<&LoadedAgentsMd>) -> CodexResult<()> {
+    let Some(loaded) = loaded else {
+        return Ok(());
+    };
+    let instructions = loaded.contextual_user_fragment();
+    let replacement = UserInstructions {
+        directory: instructions.directory,
+        text: format!("{AGENTS_MD_REPLACEMENT_NOTICE}\n\n{}", instructions.text),
+    };
+    let rendered_bytes = replacement.render().len();
+    if rendered_bytes > approx_bytes_for_tokens(MAX_COMBINED_INSTRUCTIONS_TOKENS) {
+        let estimated_tokens = approx_tokens_from_byte_count(rendered_bytes);
+        return Err(CodexErr::InvalidRequest(format!(
+            "combined AGENTS.md instructions exceed the model-context limit of {MAX_COMBINED_INSTRUCTIONS_TOKENS} estimated tokens ({estimated_tokens} estimated tokens including replacement markers)"
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_instructions(instructions: Option<Instructions>) -> Option<Instructions> {
     instructions.filter(|instructions| !instructions.text.trim().is_empty())
 }
+
+#[cfg(test)]
+#[path = "agents_md_manager_tests.rs"]
+mod tests;
