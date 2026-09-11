@@ -314,3 +314,14 @@ fn response_items_text(items: &[codex_protocol::models::ResponseItem]) -> String
     }
     text
 }
+
+#[path = "worktree_context_tests.rs"]
+mod context_tests;
+#[path = "worktree_enter_tests.rs"]
+mod enter_tests;
+#[path = "worktree_environment_tests.rs"]
+mod environment_tests;
+#[path = "worktree_exit_tests.rs"]
+mod exit_tests;
+#[path = "worktree_trust_tests.rs"]
+mod trust_tests;
