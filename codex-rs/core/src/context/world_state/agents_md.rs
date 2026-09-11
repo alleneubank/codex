@@ -6,7 +6,7 @@ use crate::context::UserInstructions;
 use serde::Deserialize;
 use serde::Serialize;
 
-const REPLACEMENT_NOTICE: &str =
+pub(crate) const REPLACEMENT_NOTICE: &str =
     "These AGENTS.md instructions replace all previously provided AGENTS.md instructions.";
 const REMOVAL_NOTICE: &str = "The previously provided AGENTS.md instructions no longer apply.";
 
