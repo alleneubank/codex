@@ -43,6 +43,10 @@ use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::WindowsSandboxModeToml;
 use core_test_support::test_codex::TurnInputRequest as ExternalTurnInputRequest;
 
+use codex_exec_server::Environment;
+use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use codex_exec_server::REMOTE_ENVIRONMENT_ID;
 use codex_features::Feature;
 use codex_file_system::FileSystemSandboxContext;
 use codex_http_client::ClientRouteClass;
@@ -109,7 +113,9 @@ use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::EnterWorktreeHandler;
 use crate::tools::handlers::ExecCommandHandler;
+use crate::tools::handlers::ExitWorktreeHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::router::ToolCallSource;
@@ -220,6 +226,7 @@ use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration as StdDuration;
@@ -293,6 +300,7 @@ impl StepContext {
 }
 
 mod guardian_tests;
+mod worktree_tests;
 
 fn user_message(text: &str) -> ResponseItem {
     ResponseItem::Message {
@@ -3825,7 +3833,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy(),
-        approvals_reviewer: None,
+        approvals_reviewer: Some(ApprovalsReviewer::User),
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
         active_permission_profile: None,
@@ -4550,6 +4558,7 @@ async fn set_rate_limits_retains_previous_credits() {
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -4671,6 +4680,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -5318,6 +5328,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -5960,6 +5971,11 @@ async fn session_configuration_apply_preserves_absolute_cwd_write_root_on_cwd_up
         .apply(
             &SessionSettingsUpdate {
                 environments: Some(TurnEnvironmentSelections::new(next_cwd.clone(), Vec::new())),
+                active_project: Some(ActiveProjectSettingsUpdate::Resolved {
+                    cwd: next_cwd.clone(),
+                    project_root: next_cwd.clone(),
+                    repo_root: None,
+                }),
                 ..Default::default()
             },
             &[],
@@ -6109,6 +6125,12 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
         },
     )
     .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let first_cwd = temp.path().join("first").abs();
+    let later_cwd = temp.path().join("later").abs();
+    std::fs::create_dir(first_cwd.as_path()).expect("create first cwd");
+    std::fs::create_dir(later_cwd.as_path()).expect("create later cwd");
+    let expected_transition_revision = session.worktree_transition_revision();
     let refresh_guard = session
         .managed_network_proxy_refresh_lock
         .acquire()
@@ -6121,6 +6143,13 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
                 ..Default::default()
             },
             permission_profile: Some(PermissionProfile::read_only()),
+            environments: Some(TurnEnvironmentSelections::new(
+                first_cwd.clone(),
+                vec![local(first_cwd.clone())],
+            )),
+            active_project: Some(ActiveProjectSettingsUpdate::Untrusted {
+                cwd: first_cwd.clone(),
+            }),
             ..Default::default()
         },
     )));
@@ -6131,12 +6160,18 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
         assert!(std::future::Future::poll(first_update.as_mut(), &mut context).is_pending());
     }
     let expected = session.thread_settings_snapshot().await;
+    session.record_worktree_transition();
     let later_commit = session
         .update_settings(SessionSettingsUpdate {
             step_settings: StepSettingsUpdate {
                 service_tier: Some(None),
                 ..Default::default()
             },
+            environments: Some(TurnEnvironmentSelections::new(
+                later_cwd.clone(),
+                vec![local(later_cwd.clone())],
+            )),
+            active_project: Some(ActiveProjectSettingsUpdate::Untrusted { cwd: later_cwd }),
             ..Default::default()
         })
         .await
@@ -6150,6 +6185,14 @@ async fn session_settings_commit_keeps_snapshot_across_postcommit_wait() {
     assert_eq!(commit.snapshot, expected);
     assert_eq!(configuration_snapshot, expected);
     assert_ne!(later_commit.snapshot, expected);
+    assert_eq!(
+        commit.environment_snapshot.await.to_selections(),
+        vec![local(first_cwd)]
+    );
+    assert_eq!(
+        commit.worktree_transition_revision,
+        expected_transition_revision
+    );
 }
 
 #[tokio::test]
@@ -6402,6 +6445,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -6579,6 +6623,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -6833,6 +6878,15 @@ async fn load_latest_config_for_session(session: &Session) -> Config {
 async fn make_session_with_config_and_rx(
     mutator: impl FnOnce(&mut Config),
 ) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
+    make_session_with_config_and_rx_with_environments(mutator, None, None, None).await
+}
+
+pub(crate) async fn make_session_with_config_and_rx_with_environments(
+    mutator: impl FnOnce(&mut Config),
+    environment_selections: Option<Vec<TurnEnvironmentSelection>>,
+    inherited_environments: Option<TurnEnvironmentSnapshot>,
+    environment_manager: Option<Arc<EnvironmentManager>>,
+) -> anyhow::Result<(Arc<Session>, async_channel::Receiver<Event>)> {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let mut config = build_test_config(codex_home.path()).await;
     mutator(&mut config);
@@ -6854,7 +6908,8 @@ async fn make_session_with_config_and_rx(
             developer_instructions: None,
         },
     };
-    let default_environments = vec![local(config.cwd.clone())];
+    let default_environments =
+        environment_selections.unwrap_or_else(|| vec![local(config.cwd.clone())]);
     let session_configuration = SessionConfiguration {
         provider: create_model_provider(
             config.model_provider.clone(),
@@ -6886,6 +6941,7 @@ async fn make_session_with_config_and_rx(
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -6911,8 +6967,8 @@ async fn make_session_with_config_and_rx(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-    let environment_manager = Arc::new(EnvironmentManager::default_for_tests());
-
+    let environment_manager =
+        environment_manager.unwrap_or_else(|| Arc::new(EnvironmentManager::default_for_tests()));
     let session = Session::new(
         session_configuration,
         &default_environments,
@@ -6939,7 +6995,7 @@ async fn make_session_with_config_and_rx(
         AgentControl::default(),
         /*reserved_thread_id*/ None,
         environment_manager,
-        /*inherited_environments*/ None,
+        inherited_environments,
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
@@ -7015,6 +7071,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
@@ -8754,6 +8811,7 @@ where
         thread_name: None,
         disabled_plugin_ids: Vec::new(),
         original_config_do_not_use: Arc::clone(&config),
+        active_project_settings: None,
         metrics_service_name: None,
         app_server_client_name: None,
         app_server_client_version: None,
