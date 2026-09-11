@@ -183,3 +183,16 @@ fn has_function_call_output(request: &wiremock::Request, call_id: &str) -> bool 
             })
     })
 }
+
+#[path = "worktree_agents.rs"]
+mod agents;
+#[path = "worktree_errors.rs"]
+mod errors;
+#[path = "worktree_exit.rs"]
+mod exit;
+#[path = "worktree_flow.rs"]
+mod flow;
+#[path = "worktree_paths.rs"]
+mod paths;
+#[path = "worktree_retarget.rs"]
+mod retarget;
