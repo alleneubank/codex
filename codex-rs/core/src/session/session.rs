@@ -8,6 +8,7 @@ use super::*;
 use crate::agents_md_manager::AgentsMdManager;
 use crate::agents_md_manager::SessionInstructions;
 use crate::config::ConstraintError;
+use crate::config::deserialize_config_toml_with_base;
 use crate::context::GuardianContextMode;
 use crate::environment_selection::ThreadEnvironments;
 use crate::environment_selection::TurnEnvironmentSnapshot;
@@ -17,6 +18,7 @@ use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::shell_snapshot::SnapshotCredentialBrokerState;
 use crate::state::ActiveTurn;
+use codex_config::config_toml::ProjectConfig;
 use codex_extension_api::ExtensionDataInit;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::RouteAwareClientPool;
@@ -76,6 +78,9 @@ pub(crate) struct Session {
     pub(super) thread_settings_persistence: Semaphore,
     pub(super) active_worktree: Mutex<Option<ActiveWorktree>>,
     pub(super) worktree_transition_revision: AtomicU64,
+    pub(super) runtime_config_refresh_generation: AtomicU64,
+    #[cfg(test)]
+    pub(super) runtime_config_refresh_pause: Mutex<Option<RuntimeConfigRefreshPause>>,
     /// Serializes rebuild/apply cycles for the running proxy; each cycle
     /// rebuilds from the current SessionState while holding this lock.
     pub(super) managed_network_proxy_refresh_lock: Semaphore,
@@ -104,6 +109,13 @@ pub(crate) struct Session {
     pub(super) fork_persistence: ForkPersistence,
     pub(super) forked_from_ordinal_exclusive: Option<u64>,
     pub(super) next_internal_sub_id: AtomicU64,
+}
+
+#[cfg(test)]
+pub(super) struct RuntimeConfigRefreshPause {
+    pub(super) generation: u64,
+    pub(super) started: Arc<tokio::sync::Notify>,
+    pub(super) resume: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Clone)]
@@ -147,6 +159,7 @@ pub(crate) struct SessionConfiguration {
 
     // TODO(pakrym): Remove config from here
     pub(super) original_config_do_not_use: Arc<Config>,
+    pub(super) active_project_settings: Option<ActiveProjectSettingsUpdate>,
     /// Optional service name tag for session metrics.
     pub(super) metrics_service_name: Option<String>,
     pub(super) app_server_client_name: Option<String>,
@@ -400,6 +413,35 @@ impl SessionConfiguration {
         current_environments: &[TurnEnvironmentSelection],
     ) -> ConstraintResult<Self> {
         let mut next_configuration = self.clone();
+        if updates.active_project.is_none()
+            && updates.environments.as_ref().is_some_and(|environments| {
+                environments.legacy_fallback_cwd != self.legacy_fallback_cwd
+            })
+        {
+            return Err(ConstraintError::InvalidValue {
+                field_name: "active_project",
+                candidate: "missing".to_string(),
+                allowed: "a project identity for the updated environment cwd".to_string(),
+                requirement_source: codex_config::RequirementSource::Unknown,
+            });
+        }
+        if let Some(active_project) = &updates.active_project {
+            if updates.environments.as_ref().is_none_or(|environments| {
+                environments.legacy_fallback_cwd != *active_project.cwd()
+            }) {
+                return Err(ConstraintError::InvalidValue {
+                    field_name: "active_project",
+                    candidate: active_project.cwd().to_string_lossy().to_string(),
+                    allowed: "the updated environment cwd".to_string(),
+                    requirement_source: codex_config::RequirementSource::Unknown,
+                });
+            }
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.active_project = active_project.resolve(&config)?;
+            config.cwd = active_project.cwd().clone();
+            next_configuration.original_config_do_not_use = Arc::new(config);
+            next_configuration.active_project_settings = Some(active_project.clone());
+        }
         if let Some(disabled_plugin_ids) = &updates.disabled_plugin_ids {
             next_configuration.disabled_plugin_ids = disabled_plugin_ids.clone();
         }
@@ -599,6 +641,7 @@ pub(crate) struct SessionSettingsCommit {
 pub(crate) struct SessionSettingsUpdate {
     pub(crate) step_settings: StepSettingsUpdate,
     pub(crate) environments: Option<TurnEnvironmentSelections>,
+    pub(crate) active_project: Option<ActiveProjectSettingsUpdate>,
     pub(crate) runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub(crate) profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub(crate) sandbox_policy: Option<SandboxPolicy>,
@@ -609,6 +652,70 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
     pub(crate) disabled_plugin_ids: Option<Vec<String>>,
+    pub(crate) worktree_transition: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum ActiveProjectSettingsUpdate {
+    Resolved {
+        cwd: AbsolutePathBuf,
+        project_root: AbsolutePathBuf,
+        repo_root: Option<AbsolutePathBuf>,
+    },
+    Untrusted {
+        cwd: AbsolutePathBuf,
+    },
+}
+
+impl ActiveProjectSettingsUpdate {
+    pub(crate) fn cwd(&self) -> &AbsolutePathBuf {
+        match self {
+            Self::Resolved { cwd, .. } | Self::Untrusted { cwd } => cwd,
+        }
+    }
+
+    pub(super) fn resolve(&self, config: &Config) -> ConstraintResult<ProjectConfig> {
+        let (cwd, project_root, repo_root) = match self {
+            Self::Resolved {
+                cwd,
+                project_root,
+                repo_root,
+            } => (cwd, project_root, repo_root),
+            Self::Untrusted { .. } => {
+                return Ok(ProjectConfig {
+                    trust_level: Some(codex_protocol::config_types::TrustLevel::Untrusted),
+                });
+            }
+        };
+        let config_toml = deserialize_config_toml_with_base(
+            config.config_layer_stack.effective_config(),
+            config.codex_home.as_path(),
+        )
+        .map_err(|err| ConstraintError::InvalidValue {
+            field_name: "projects",
+            candidate: err.to_string(),
+            allowed: "valid project trust configuration".to_string(),
+            requirement_source: codex_config::RequirementSource::Unknown,
+        })?;
+        Ok(config_toml
+            .get_active_project(cwd.as_path(), /*repo_root*/ None)
+            .filter(|project| project.trust_level.is_some())
+            .or_else(|| {
+                config_toml
+                    .get_active_project(project_root.as_path(), /*repo_root*/ None)
+                    .filter(|project| project.trust_level.is_some())
+            })
+            .or_else(|| {
+                repo_root.as_ref().and_then(|repo_root| {
+                    config_toml
+                        .get_active_project(repo_root.as_path(), /*repo_root*/ None)
+                        .filter(|project| project.trust_level.is_some())
+                })
+            })
+            .unwrap_or(ProjectConfig {
+                trust_level: Some(codex_protocol::config_types::TrustLevel::Untrusted),
+            }))
+    }
 }
 
 pub(crate) struct AppServerClientMetadata {
@@ -1656,6 +1763,9 @@ impl Session {
                 thread_settings_persistence: Semaphore::new(/*permits*/ 1),
                 active_worktree: Mutex::new(None),
                 worktree_transition_revision: AtomicU64::new(0),
+                runtime_config_refresh_generation: AtomicU64::new(0),
+                #[cfg(test)]
+                runtime_config_refresh_pause: Mutex::new(None),
                 managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
                 features: config.features.clone(),
                 guardian_context_mode,

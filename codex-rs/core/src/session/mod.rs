@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(test)]
@@ -16,6 +17,7 @@ use crate::agent::agent_status_from_event;
 use crate::agent::status::is_final;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
+use crate::agents_md::configured_project_root_markers;
 use crate::agents_md_manager::SessionInstructions;
 use crate::attestation::AttestationProvider;
 use crate::compact;
@@ -63,6 +65,8 @@ use codex_analytics::ImagePreparationMetadata;
 use codex_analytics::SubAgentThreadStartedInput;
 use codex_analytics::TurnCodexErrorFact;
 use codex_async_utils::OrCancelExt;
+use codex_config::config_toml::ProjectConfig;
+use codex_config::loader::find_project_root;
 use codex_connectors::connector_runtime_context_key;
 use codex_context_fragments::RenderedFragment;
 use codex_exec_server::Environment;
@@ -170,6 +174,7 @@ use codex_thread_store::LocalThreadStore;
 use codex_thread_store::PersistContext;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
+use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
 use codex_utils_audio::prepare_response_items as prepare_audio_response_items;
@@ -263,7 +268,12 @@ pub(crate) use self::input_queue::InputQueueActivity;
 pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 use self::review::spawn_review_thread;
+pub(crate) use self::session::ActiveProjectSettingsUpdate;
+pub(crate) use self::session::ActiveWorktree;
+pub(crate) use self::session::ActiveWorktreeOwnership;
 use self::session::AppServerClientMetadata;
+#[cfg(test)]
+use self::session::RuntimeConfigRefreshPause;
 use self::session::Session;
 use self::session::SessionConfiguration;
 use self::session::SessionSettingsCommit;
@@ -331,6 +341,7 @@ use codex_core_plugins::PluginCommandAttribution;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::RecommendedPluginCandidatesInput;
 use codex_git_utils::get_git_repo_root;
+use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_history::CodexHarnessMetadata;
 use codex_history::CompactedItem;
 use codex_history::InitialHistory;
@@ -497,6 +508,12 @@ pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
 const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
 const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
+
+fn untrusted_project_config() -> ProjectConfig {
+    ProjectConfig {
+        trust_level: Some(codex_protocol::config_types::TrustLevel::Untrusted),
+    }
+}
 
 impl Session {
     /// Spawn and initialize a new session.
@@ -792,6 +809,7 @@ impl Session {
             thread_name: None,
             disabled_plugin_ids,
             original_config_do_not_use: Arc::clone(&config),
+            active_project_settings: None,
             metrics_service_name,
             app_server_client_name: None,
             app_server_client_version: None,
@@ -1743,6 +1761,16 @@ impl Session {
         state.set_previous_turn_settings(previous_turn_settings);
     }
 
+    fn session_cwd_is_inside_active_worktree(cwd: &Path, active_worktree_path: &Path) -> bool {
+        let Ok(cwd) = cwd.canonicalize() else {
+            return false;
+        };
+        let Ok(active_worktree_path) = active_worktree_path.canonicalize() else {
+            return false;
+        };
+        cwd.starts_with(active_worktree_path)
+    }
+
     pub(crate) async fn update_settings(
         &self,
         updates: SessionSettingsUpdate,
@@ -1765,8 +1793,17 @@ impl Session {
         updates: SessionSettingsUpdate,
         should_commit: impl FnOnce(&SessionConfiguration, &SessionConfiguration) -> bool + Send,
     ) -> ConstraintResult<Option<SessionSettingsCommit>> {
+        let updates = self.resolve_active_project_settings(updates).await;
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-        let (commit, previous_config, new_config, permission_profile_changed, mcp_inputs_changed) = {
+        let active_worktree = self.active_worktree.lock().await.clone();
+        let (
+            commit,
+            previous_config,
+            new_config,
+            permission_profile_changed,
+            mcp_inputs_changed,
+            updated_cwd,
+        ) = {
             let mut state = self.state.lock().await;
             let updated = match self.apply_session_settings(&state.session_configuration, &updates)
             {
@@ -1807,6 +1844,13 @@ impl Session {
                     .turn_environments
                     .update_thread_config(&environment_config);
             }
+            if updates.worktree_transition {
+                self.record_worktree_transition();
+            }
+            let updated_cwd = updates
+                .environments
+                .is_some()
+                .then(|| updated.cwd().clone());
             state.session_configuration = updated;
             if root_service_tier_changed {
                 self.services.agent_control.set_root_service_tier(
@@ -1833,8 +1877,21 @@ impl Session {
                 new_config,
                 permission_profile_changed,
                 mcp_inputs_changed,
+                updated_cwd,
             )
         };
+        if updated_cwd
+            .as_ref()
+            .zip(active_worktree.as_ref())
+            .is_some_and(|(updated_cwd, active_worktree)| {
+                !Self::session_cwd_is_inside_active_worktree(
+                    updated_cwd.as_path(),
+                    active_worktree.worktree_path.as_path(),
+                )
+            })
+        {
+            self.clear_active_worktree().await;
+        }
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
         if permission_profile_changed {
             self.refresh_managed_network_proxy_for_current_permission_profile()
@@ -1846,12 +1903,93 @@ impl Session {
         Ok(Some(commit))
     }
 
+    async fn resolve_active_project_settings(
+        &self,
+        mut updates: SessionSettingsUpdate,
+    ) -> SessionSettingsUpdate {
+        if updates.active_project.is_some() {
+            return updates;
+        }
+        let Some(environments) = &updates.environments else {
+            return updates;
+        };
+        let cwd = environments.legacy_fallback_cwd.clone();
+        let config = self.get_config().await;
+        updates.active_project = Some(
+            self.resolve_active_project_for_cwd(&cwd, &environments.environments, &config)
+                .await,
+        );
+        updates
+    }
+
+    async fn resolve_active_project_for_cwd(
+        &self,
+        cwd: &AbsolutePathBuf,
+        environments: &[TurnEnvironmentSelection],
+        config: &Config,
+    ) -> ActiveProjectSettingsUpdate {
+        let environment_manager = self.services.turn_environments.environment_manager();
+        let local_environment = environments.iter().find_map(|selection| {
+            let environment = environment_manager.get_environment(&selection.environment_id)?;
+            if environment.is_remote() || selection.cwd.to_abs_path().ok().as_ref() != Some(cwd) {
+                return None;
+            }
+            Some(environment)
+        });
+        match local_environment {
+            Some(environment) => {
+                let filesystem = environment.get_filesystem();
+                match find_project_root(
+                    filesystem.as_ref(),
+                    cwd,
+                    &configured_project_root_markers(config),
+                )
+                .await
+                {
+                    Ok(project_root) => ActiveProjectSettingsUpdate::Resolved {
+                        cwd: cwd.clone(),
+                        project_root,
+                        repo_root: resolve_root_git_project_for_trust(filesystem.as_ref(), cwd)
+                            .await,
+                    },
+                    Err(err) => {
+                        warn!(
+                            %err,
+                            "failed to resolve active project root; treating it as untrusted"
+                        );
+                        ActiveProjectSettingsUpdate::Untrusted { cwd: cwd.clone() }
+                    }
+                }
+            }
+            None => ActiveProjectSettingsUpdate::Untrusted { cwd: cwd.clone() },
+        }
+    }
+
+    pub(crate) async fn persist_cwd_metadata(&self, cwd: AbsolutePathBuf) {
+        let Some(live_thread) = self.services.live_thread.as_ref() else {
+            return;
+        };
+        if let Err(err) = live_thread
+            .update_metadata(
+                ThreadMetadataPatch {
+                    cwd: Some(cwd.into_path_buf()),
+                    ..Default::default()
+                },
+                /*include_archived*/ true,
+            )
+            .await
+        {
+            warn!("failed to persist updated session cwd metadata: {err}");
+        }
+    }
+
     pub(crate) async fn preview_settings(
         &self,
         updates: &SessionSettingsUpdate,
     ) -> ConstraintResult<ThreadConfigSnapshot> {
+        let updates = self.resolve_active_project_settings(updates.clone()).await;
         let state = self.state.lock().await;
-        let configuration = self.apply_session_settings(&state.session_configuration, updates)?;
+        let configuration = self.apply_session_settings(&state.session_configuration, &updates)?;
         let environments = updates.environments.as_ref().map_or_else(
             || self.services.turn_environments.selections(),
             |environments| environments.environments.clone(),
@@ -1956,67 +2094,162 @@ impl Session {
     }
 
     async fn refresh_runtime_config_inner(&self, next_config: Config, refresh_recording: bool) {
+        let refresh_generation = self
+            .runtime_config_refresh_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .wrapping_add(1);
         // Refresh only the user layer from the incoming snapshot. Preserve thread-local
         // layers such as request/session overrides that were present when this session
         // was created.
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-        let (previous_config, new_config, config) = {
+        let observed_environments = self.services.turn_environments.selections();
+        let (observed_active_project, resolution_config) = {
             let mut state = self.state.lock().await;
-            let previous_config = notify_config_contributors
-                .then(|| self.build_effective_session_config(&state.session_configuration));
+            if self
+                .runtime_config_refresh_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                != refresh_generation
+            {
+                return;
+            }
             let mut config = (*state.session_configuration.original_config_do_not_use).clone();
-            config.active_project = next_config.active_project.clone();
             config.config_layer_stack = config
                 .config_layer_stack
                 .with_user_layer_from(&next_config.config_layer_stack);
-            config.tool_suggest =
-                resolve_tool_suggest_config_from_layer_stack(&config.config_layer_stack);
-            config.mcp_servers = next_config.mcp_servers.clone();
-            config.mcp_optional_startup_grace = next_config.mcp_optional_startup_grace;
-            config.mcp_oauth_credentials_store_mode = next_config.mcp_oauth_credentials_store_mode;
-            // Recording can follow rollout changes without changing the session's
-            // execution features (including Code Mode's dispatch gate).
-            if refresh_recording {
-                self.services
-                    .executed_tool_calls
-                    .refresh(&next_config.features);
+            let active_project = state.session_configuration.active_project_settings.clone();
+            config.active_project = untrusted_project_config();
+            state.session_configuration.original_config_do_not_use = Arc::new(config.clone());
+            (active_project, config)
+        };
+        #[cfg(test)]
+        self.pause_runtime_config_refresh_for_test(refresh_generation)
+            .await;
+        let resolution_project_root_markers = configured_project_root_markers(&resolution_config);
+        let refreshed_active_project = match &observed_active_project {
+            Some(active_project) => Some(
+                self.resolve_active_project_for_cwd(
+                    active_project.cwd(),
+                    &observed_environments,
+                    &resolution_config,
+                )
+                .await,
+            ),
+            None => None,
+        };
+        let applied_config = {
+            let mut state = self.state.lock().await;
+            if self
+                .runtime_config_refresh_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                != refresh_generation
+            {
+                None
+            } else {
+                let previous_config = notify_config_contributors
+                    .then(|| self.build_effective_session_config(&state.session_configuration));
+                let current_active_project =
+                    state.session_configuration.active_project_settings.clone();
+                let mut config = (*state.session_configuration.original_config_do_not_use).clone();
+                config.config_layer_stack = config
+                    .config_layer_stack
+                    .with_user_layer_from(&next_config.config_layer_stack);
+                let active_project_refresh_is_current = current_active_project
+                    == observed_active_project
+                    && self.services.turn_environments.selections() == observed_environments
+                    && configured_project_root_markers(&config) == resolution_project_root_markers;
+                config.active_project = match (&current_active_project, &refreshed_active_project) {
+                    (Some(_), Some(active_project)) if active_project_refresh_is_current => {
+                        state.session_configuration.active_project_settings =
+                            Some(active_project.clone());
+                        match active_project.resolve(&config) {
+                            Ok(project) => project,
+                            Err(err) => {
+                                warn!(
+                                    "failed to resolve active project after config refresh; treating it as untrusted: {err}"
+                                );
+                                untrusted_project_config()
+                            }
+                        }
+                    }
+                    (Some(_), _) => {
+                        warn!(
+                            "active project changed during config refresh; treating it as untrusted"
+                        );
+                        untrusted_project_config()
+                    }
+                    (None, _) if next_config.cwd == config.cwd => {
+                        next_config.active_project.clone()
+                    }
+                    (None, _) => config.active_project.clone(),
+                };
+                config.tool_suggest =
+                    resolve_tool_suggest_config_from_layer_stack(&config.config_layer_stack);
+                config.mcp_servers = next_config.mcp_servers.clone();
+                config.mcp_optional_startup_grace = next_config.mcp_optional_startup_grace;
+                config.mcp_oauth_credentials_store_mode =
+                    next_config.mcp_oauth_credentials_store_mode;
+                // Recording can follow rollout changes without changing the session's
+                // execution features (including Code Mode's dispatch gate).
+                if refresh_recording {
+                    self.services
+                        .executed_tool_calls
+                        .refresh(&next_config.features);
+                }
+                if let Err(err) = config.features.set_enabled(
+                    Feature::Mcp20260728,
+                    next_config.features.enabled(Feature::Mcp20260728),
+                ) {
+                    warn!("failed to refresh MCP protocol config: {err}");
+                }
+                if let Err(err) = config.features.set_enabled(
+                    Feature::CodexAppsMcp20260728,
+                    next_config.features.enabled(Feature::CodexAppsMcp20260728),
+                ) {
+                    warn!("failed to refresh Codex Apps MCP protocol config: {err}");
+                }
+                if let Err(err) = config.features.set_enabled(
+                    Feature::SecretAuthStorage,
+                    next_config.features.enabled(Feature::SecretAuthStorage),
+                ) {
+                    warn!("failed to refresh MCP auth storage config: {err}");
+                }
+                if let Err(err) = config.features.set_enabled(
+                    Feature::McpOAuthRefreshCoordination,
+                    next_config
+                        .features
+                        .enabled(Feature::McpOAuthRefreshCoordination),
+                ) {
+                    warn!("failed to refresh MCP OAuth coordination config: {err}");
+                }
+                let config = Arc::new(config);
+                state.session_configuration.original_config_do_not_use = Arc::clone(&config);
+                self.mark_mcp_runtime_dirty();
+                let new_config = notify_config_contributors
+                    .then(|| self.build_effective_session_config(&state.session_configuration));
+                Some((previous_config, new_config, config))
             }
-            if let Err(err) = config.features.set_enabled(
-                Feature::Mcp20260728,
-                next_config.features.enabled(Feature::Mcp20260728),
-            ) {
-                warn!("failed to refresh MCP protocol config: {err}");
-            }
-            if let Err(err) = config.features.set_enabled(
-                Feature::CodexAppsMcp20260728,
-                next_config.features.enabled(Feature::CodexAppsMcp20260728),
-            ) {
-                warn!("failed to refresh Codex Apps MCP protocol config: {err}");
-            }
-            if let Err(err) = config.features.set_enabled(
-                Feature::SecretAuthStorage,
-                next_config.features.enabled(Feature::SecretAuthStorage),
-            ) {
-                warn!("failed to refresh MCP auth storage config: {err}");
-            }
-            if let Err(err) = config.features.set_enabled(
-                Feature::McpOAuthRefreshCoordination,
-                next_config
-                    .features
-                    .enabled(Feature::McpOAuthRefreshCoordination),
-            ) {
-                warn!("failed to refresh MCP OAuth coordination config: {err}");
-            }
-            let config = Arc::new(config);
-            state.session_configuration.original_config_do_not_use = Arc::clone(&config);
-            self.mark_mcp_runtime_dirty();
-            let new_config = notify_config_contributors
-                .then(|| self.build_effective_session_config(&state.session_configuration));
-            (previous_config, new_config, config)
+        };
+        let Some((previous_config, new_config, config)) = applied_config else {
+            return;
         };
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
         self.schedule_mcp_prewarm();
         self.refresh_hooks(config).await;
+    }
+
+    #[cfg(test)]
+    async fn pause_runtime_config_refresh_for_test(&self, refresh_generation: u64) {
+        let pause = {
+            let mut pause = self.runtime_config_refresh_pause.lock().await;
+            match pause.as_ref() {
+                Some(pending) if pending.generation == refresh_generation => pause.take(),
+                Some(_) | None => None,
+            }
+        };
+        if let Some(pause) = pause {
+            pause.started.notify_one();
+            pause.resume.notified().await;
+        }
     }
 
     pub(crate) async fn refresh_hooks(&self, config: Arc<Config>) {

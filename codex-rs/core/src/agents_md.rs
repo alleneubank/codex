@@ -183,6 +183,25 @@ async fn read_agents_md(
     }
 }
 
+pub(crate) fn configured_project_root_markers(config: &Config) -> Vec<String> {
+    let mut merged = TomlValue::Table(toml::map::Map::new());
+    for layer in config.config_layer_stack.layers_low_to_high() {
+        if matches!(layer.name, ConfigLayerSource::Project { .. }) {
+            continue;
+        }
+        merge_toml_values(&mut merged, &layer.config);
+    }
+
+    match project_root_markers_from_config(&merged) {
+        Ok(Some(markers)) => markers,
+        Ok(None) => default_project_root_markers(),
+        Err(err) => {
+            tracing::warn!("invalid project_root_markers: {err}");
+            default_project_root_markers()
+        }
+    }
+}
+
 /// Discovers AGENTS.md files from the project root to the current working
 /// directory, inclusive. Symlinks are allowed.
 #[tracing::instrument(name = "agents_md.discover", skip_all)]
@@ -193,22 +212,7 @@ async fn agents_md_paths(
     sandbox: Option<&FileSystemSandboxContext>,
 ) -> io::Result<Vec<PathUri>> {
     let dir = cwd.clone();
-
-    let mut merged = TomlValue::Table(toml::map::Map::new());
-    for layer in config.config_layer_stack.layers_low_to_high() {
-        if matches!(layer.name, ConfigLayerSource::Project { .. }) {
-            continue;
-        }
-        merge_toml_values(&mut merged, &layer.config);
-    }
-    let project_root_markers = match project_root_markers_from_config(&merged) {
-        Ok(Some(markers)) => markers,
-        Ok(None) => default_project_root_markers(),
-        Err(err) => {
-            tracing::warn!("invalid project_root_markers: {err}");
-            default_project_root_markers()
-        }
-    };
+    let project_root_markers = configured_project_root_markers(config);
     let project_root = find_nearest_ancestor_with_markers(
         fs,
         &dir,
