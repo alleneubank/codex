@@ -64,6 +64,10 @@ const WORKTREE_METADATA_EXTENSION: &str = "codex.json";
 const WORKTREE_OUTPUT_MAX_TOKENS: usize = 512;
 const WORKTREE_OUTPUT_MAX_BYTES: usize = WORKTREE_OUTPUT_MAX_TOKENS;
 
+#[cfg(test)]
+#[path = "worktree_tests.rs"]
+mod tests;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnterWorktreeArgs {
