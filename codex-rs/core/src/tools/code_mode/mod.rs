@@ -29,11 +29,13 @@ use crate::function_tool::FunctionCallError;
 use crate::original_image_detail::can_request_original_image_detail;
 use crate::original_image_detail::sanitize_original_image_detail as sanitize_image_detail_items;
 use crate::session::session::Session;
+#[cfg(test)]
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
 use crate::tools::ExecutedToolCalls;
 use crate::tools::call_trace;
 use crate::tools::context::FunctionToolOutput;
+#[cfg(test)]
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
 use crate::tools::parallel::ToolCallRuntime;
@@ -200,6 +202,7 @@ impl CodeModeService {
         self.dispatch_broker.close_cell(cell_id);
     }
 
+    #[cfg(test)]
     pub(crate) fn start_turn_worker(
         &self,
         session: &Arc<Session>,
@@ -218,6 +221,26 @@ impl CodeModeService {
         Some(
             self.dispatch_broker
                 .start_turn_worker(exec, step_context, tracker),
+        )
+    }
+
+    pub(crate) fn start_turn_worker_with_runtime(
+        &self,
+        session: &Arc<Session>,
+        tool_runtime: ToolCallRuntime,
+    ) -> Option<CodeModeDispatchWorker> {
+        let step_context = tool_runtime.step_context();
+        if !step_context.tool_router.requires_code_mode_worker() {
+            return None;
+        }
+
+        let exec = ExecContext {
+            session: Arc::clone(session),
+            turn: Arc::clone(&step_context.turn),
+        };
+        Some(
+            self.dispatch_broker
+                .start_turn_worker_with_runtime(exec, tool_runtime),
         )
     }
 
@@ -466,20 +489,136 @@ fn build_freeform_tool_payload(
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use super::build_nested_tool_payload;
     use super::truncate_code_mode_result;
+    use crate::function_tool::FunctionCallError;
+    use crate::session::SessionSettingsUpdate;
     use crate::session::step_context::StepContext;
     use crate::session::tests::make_session_and_context;
+    use crate::tools::context::FunctionToolOutput;
+    use crate::tools::context::ToolInvocation;
     use crate::tools::context::ToolPayload;
+    use crate::tools::parallel::ToolCallRuntime;
+    use crate::tools::registry::CoreToolRuntime;
+    use crate::tools::registry::ToolExecutor;
     use crate::tools::registry::ToolRegistry;
+    use crate::tools::router::ToolCall;
+    use crate::tools::router::ToolCallSource;
     use crate::tools::router::ToolRouter;
     use crate::turn_diff_tracker::TurnDiffTracker;
+    use codex_code_mode::CellId;
+    use codex_code_mode::CodeModeNestedToolCall;
+    use codex_code_mode::CodeModeSessionDelegate;
     use codex_code_mode::CodeModeToolKind;
     use codex_protocol::models::FunctionCallOutputContentItem;
     use codex_protocol::openai_models::ToolMode;
+    use codex_protocol::protocol::TurnEnvironmentSelections;
     use codex_tools::ToolName;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use codex_utils_path_uri::PathUri;
+    use core_test_support::PathBufExt;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    struct ContextBarrierHandler {
+        target_cwd: AbsolutePathBuf,
+    }
+
+    impl ToolExecutor<ToolInvocation> for ContextBarrierHandler {
+        fn tool_name(&self) -> ToolName {
+            ToolName::plain("enter_worktree")
+        }
+
+        fn spec(&self) -> codex_tools::ToolSpec {
+            test_function_spec("enter_worktree")
+        }
+
+        fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+        where
+            ToolInvocation: 'a,
+        {
+            let target_cwd = self.target_cwd.clone();
+            Box::pin(async move {
+                let mut selections = invocation.step_context.environments.to_selections();
+                let primary = selections.first_mut().ok_or_else(|| {
+                    FunctionCallError::Fatal("missing primary test environment".to_string())
+                })?;
+                primary.cwd = PathUri::from_abs_path(&target_cwd);
+                primary.workspace_roots = vec![PathUri::from_abs_path(&target_cwd)];
+                invocation
+                    .session
+                    .update_settings(SessionSettingsUpdate {
+                        environments: Some(TurnEnvironmentSelections::new(target_cwd, selections)),
+                        worktree_transition: true,
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+                Ok(Box::new(FunctionToolOutput::from_text(
+                    "entered".to_string(),
+                    Some(true),
+                ))
+                    as Box<dyn crate::tools::context::ToolOutput>)
+            })
+        }
+    }
+
+    impl CoreToolRuntime for ContextBarrierHandler {}
+
+    struct CwdProbeHandler {
+        observed_cwd: Arc<Mutex<Option<AbsolutePathBuf>>>,
+    }
+
+    impl ToolExecutor<ToolInvocation> for CwdProbeHandler {
+        fn tool_name(&self) -> ToolName {
+            ToolName::plain("cwd_probe")
+        }
+
+        fn spec(&self) -> codex_tools::ToolSpec {
+            test_function_spec("cwd_probe")
+        }
+
+        fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+        where
+            ToolInvocation: 'a,
+        {
+            let observed_cwd = Arc::clone(&self.observed_cwd);
+            Box::pin(async move {
+                let cwd = invocation
+                    .step_context
+                    .environments
+                    .primary()
+                    .ok_or_else(|| {
+                        FunctionCallError::Fatal("missing primary test environment".to_string())
+                    })?
+                    .cwd()
+                    .to_abs_path()
+                    .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+                *observed_cwd.lock().unwrap() = Some(cwd);
+                Ok(Box::new(FunctionToolOutput::from_text(
+                    "observed".to_string(),
+                    Some(true),
+                ))
+                    as Box<dyn crate::tools::context::ToolOutput>)
+            })
+        }
+    }
+
+    impl CoreToolRuntime for CwdProbeHandler {}
+
+    fn test_function_spec(name: &str) -> codex_tools::ToolSpec {
+        codex_tools::ToolSpec::Function(codex_tools::ResponsesApiTool {
+            name: name.to_string(),
+            description: "Test tool".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: codex_tools::JsonSchema::default(),
+            output_schema: None,
+        })
+    }
 
     #[tokio::test]
     async fn turn_worker_uses_step_router_mode_instead_of_admitted_turn() {
@@ -508,6 +647,85 @@ mod tests {
                 .start_turn_worker(&session, step_context, tracker);
 
         assert!(worker.is_some());
+    }
+
+    #[tokio::test]
+    async fn code_mode_nested_call_refreshes_after_direct_context_barrier() -> anyhow::Result<()> {
+        let (session, turn) = make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn = Arc::new(turn);
+        let temp = tempfile::tempdir()?;
+        let target_cwd = temp.path().join("target").abs();
+        std::fs::create_dir(target_cwd.as_path())?;
+        let observed_cwd = Arc::new(Mutex::new(None));
+        let registry = ToolRegistry::from_tools([
+            Arc::new(ContextBarrierHandler {
+                target_cwd: target_cwd.clone(),
+            }) as Arc<dyn CoreToolRuntime>,
+            Arc::new(CwdProbeHandler {
+                observed_cwd: Arc::clone(&observed_cwd),
+            }) as Arc<dyn CoreToolRuntime>,
+        ]);
+        let router = Arc::new(ToolRouter::from_parts(
+            registry,
+            Vec::new(),
+            ToolMode::CodeModeOnly,
+            BTreeMap::new(),
+            /*tool_namespaces_info*/ None,
+            &[],
+        ));
+        let step_context =
+            StepContext::for_test(Arc::clone(&turn)).with_tool_router_for_test(router);
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+        let tool_runtime =
+            ToolCallRuntime::new(Arc::clone(&session), Arc::clone(&step_context), tracker);
+        let _worker = session
+            .services
+            .code_mode_service
+            .start_turn_worker_with_runtime(&session, tool_runtime.clone())
+            .expect("Code Mode worker");
+
+        tool_runtime
+            .clone()
+            .handle_tool_call_with_source(
+                ToolCall {
+                    tool_name: ToolName::plain("enter_worktree"),
+                    call_id: "direct-context-barrier".to_string(),
+                    payload: ToolPayload::Function {
+                        arguments: "{}".to_string(),
+                    },
+                    encrypted_function_args: None,
+                },
+                ToolCallSource::Direct,
+                CancellationToken::new(),
+            )
+            .await?;
+
+        let cell_id = CellId::new("shared-runtime-cell".to_string());
+        session
+            .services
+            .code_mode_service
+            .dispatch_broker
+            .mark_cell_ready_for_dispatch(&cell_id, /*originating_item_id*/ None);
+        session
+            .services
+            .code_mode_service
+            .dispatch_broker
+            .invoke_tool(
+                CodeModeNestedToolCall {
+                    cell_id,
+                    runtime_tool_call_id: "nested-cwd-probe".to_string(),
+                    tool_name: ToolName::plain("cwd_probe"),
+                    tool_kind: CodeModeToolKind::Function,
+                    input: Some(json!({})),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+
+        assert_eq!(observed_cwd.lock().unwrap().as_ref(), Some(&target_cwd));
+        Ok(())
     }
 
     #[test]

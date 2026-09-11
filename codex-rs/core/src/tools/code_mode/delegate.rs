@@ -23,9 +23,11 @@ use super::submit_nested_tool;
 use super::telemetry::DispatchInterruption;
 use super::telemetry::NestedToolDispatchTrace;
 use super::telemetry::trace_id;
+#[cfg(test)]
 use crate::session::step_context::StepContext;
 use crate::tools::ExecutedToolCalls;
 use crate::tools::call_trace;
+#[cfg(test)]
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
 
@@ -103,14 +105,23 @@ impl CodeModeDispatchBroker {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn start_turn_worker(
         &self,
         exec: ExecContext,
         step_context: Arc<StepContext>,
         tracker: SharedTurnDiffTracker,
     ) -> CodeModeDispatchWorker {
-        let track_completeness = ExecutedToolCalls::is_enabled(&exec.turn.config.features);
         let tool_runtime = ToolCallRuntime::new(Arc::clone(&exec.session), step_context, tracker);
+        self.start_turn_worker_with_runtime(exec, tool_runtime)
+    }
+
+    pub(super) fn start_turn_worker_with_runtime(
+        &self,
+        exec: ExecContext,
+        tool_runtime: ToolCallRuntime,
+    ) -> CodeModeDispatchWorker {
+        let track_completeness = ExecutedToolCalls::is_enabled(&exec.turn.config.features);
         let host = Arc::new(CoreTurnHost { exec, tool_runtime });
         let dispatch_rx = self.dispatch_rx.clone();
         let dispatch_gates = Arc::clone(&self.dispatch_gates);
