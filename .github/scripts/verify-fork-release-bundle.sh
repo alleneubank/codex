@@ -12,16 +12,34 @@ fi
 target="$1"
 bundle="$2"
 expected_version="$3"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(fork_python_bin)"
 if [[ ! -f "${bundle}" ]]; then
   echo "Missing release bundle: ${bundle}" >&2
   exit 1
 fi
 
 verify_root="$(mktemp -d "${TMPDIR:-/tmp}/codex-fork-bundle.XXXXXX")"
-trap 'rm -rf "${verify_root}"' EXIT
+daemon_home="${verify_root}-home"
+daemon_running=false
+cleanup() {
+  if [[ "${daemon_running}" == true ]]; then
+    "${verify_root}/bin/codex" app-server daemon stop >&2 || return
+  fi
+  rm -rf "${verify_root}"
+  if [[ -n "${daemon_home}" ]]; then
+    rm -rf "${daemon_home}"
+  fi
+}
+trap cleanup EXIT
+mkdir -p "${daemon_home}"
+export CODEX_HOME="${daemon_home}"
+export CODEX_AUTH_HOME="${daemon_home}"
 zstd -d -c "${bundle}" | tar -xf - -C "${verify_root}"
 
-expected_entries=(codex codex-code-mode-host)
+expected_entries=(bin/codex bin/codex-code-mode-host bin/codex-exec-server codex-path/rg)
 case "${target}" in
   aarch64-apple-darwin)
     executable_regex="Mach-O 64-bit.*arm64"
@@ -39,6 +57,22 @@ case "${target}" in
     ;;
 esac
 
+CODEX_REPO_ROOT="${repo_root}" "${python_bin}" - "${repo_root}/scripts" "${verify_root}" "${target}" "${expected_version#codex-cli }" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from codex_package.layout import validate_package_dir
+from codex_package.targets import PACKAGE_VARIANTS, TARGET_SPECS
+
+root = Path(sys.argv[2])
+validate_package_dir(root, PACKAGE_VARIANTS["codex"], TARGET_SPECS[sys.argv[3]])
+metadata = json.loads((root / "codex-package.json").read_text())
+if metadata["version"] != sys.argv[4]:
+    raise SystemExit(f"Unexpected package version: {metadata['version']}")
+PY
+
 for entry in "${expected_entries[@]}"; do
   if [[ ! -x "${verify_root}/${entry}" ]]; then
     echo "Bundle entry is missing or not executable: ${entry}" >&2
@@ -53,22 +87,29 @@ for entry in "${expected_entries[@]}"; do
 done
 
 actual_entries="$(find "${verify_root}" -type f -print | sed "s#^${verify_root}/##" | sort)"
-expected_listing="$(printf '%s\n' "${expected_entries[@]}" | sort)"
+expected_listing="$(printf '%s\n' "${expected_entries[@]}" codex-package.json | sort)"
 if [[ "${actual_entries}" != "${expected_listing}" ]]; then
   echo "Bundle contains unexpected entries" >&2
   diff -u <(printf '%s\n' "${expected_listing}") <(printf '%s\n' "${actual_entries}") >&2 || true
   exit 1
 fi
 
-actual_version="$("${verify_root}/codex" --version)"
+actual_version="$("${verify_root}/bin/codex" --version)"
 if [[ "${actual_version}" != "${expected_version}" ]]; then
   echo "Expected ${expected_version}, got ${actual_version}" >&2
   exit 1
 fi
 
-actual_code_mode_host_version="$("${verify_root}/codex-code-mode-host" --version)"
+actual_code_mode_host_version="$("${verify_root}/bin/codex-code-mode-host" --version)"
 if [[ "${actual_code_mode_host_version}" != "${expected_version}" ]]; then
   echo "Expected ${expected_version} from codex-code-mode-host, got ${actual_code_mode_host_version}" >&2
+  exit 1
+fi
+
+actual_exec_server_version="$("${verify_root}/bin/codex-exec-server" --version)"
+expected_exec_server_version="codex-exec-server ${expected_version#codex-cli }"
+if [[ "${actual_exec_server_version}" != "${expected_exec_server_version}" ]]; then
+  echo "Expected ${expected_exec_server_version}, got ${actual_exec_server_version}" >&2
   exit 1
 fi
 
@@ -80,5 +121,19 @@ if [[ "${target}" == x86_64-unknown-linux-musl ]]; then
     exit 1
   fi
 fi
+
+# An empty home exercises the same package installation required by plain `codex`.
+daemon_running=true
+daemon_output="$("${verify_root}/bin/codex" app-server daemon start)"
+if [[ "${daemon_output}" != *'"status":"started"'* ]]; then
+  echo "Packaged daemon did not start: ${daemon_output}" >&2
+  exit 1
+fi
+daemon_output="$("${verify_root}/bin/codex" app-server daemon stop)"
+if [[ "${daemon_output}" != *'"status":"stopped"'* ]]; then
+  echo "Packaged daemon did not stop: ${daemon_output}" >&2
+  exit 1
+fi
+daemon_running=false
 
 echo "Verified ${bundle} (${target}, ${expected_version})"
