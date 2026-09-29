@@ -1,7 +1,7 @@
 FROM ubuntu:24.04@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RUST_VERSION=1.99.1
+ARG RUST_VERSION
 ARG ZIG_VERSION=0.14.0
 ARG ZIG_SHA256=473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982
 
@@ -41,6 +41,7 @@ ENV PATH=/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}" \
     && rustup target add --toolchain "${RUST_VERSION}" x86_64-unknown-linux-musl \
+    && rustup component add --toolchain "${RUST_VERSION}" clippy rustfmt rust-src \
     && rustc --version \
     && zig version
 
