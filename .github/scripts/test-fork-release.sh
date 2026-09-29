@@ -20,6 +20,9 @@ real_bash="$(command -v bash)"
 real_uname="$(command -v uname)"
 real_file="$(command -v file)"
 real_cc="$(command -v cc)"
+# shellcheck source=.github/scripts/fork-python.sh
+source "${repo_root}/.github/scripts/fork-python.sh"
+python_bin="$(fork_python_bin)"
 
 git init --quiet "${test_upstream}"
 git -C "${test_upstream}" config user.name "Fork Release Test"
@@ -215,12 +218,23 @@ mkdir -p "${output_dir}"
 fixture_root="${test_root}/fixtures"
 fixture_revision="$(${real_git} -C "${source_repo}" rev-parse --short=12 HEAD)"
 expected_binary_version="codex-cli ${version}+fork.${fixture_revision}"
-mkdir -p "${fixture_root}/mac" "${fixture_root}/linux/codex-resources"
+mkdir -p "${fixture_root}"
 cat >"${fixture_root}/version-helper.c" <<'EOF'
 #include <stdio.h>
 #include <string.h>
 
 int main(int argc, char **argv) {
+  if (argc == 4 && strcmp(argv[1], "app-server") == 0 && strcmp(argv[2], "daemon") == 0) {
+    if (strcmp(argv[3], "start") == 0) {
+      puts("{\"status\":\"started\"}");
+      return 0;
+    }
+    if (strcmp(argv[3], "stop") == 0) {
+      puts("{\"status\":\"stopped\"}");
+      return 0;
+    }
+    return 1;
+  }
   if (argc != 2 || strcmp(argv[1], "--version") != 0) {
     return 1;
   }
@@ -236,23 +250,23 @@ EOF
   "${fixture_root}/version-helper.c" -o "${fixture_root}/version-helper"
 "${real_cc}" -O2 "-DVERSION=\"${expected_binary_version}.mismatch\"" \
   "${fixture_root}/version-helper.c" -o "${fixture_root}/version-helper-mismatch"
-cp "${fixture_root}/version-helper" "${fixture_root}/mac/codex"
-cp "${fixture_root}/version-helper" "${fixture_root}/mac/codex-code-mode-host"
-cp "${fixture_root}/version-helper" "${fixture_root}/linux/codex"
-cp "${fixture_root}/version-helper" "${fixture_root}/linux/codex-code-mode-host"
-cp "${fixture_root}/version-helper" "${fixture_root}/linux/codex-resources/bwrap"
-chmod +x \
-  "${fixture_root}/mac/codex" \
-  "${fixture_root}/mac/codex-code-mode-host" \
-  "${fixture_root}/linux/codex" \
-  "${fixture_root}/linux/codex-code-mode-host" \
-  "${fixture_root}/linux/codex-resources/bwrap"
-tar --use-compress-program=zstd -cf \
-  "${output_dir}/codex-aarch64-apple-darwin-bundle.tar.zst" \
-  -C "${fixture_root}/mac" codex codex-code-mode-host
-tar --use-compress-program=zstd -cf \
-  "${output_dir}/codex-x86_64-unknown-linux-musl-bundle.tar.zst" \
-  -C "${fixture_root}/linux" codex codex-code-mode-host codex-resources/bwrap
+for fixture_target in aarch64-apple-darwin x86_64-unknown-linux-musl; do
+  package_args=(
+    --target "${fixture_target}"
+    --package-version "${expected_binary_version#codex-cli }"
+    --package-dir "${fixture_root}/${fixture_target}"
+    --archive-output "${output_dir}/codex-${fixture_target}-bundle.tar.zst"
+    --entrypoint-bin "${fixture_root}/version-helper"
+    --code-mode-host-bin "${fixture_root}/version-helper"
+    --rg-bin "${fixture_root}/version-helper"
+    --zsh-bin "${fixture_root}/version-helper"
+  )
+  if [[ "${fixture_target}" == x86_64-unknown-linux-musl ]]; then
+    package_args+=(--bwrap-bin "${fixture_root}/version-helper")
+  fi
+  CODEX_REPO_ROOT="${repo_root}" "${python_bin}" \
+    "${repo_root}/scripts/build_codex_package.py" "${package_args[@]}"
+done
 
 FAKE_FILE_ARCH=arm64 "${real_bash}" \
   "${repo_root}/.github/scripts/verify-fork-release-bundle.sh" \
@@ -279,14 +293,16 @@ if [[ "${dynamic_output}" != *"static Linux x86_64 executable"* ]]; then
   exit 1
 fi
 
-mkdir -p "${fixture_root}/mac-mismatch"
-cp "${fixture_root}/version-helper" "${fixture_root}/mac-mismatch/codex"
-cp "${fixture_root}/version-helper-mismatch" \
-  "${fixture_root}/mac-mismatch/codex-code-mode-host"
-chmod +x "${fixture_root}/mac-mismatch/codex" "${fixture_root}/mac-mismatch/codex-code-mode-host"
 mismatch_bundle="${output_dir}/codex-aarch64-apple-darwin-mismatch.tar.zst"
-tar --use-compress-program=zstd -cf "${mismatch_bundle}" \
-  -C "${fixture_root}/mac-mismatch" codex codex-code-mode-host
+CODEX_REPO_ROOT="${repo_root}" "${python_bin}" "${repo_root}/scripts/build_codex_package.py" \
+  --target aarch64-apple-darwin \
+  --package-version "${expected_binary_version#codex-cli }" \
+  --package-dir "${fixture_root}/mac-mismatch" \
+  --archive-output "${mismatch_bundle}" \
+  --entrypoint-bin "${fixture_root}/version-helper" \
+  --code-mode-host-bin "${fixture_root}/version-helper-mismatch" \
+  --rg-bin "${fixture_root}/version-helper" \
+  --zsh-bin "${fixture_root}/version-helper"
 mismatch_output=""
 if mismatch_output="$(FAKE_FILE_ARCH=arm64 "${real_bash}" \
   "${repo_root}/.github/scripts/verify-fork-release-bundle.sh" \
