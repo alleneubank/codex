@@ -22,7 +22,6 @@ bundle="${output_dir%/}/codex-${target}-bundle.tar.zst"
 version="$(tr -d '[:space:]' < "${codex_root}/fork-version.txt")"
 revision="$(git -C "${repo_root}" rev-parse --short=12 HEAD)"
 expected_version="codex-cli ${version}+fork.${revision}"
-bundle_entries=(codex codex-code-mode-host)
 
 case "${target}" in
   aarch64-apple-darwin)
@@ -77,6 +76,8 @@ while IFS='=' read -r key value; do
 done < "${github_env}"
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 export CARGO_TARGET_DIR="${cargo_target_dir}"
+STABLE_GIT_COMMIT="$(git -C "${repo_root}" rev-parse HEAD)"
+export STABLE_GIT_COMMIT
 export AWS_LC_SYS_NO_JITTER_ENTROPY=1
 export AWS_LC_SYS_NO_JITTER_ENTROPY_x86_64_unknown_linux_musl=1
 
@@ -110,33 +111,38 @@ fi
     --release \
     --timings \
     --bin codex \
-    --bin codex-code-mode-host
+    --bin codex-code-mode-host \
+    --bin codex-exec-server
 )
 
 if [[ "${target}" == *apple-darwin ]]; then
-  for binary in codex codex-code-mode-host; do
+  for binary in codex codex-code-mode-host codex-exec-server; do
     binary_path="${release_dir}/${binary}"
     strip -S -x "${binary_path}"
   done
 else
   strip --strip-debug --strip-unneeded \
     "${release_dir}/codex" \
-    "${release_dir}/codex-code-mode-host"
+    "${release_dir}/codex-code-mode-host" \
+    "${release_dir}/codex-exec-server"
 fi
 
 bundle_root="${runner_temp%/}/codex-${target}-bundle"
-rm -rf "${bundle_root}"
-mkdir -p "${bundle_root}"
-install -m 0755 "${release_dir}/codex" "${bundle_root}/codex"
-install -m 0755 "${release_dir}/codex-code-mode-host" "${bundle_root}/codex-code-mode-host"
+package_args=(
+  --target "${target}"
+  --package-version "${version}+fork.${revision}"
+  --package-dir "${bundle_root}"
+  --archive-output "${bundle}"
+  --entrypoint-bin "${release_dir}/codex"
+  --code-mode-host-bin "${release_dir}/codex-code-mode-host"
+  --exec-server-bin "${release_dir}/codex-exec-server"
+  --force
+)
 if [[ "${include_bwrap}" == true ]]; then
-  mkdir -p "${bundle_root}/codex-resources"
-  install -m 0755 "${release_dir}/bwrap" "${bundle_root}/codex-resources/bwrap"
-  bundle_entries+=(codex-resources/bwrap)
+  package_args+=(--bwrap-bin "${release_dir}/bwrap")
 fi
-
-rm -f "${bundle}"
-tar -C "${bundle_root}" -cf - "${bundle_entries[@]}" | zstd -T0 -19 -o "${bundle}"
+CODEX_REPO_ROOT="${repo_root}" "${python_bin}" \
+  "${repo_root}/scripts/build_codex_package.py" "${package_args[@]}"
 bash "${repo_root}/.github/scripts/verify-fork-release-bundle.sh" \
   "${target}" "${bundle}" "${expected_version}"
 

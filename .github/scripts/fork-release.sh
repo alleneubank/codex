@@ -35,7 +35,9 @@ codex_root="${repo_root}/codex-rs"
 version_script="${repo_root}/.github/scripts/fork-version.sh"
 macos_target="aarch64-apple-darwin"
 linux_target="x86_64-unknown-linux-musl"
-linux_image="codex-fork-release-linux:rust-1.99.1-zig-0.14.0"
+rust_version="$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "${codex_root}/rust-toolchain.toml")"
+[[ -n "${rust_version}" ]] || die "Could not read Rust version from rust-toolchain.toml"
+linux_image="codex-fork-release-linux:rust-${rust_version}-zig-0.14.0"
 build_root="${CODEX_FORK_RELEASE_BUILD_ROOT:-${codex_root}/target}"
 [[ "${build_root}" == /* ]] || die "CODEX_FORK_RELEASE_BUILD_ROOT must be an absolute path"
 command="${1:-}"
@@ -135,6 +137,7 @@ require_macos_builder() {
 ensure_linux_image() {
   docker build \
     --platform linux/amd64 \
+    --build-arg "RUST_VERSION=${rust_version}" \
     --tag "${linux_image}" \
     --file "${repo_root}/.github/docker/fork-release-linux.Dockerfile" \
     "${repo_root}/.github/docker"
@@ -281,7 +284,7 @@ publish_verified_release() {
     --verify-tag \
     --prerelease \
     --title "${release_tag}" \
-    --notes "Fork prerelease from commit ${head_sha}. Linux x64 musl includes codex, codex-code-mode-host, and codex-resources/bwrap; macOS arm64 includes codex and codex-code-mode-host." \
+    --notes "Fork prerelease from commit ${head_sha}. Both bundles include codex, codex-code-mode-host, codex-exec-server, and ripgrep; Linux x64 musl also includes codex-resources/bwrap." \
     "${linux_bundle}" \
     "${macos_bundle}"
 }
